@@ -13,7 +13,7 @@ v1 proves the staging infrastructure path before any production traffic decision
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Staging Deploy Baseline** - Operator can deploy and verify the staging runtime from this infrastructure repository.
-- [ ] **Phase 2: Backup Gate** - Operator has a current PostgreSQL backup point in Timeweb S3 with restore-list validation and restore drill instructions.
+- [x] **Phase 2: Backup Gate** - Operator has a current PostgreSQL backup point in Timeweb S3 with restore-list validation and restore drill instructions.
 - [ ] **Phase 3: App CD Boundary** - App repositories can keep building images while infrastructure owns staging runtime wiring and pinned image tags.
 - [ ] **Phase 4: Controlled Full Run** - Operator can explicitly start and monitor a manual ingest run without enabling recurring fetching first.
 - [ ] **Phase 5: Diff and Cutover Readiness** - Operator can produce reviewable old-vs-new diff output while production cutover remains blocked.
@@ -44,7 +44,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Each backup upload includes a dump, `pg_restore --list` output, and manifest metadata in S3.
   4. The backup gate blocks full ingest until the backup Job completed, S3 upload succeeded, and `pg_restore --list` succeeded.
   5. Operator can verify backup-related storage and PVC changes without risking PostgreSQL or RabbitMQ persistent state.
-**Plans**: TBD
+**Plans**: 1/1 complete
 
 ### Phase 3: App CD Boundary
 **Goal**: Application repositories can keep publishing images while infrastructure becomes the source of truth for staging deployment wiring.
@@ -90,7 +90,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Staging Deploy Baseline | 4/4 | Complete | 2026-05-10 |
-| 2. Backup Gate | 0/TBD | Not started | - |
+| 2. Backup Gate | 1/1 | Complete | 2026-05-10 |
 | 3. App CD Boundary | 0/TBD | Not started | - |
 | 4. Controlled Full Run | 0/TBD | Not started | - |
 | 5. Diff and Cutover Readiness | 0/TBD | Not started | - |
