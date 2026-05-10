@@ -34,6 +34,7 @@ jobs:
           test -f scripts/render-staging-secrets.py
           test -f scripts/deploy-staging.sh
           find k8s/staging -type f -name '*.yaml' -print | sort
+          python3 scripts/validate-staging.py
 
   deploy:
     name: Deploy to k3s
