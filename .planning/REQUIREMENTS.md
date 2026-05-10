@@ -65,6 +65,17 @@
 - [ ] **VAL-04**: Documentation states which resources are intentionally outside
   infra ownership in v1.
 
+### Kubernetes Safety
+
+- [ ] **K8S-01**: Workloads use explicit ServiceAccounts and avoid the default
+  ServiceAccount unless an exception is documented.
+- [ ] **K8S-02**: Workloads define resource requests, resource limits, health
+  probes, and security contexts where container images allow it.
+- [ ] **K8S-03**: Namespace network isolation is defined through NetworkPolicies
+  or a documented k3s/CNI exception with a follow-up path.
+- [ ] **K8S-04**: Persistent storage and PVC changes are documented and verified
+  so infra deploys do not accidentally destroy PostgreSQL or RabbitMQ state.
+
 ## v2 Requirements
 
 - [ ] **PROD-01**: Add production environment manifests and cutover procedure.
@@ -91,4 +102,32 @@
 
 ## Traceability
 
-Roadmap phase mappings will be filled when `.planning/ROADMAP.md` is created.
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| OWN-01 | Phase 1 | Pending |
+| OWN-02 | Phase 1 | Pending |
+| OWN-03 | Phase 3 | Pending |
+| OWN-04 | Phase 3 | Pending |
+| RUN-01 | Phase 1 | Pending |
+| RUN-02 | Phase 1 | Pending |
+| RUN-03 | Phase 4 | Pending |
+| RUN-04 | Phase 1 | Pending |
+| BKP-01 | Phase 2 | Pending |
+| BKP-02 | Phase 2 | Pending |
+| BKP-03 | Phase 2 | Pending |
+| BKP-04 | Phase 2 | Pending |
+| BKP-05 | Phase 2 | Pending |
+| FULL-01 | Phase 4 | Pending |
+| FULL-02 | Phase 4 | Pending |
+| FULL-03 | Phase 4 | Pending |
+| DIFF-01 | Phase 5 | Pending |
+| DIFF-02 | Phase 5 | Pending |
+| DIFF-03 | Phase 5 | Pending |
+| VAL-01 | Phase 1 | Pending |
+| VAL-02 | Phase 1 | Pending |
+| VAL-03 | Phase 1 | Pending |
+| VAL-04 | Phase 1 | Pending |
+| K8S-01 | Phase 1 | Pending |
+| K8S-02 | Phase 1 | Pending |
+| K8S-03 | Phase 1 | Pending |
+| K8S-04 | Phase 2 | Pending |

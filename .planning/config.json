@@ -80,7 +80,50 @@
   },
   "parallelization": true,
   "model_overrides": null,
-  "agent_skills": {},
+  "agent_skills": {
+    "gsd-phase-researcher": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-project-researcher": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-planner": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-plan-checker": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-executor": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-verifier": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-nyquist-auditor": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-code-reviewer": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-code-fixer": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-debugger": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-integration-checker": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-security-auditor": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-codebase-mapper": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-roadmapper": [
+      ".agents/skills/kubernetes-specialist"
+    ]
+  },
   "planning": {
     "commit_docs": true,
     "search_gitignored": false,

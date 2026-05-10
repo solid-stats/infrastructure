@@ -1,0 +1,79 @@
+# Project State
+
+## Project Reference
+
+See: .planning/PROJECT.md (updated 2026-05-10)
+
+**Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
+**Current focus:** Phase 1: Staging Deploy Baseline
+
+## Current Position
+
+Phase: 1 of 5 (Staging Deploy Baseline)
+Plan: Not planned yet
+Status: Ready to plan
+Last activity: 2026-05-10 - Roadmap created for staging-first infrastructure v1 in Vertical MVP mode.
+
+Progress: [----------] 0%
+
+## Performance Metrics
+
+**Velocity:**
+- Total plans completed: 0
+- Average duration: N/A
+- Total execution time: 0.0 hours
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| - | - | - | - |
+
+**Recent Trend:**
+- Last 5 plans: none
+- Trend: N/A
+
+*Updated after each plan completion*
+
+## Accumulated Context
+
+### Decisions
+
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- v1 is staging-first: deploy, backup, restore-list validation, controlled full-run, and diff readiness before production cutover.
+- App deploy ownership moves gradually: app repositories continue building and publishing images while infrastructure takes over staging wiring.
+- Backup gate is manual backup plus S3 upload plus `pg_restore --list` before a full run.
+- `replays-fetcher` remains suspended until backup verification passes and the full-run is explicitly started.
+
+### Pending Todos
+
+None yet.
+
+### Blockers/Concerns
+
+- No committed baseline exists yet; rollback depends on creating the first commit outside this roadmap step.
+- App repositories still have overlapping deploy workflows and manifests.
+- GHCR pull secret rendering needs validation before relying on infra CD.
+- Backup job installs `aws-cli` at runtime, so backup success currently depends on package network availability.
+- Restore drill has not been executed yet.
+- Current manifests need Kubernetes-specialist hardening review: explicit ServiceAccounts, security contexts, NetworkPolicies, and storage-change safety checks.
+
+## Deferred Items
+
+Items acknowledged and carried forward from previous milestone close:
+
+| Category | Item | Status | Deferred At |
+|----------|------|--------|-------------|
+| Production | Production traffic cutover | Deferred to v2 | v1 planning |
+| Edge | Host nginx/certificate/firewall automation | Deferred to v2 | v1 planning |
+| Storage | S3 lifecycle and retention policy enforcement | Deferred to v2 | v1 planning |
+| Restore | Automated restore drill validation | Deferred to v2 | v1 planning |
+| App | `web` runtime wiring | Deferred to v2 | v1 planning |
+
+## Session Continuity
+
+Last session: 2026-05-10
+Stopped at: Roadmap, state, and requirements traceability initialized.
+Resume file: None

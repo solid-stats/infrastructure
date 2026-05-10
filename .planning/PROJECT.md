@@ -85,6 +85,12 @@ The codebase map identifies several concerns: app CD overlap, weak manifest
 validation, a possible GHCR pull secret rendering bug, runtime `apk add` in the
 backup job, and no restore drill yet.
 
+The project has a local `kubernetes-specialist` skill. Kubernetes planning and
+execution should apply its baseline: declarative manifests, explicit
+ServiceAccounts, resource requests and limits, probes, least-privilege RBAC,
+NetworkPolicies where supported, secrets for sensitive data, and documented
+exceptions for any workload that must run outside those defaults.
+
 ## Constraints
 
 - **Environment**: v1 targets `solid-stats-staging` only — production cutover is
@@ -104,6 +110,9 @@ backup job, and no restore drill yet.
   Secrets — no secret values belong in git or planning docs.
 - **Validation**: completion claims require fresh evidence from scripts,
   Kubernetes dry-runs, live rollout state, backup logs, or S3 object checks.
+- **Kubernetes Safety**: workload manifests must avoid default ServiceAccounts,
+  add pod/container security context where images allow it, keep resource
+  requests/limits, and define network isolation or a documented exception.
 
 ## Key Decisions
 
@@ -114,6 +123,7 @@ backup job, and no restore drill yet.
 | Backup gate is manual backup plus `pg_restore --list` before full-run | Gives a concrete recovery point without blocking on a full restore drill | — Pending |
 | `replays-fetcher` remains suspended initially | Prevents uncontrolled S3/database writes before backup confidence exists | — Pending |
 | Infra repo owns shared runtime wiring | Backups, namespace, storage, and cross-app wiring do not belong to one app repo | — Pending |
+| `kubernetes-specialist` is the infra planning baseline | Kubernetes work needs security, networking, workload, and storage guardrails from the local skill | — Pending |
 
 ## Evolution
 
