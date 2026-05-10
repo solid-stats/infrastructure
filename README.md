@@ -25,6 +25,8 @@ repository owns how those images are wired together in staging.
   from the deployed backup CronJob.
 - `docs/staging.md` - staging operations and deploy model.
 - `docs/backup-restore.md` - PostgreSQL backup and restore runbook.
+- `docs/diff-readiness.md` - old-vs-new statistics diff contract and cutover
+  block.
 
 ## Deploy
 
