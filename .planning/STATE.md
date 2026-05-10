@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-10)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 3: App CD Boundary
+**Current focus:** Phase 4: Controlled Full Run
 
 ## Current Position
 
-Phase: 03 — COMPLETE
+Phase: 04 — COMPLETE
 Plan: Not planned yet
-Status: Phase 03 complete
-Last activity: 2026-05-10 -- Phase 03 marked complete
+Status: Phase 04 complete
+Last activity: 2026-05-10 -- Phase 04 marked complete with live ingest deferred
 
 Progress: [----------] 0%
 
