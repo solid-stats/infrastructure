@@ -12,7 +12,7 @@ v1 proves the staging infrastructure path before any production traffic decision
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Staging Deploy Baseline** - Operator can deploy and verify the staging runtime from this infrastructure repository.
+- [x] **Phase 1: Staging Deploy Baseline** - Operator can deploy and verify the staging runtime from this infrastructure repository.
 - [ ] **Phase 2: Backup Gate** - Operator has a current PostgreSQL backup point in Timeweb S3 with restore-list validation and restore drill instructions.
 - [ ] **Phase 3: App CD Boundary** - App repositories can keep building images while infrastructure owns staging runtime wiring and pinned image tags.
 - [ ] **Phase 4: Controlled Full Run** - Operator can explicitly start and monitor a manual ingest run without enabling recurring fetching first.
@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Operator can verify PostgreSQL, RabbitMQ, `server-2`, and `replay-parser-2` rollout state after deploy.
   4. CI catches broken manifest/script syntax, unsafe secret rendering, missing resource limits, default ServiceAccount usage, and missing security-context or NetworkPolicy decisions before deploy reaches staging.
   5. Documentation states which v1 resources remain intentionally outside infrastructure ownership and which Kubernetes hardening exceptions are deliberate.
-**Plans**: TBD
+**Plans**: 4/4 complete
 
 ### Phase 2: Backup Gate
 **Goal**: Operator has a verified PostgreSQL backup point before any full ingest run begins.
@@ -89,7 +89,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Staging Deploy Baseline | 0/TBD | Not started | - |
+| 1. Staging Deploy Baseline | 4/4 | Complete | 2026-05-10 |
 | 2. Backup Gate | 0/TBD | Not started | - |
 | 3. App CD Boundary | 0/TBD | Not started | - |
 | 4. Controlled Full Run | 0/TBD | Not started | - |
