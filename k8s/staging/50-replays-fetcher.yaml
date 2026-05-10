@@ -1,4 +1,13 @@
 apiVersion: batch/v1
+kind: ServiceAccount
+metadata:
+  name: replays-fetcher
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: replays-fetcher
+    app.kubernetes.io/part-of: solid-stats
+---
+apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: replays-fetcher
@@ -21,6 +30,8 @@ spec:
             app.kubernetes.io/name: replays-fetcher
             app.kubernetes.io/part-of: solid-stats
         spec:
+          serviceAccountName: replays-fetcher
+          automountServiceAccountToken: false
           restartPolicy: Never
           imagePullSecrets:
             - name: ghcr-pull
@@ -46,3 +57,7 @@ spec:
                 limits:
                   cpu: "1"
                   memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]

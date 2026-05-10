@@ -24,6 +24,22 @@ Not owned here:
 - container image builds
 - production traffic cutover
 - old statistics migration logic
+- host nginx, certificate renewal, and firewall automation
+- the future `web` runtime
+- immediate removal of legacy application deploy workflows
+
+## Kubernetes Hardening Exceptions
+
+### NetworkPolicy exception
+
+Phase 1 documents network isolation as an explicit exception until the staging
+k3s CNI is verified for NetworkPolicy enforcement. Future work must either add
+tested NetworkPolicy manifests or document the cluster-level CNI configuration
+that enforces equivalent isolation.
+
+Stateful vendor images may keep image-specific security-context exceptions where
+forcing a stricter setting would risk PostgreSQL or RabbitMQ startup. Those
+exceptions must stay visible in manifest review and validation output.
 
 ## Required GitHub Secrets
 

@@ -1,4 +1,13 @@
 apiVersion: batch/v1
+kind: ServiceAccount
+metadata:
+  name: postgres-backup
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: postgres-backup
+    app.kubernetes.io/part-of: solid-stats
+---
+apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: postgres-backup
@@ -24,6 +33,7 @@ spec:
             app.kubernetes.io/part-of: solid-stats
         spec:
           restartPolicy: Never
+          serviceAccountName: postgres-backup
           automountServiceAccountToken: false
           containers:
             - name: postgres-backup
@@ -124,3 +134,5 @@ spec:
                 limits:
                   cpu: "1"
                   memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
