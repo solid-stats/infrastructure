@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Backup Gate** - Operator has a current PostgreSQL backup point in Timeweb S3 with restore-list validation and restore drill instructions.
 - [x] **Phase 3: App CD Boundary** - App repositories can keep building images while infrastructure owns staging runtime wiring and pinned image tags.
 - [x] **Phase 4: Controlled Full Run** - Operator can explicitly start and monitor a manual ingest run without enabling recurring fetching first.
-- [ ] **Phase 5: Diff and Cutover Readiness** - Operator can produce reviewable old-vs-new diff output while production cutover remains blocked.
+- [x] **Phase 5: Diff and Cutover Readiness** - Operator can produce reviewable old-vs-new diff output while production cutover remains blocked.
 
 ## Phase Details
 
@@ -80,7 +80,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Diff output separates strict failures from allowlisted known differences.
   3. Operator can review diff results after a full run without treating the output as automatic production approval.
   4. Production traffic cutover remains explicitly blocked until diff output is clean enough for review.
-**Plans**: TBD
+**Plans**: 1/1 complete
 
 ## Progress
 
@@ -93,4 +93,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Backup Gate | 1/1 | Complete | 2026-05-10 |
 | 3. App CD Boundary | 1/1 | Complete | 2026-05-10 |
 | 4. Controlled Full Run | 1/1 | Complete | 2026-05-10 |
-| 5. Diff and Cutover Readiness | 0/TBD | Not started | - |
+| 5. Diff and Cutover Readiness | 1/1 | Complete | 2026-05-10 |
