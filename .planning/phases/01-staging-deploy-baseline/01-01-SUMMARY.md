@@ -11,7 +11,7 @@ key-files:
   - .github/workflows/deploy-staging.yml
 metrics:
   tasks_completed: 2
-  deviations: 1
+  deviations: 2
 ---
 
 # Plan 01-01 Summary - Validation entrypoint and CI gate
@@ -41,8 +41,16 @@ made the optional kubectl dry-run warn and continue only for the unreachable
 cluster case. | Files modified: `scripts/validate-staging.py` | Verification:
 `python3 scripts/validate-staging.py` passes. | Commit hash: dc68952
 
-**Total deviations:** 1 auto-fixed. **Impact:** local validation remains
-deterministic without requiring cluster access.
+**[Rule 1 - Bug] API version compatibility check** - Found during: live
+validation retry | Issue: CronJob-adjacent ServiceAccount documents used the
+wrong API group and the original structural validator did not catch kind/API
+version mismatches. | Fix: validator now enforces `v1` for core resources,
+`apps/v1` for Deployments/StatefulSets, and `batch/v1` for CronJobs. | Files
+modified: `scripts/validate-staging.py` | Verification:
+`python3 scripts/validate-staging.py` passes. | Commit hash: pending
+
+**Total deviations:** 2 auto-fixed. **Impact:** validator now catches invalid
+Kubernetes kind/API combinations before deploy.
 
 ## Self-Check: PASSED
 

@@ -16,7 +16,7 @@ key-files:
   - docs/staging.md
 metrics:
   tasks_completed: 3
-  deviations: 0
+  deviations: 1
 ---
 
 # Plan 01-02 Summary - Kubernetes hardening baseline
@@ -41,7 +41,17 @@ metrics:
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+**[Rule 1 - Bug] CronJob file ServiceAccount API version** - Found during:
+live validation retry | Issue: the `replays-fetcher` and `postgres-backup`
+ServiceAccount documents used `apiVersion: batch/v1`, producing Kubernetes
+`no matches for kind "ServiceAccount" in version "batch/v1"` errors. | Fix:
+changed those ServiceAccount documents to `apiVersion: v1`. | Files modified:
+`k8s/staging/50-replays-fetcher.yaml`,
+`k8s/staging/60-postgres-backup.yaml` | Verification:
+`python3 scripts/validate-staging.py` passes. | Commit hash: pending
+
+**Total deviations:** 1 auto-fixed. **Impact:** CronJob manifests now apply
+valid ServiceAccounts before CronJob resources.
 
 ## Self-Check: PASSED
 

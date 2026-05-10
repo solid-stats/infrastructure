@@ -156,6 +156,12 @@ def validate_manifest_shape() -> list[tuple[str, str, str]]:
             require(api_version is not None, f"{path.relative_to(ROOT)} document missing apiVersion")
             require(kind is not None, f"{path.relative_to(ROOT)} document missing kind")
             require(name is not None, f"{path.relative_to(ROOT)} {kind} document missing metadata.name")
+            if kind in {"Namespace", "Secret", "Service", "ServiceAccount", "ConfigMap"}:
+                require(api_version == "v1", f"{path.relative_to(ROOT)} {kind}/{name} must use apiVersion v1")
+            if kind in {"Deployment", "StatefulSet"}:
+                require(api_version == "apps/v1", f"{path.relative_to(ROOT)} {kind}/{name} must use apiVersion apps/v1")
+            if kind == "CronJob":
+                require(api_version == "batch/v1", f"{path.relative_to(ROOT)} CronJob/{name} must use apiVersion batch/v1")
             manifests.append((kind, name, path.name))
             combined_docs.append("---\n" + doc)
 
