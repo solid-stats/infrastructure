@@ -170,3 +170,6 @@ after backup verification and a clean full-run plan.
 Keep `suspend: true` until backup verification and the controlled full-run
 phase pass. Kubernetes hardening exceptions in this document are temporary
 Phase 1 decisions until they can be verified against the staging k3s runtime.
+
+See `docs/full-run.md` for the controlled manual full-run command and
+monitoring checklist.
