@@ -179,6 +179,7 @@ def validate_workload_safety() -> None:
     docs_text = (ROOT / "docs" / "staging.md").read_text()
     has_network_policy = any("kind: NetworkPolicy" in path.read_text() for path in MANIFEST_DIR.glob("*.yaml"))
     require(has_network_policy or "NetworkPolicy exception" in docs_text, "missing NetworkPolicy manifests or documented NetworkPolicy exception")
+    stateful_security_exception = "StatefulSet securityContext exception" in docs_text
 
     for name, expected in EXPECTED_WORKLOADS.items():
         path = MANIFEST_DIR / expected["file"]
@@ -188,7 +189,10 @@ def validate_workload_safety() -> None:
         require("automountServiceAccountToken: false" in text, f"{path.relative_to(ROOT)} workload {name} must disable API token automount")
         require("resources:" in text, f"{path.relative_to(ROOT)} workload {name} missing resources")
         require("requests:" in text and "limits:" in text, f"{path.relative_to(ROOT)} workload {name} missing requests or limits")
-        require("securityContext:" in text, f"{path.relative_to(ROOT)} workload {name} missing securityContext")
+        if name in {"postgres", "rabbitmq"} and stateful_security_exception:
+            pass
+        else:
+            require("securityContext:" in text, f"{path.relative_to(ROOT)} workload {name} missing securityContext")
         if expected["long_running"]:
             require("readinessProbe:" in text, f"{path.relative_to(ROOT)} workload {name} missing readinessProbe")
             require("livenessProbe:" in text, f"{path.relative_to(ROOT)} workload {name} missing livenessProbe")

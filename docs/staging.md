@@ -43,6 +43,15 @@ Stateful vendor images may keep image-specific security-context exceptions where
 forcing a stricter setting would risk PostgreSQL or RabbitMQ startup. Those
 exceptions must stay visible in manifest review and validation output.
 
+### StatefulSet securityContext exception
+
+PostgreSQL and RabbitMQ keep resource requests, resource limits, probes,
+explicit ServiceAccounts, and disabled ServiceAccount token automounting, but
+Phase 1 does not force pod/container `securityContext` changes onto their
+existing PVC-backed StatefulSets. These images and mounted data directories
+should be tested in an isolated restore or replacement environment before
+tightening UID, filesystem group, capability, or privilege settings.
+
 ## Required GitHub Secrets
 
 The `staging` GitHub environment must define:
