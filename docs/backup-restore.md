@@ -7,7 +7,7 @@ request/audit data.
 
 ## Backup Schedule
 
-The `postgres-backup` CronJob runs daily at `04:15` in `Asia/Barnaul`.
+The `postgres-backup` CronJob runs daily at `06:00` in `Europe/Moscow`.
 
 Each run writes three objects to the configured S3 bucket:
 
