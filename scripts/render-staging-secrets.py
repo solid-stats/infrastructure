@@ -3,6 +3,7 @@ import json
 import os
 import sys
 from base64 import b64encode
+from urllib.parse import quote
 
 
 NAMESPACE = os.environ.get("K8S_NAMESPACE", "solid-stats-staging")
@@ -37,23 +38,11 @@ ghcr_username = required("GHCR_USERNAME")
 ghcr_token = required("GHCR_TOKEN")
 postgres_password = required("POSTGRES_PASSWORD")
 rabbitmq_password = required("RABBITMQ_PASSWORD")
+s3_bucket = required("S3_BUCKET")
+s3_access_key_id = required("S3_ACCESS_KEY_ID")
+s3_secret_access_key = required("S3_SECRET_ACCESS_KEY")
 
-server2_database_url = required("SERVER2_DATABASE_URL")
-server2_rabbitmq_url = required("SERVER2_RABBITMQ_URL")
-server2_s3_bucket = required("SERVER2_S3_BUCKET")
-server2_s3_access_key_id = required("SERVER2_S3_ACCESS_KEY_ID")
-server2_s3_secret_access_key = required("SERVER2_S3_SECRET_ACCESS_KEY")
-
-replay_parser_amqp_url = required("REPLAY_PARSER_AMQP_URL")
-replay_parser_s3_bucket = required("REPLAY_PARSER_S3_BUCKET")
-replay_parser_aws_access_key_id = required("REPLAY_PARSER_AWS_ACCESS_KEY_ID")
-replay_parser_aws_secret_access_key = required("REPLAY_PARSER_AWS_SECRET_ACCESS_KEY")
-
-fetcher_database_url = required("REPLAYS_FETCHER_DATABASE_URL")
 fetcher_replay_source_url = required("REPLAYS_FETCHER_REPLAY_SOURCE_URL")
-fetcher_s3_bucket = required("REPLAYS_FETCHER_S3_BUCKET")
-fetcher_s3_access_key_id = required("REPLAYS_FETCHER_S3_ACCESS_KEY_ID")
-fetcher_s3_secret_access_key = required("REPLAYS_FETCHER_S3_SECRET_ACCESS_KEY")
 fetcher_replay_source_transport = os.environ.get("REPLAYS_FETCHER_REPLAY_SOURCE_TRANSPORT", "direct")
 fetcher_replay_source_ssh_host = os.environ.get("REPLAYS_FETCHER_REPLAY_SOURCE_SSH_HOST", "")
 fetcher_replay_source_ssh_command = os.environ.get("REPLAYS_FETCHER_REPLAY_SOURCE_SSH_COMMAND", "")
@@ -78,13 +67,16 @@ docker_config = json.dumps(
     separators=(",", ":"),
 )
 
+postgres_url = f"postgres://solid:{quote(postgres_password, safe='')}@postgres:5432/solid_stats"
+rabbitmq_url = f"amqp://solid:{quote(rabbitmq_password, safe='')}@rabbitmq:5672"
+
 fetcher_runtime = {
-    "DATABASE_URL": fetcher_database_url,
+    "DATABASE_URL": postgres_url,
     "REPLAY_SOURCE_URL": fetcher_replay_source_url,
     "REPLAY_SOURCE_TRANSPORT": fetcher_replay_source_transport,
-    "S3_BUCKET": fetcher_s3_bucket,
-    "S3_ACCESS_KEY_ID": fetcher_s3_access_key_id,
-    "S3_SECRET_ACCESS_KEY": fetcher_s3_secret_access_key,
+    "S3_BUCKET": s3_bucket,
+    "S3_ACCESS_KEY_ID": s3_access_key_id,
+    "S3_SECRET_ACCESS_KEY": s3_secret_access_key,
 }
 if fetcher_replay_source_ssh_host:
     fetcher_runtime["REPLAY_SOURCE_SSH_HOST"] = fetcher_replay_source_ssh_host
@@ -98,21 +90,21 @@ documents = [
     secret(
         "server-2-runtime",
         {
-            "DATABASE_URL": server2_database_url,
-            "RABBITMQ_URL": server2_rabbitmq_url,
+            "DATABASE_URL": postgres_url,
+            "RABBITMQ_URL": rabbitmq_url,
             "BOOTSTRAP_ADMIN_STEAM_ID": os.environ.get("SERVER2_BOOTSTRAP_ADMIN_STEAM_ID", ""),
-            "S3_BUCKET": server2_s3_bucket,
-            "S3_ACCESS_KEY_ID": server2_s3_access_key_id,
-            "S3_SECRET_ACCESS_KEY": server2_s3_secret_access_key,
+            "S3_BUCKET": s3_bucket,
+            "S3_ACCESS_KEY_ID": s3_access_key_id,
+            "S3_SECRET_ACCESS_KEY": s3_secret_access_key,
         },
     ),
     secret(
         "replay-parser-2-runtime",
         {
-            "REPLAY_PARSER_AMQP_URL": replay_parser_amqp_url,
-            "REPLAY_PARSER_S3_BUCKET": replay_parser_s3_bucket,
-            "AWS_ACCESS_KEY_ID": replay_parser_aws_access_key_id,
-            "AWS_SECRET_ACCESS_KEY": replay_parser_aws_secret_access_key,
+            "REPLAY_PARSER_AMQP_URL": rabbitmq_url,
+            "REPLAY_PARSER_S3_BUCKET": s3_bucket,
+            "AWS_ACCESS_KEY_ID": s3_access_key_id,
+            "AWS_SECRET_ACCESS_KEY": s3_secret_access_key,
         },
     ),
     secret("replays-fetcher-runtime", fetcher_runtime),
