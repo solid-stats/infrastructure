@@ -34,6 +34,10 @@ run manually with optional image overrides.
 Required GitHub environment secrets for `staging` are documented in
 `docs/staging.md`.
 
+See the Staging Handoff Matrix in `docs/staging.md` for the boundary between
+application repositories that build images and this repository that deploys
+staging runtime wiring.
+
 Validate the staging manifests, scripts, and rendered Secret structure before
 deploy:
 

@@ -101,6 +101,33 @@ legacy deploy jobs as part of Phase 1. The target steady state is:
 
 This keeps shared runtime state, storage, backups, and app wiring in one place.
 
+## Staging Handoff Matrix
+
+| Resource area | v1 source of truth | App repository action |
+|---------------|--------------------|-----------------------|
+| Namespace `solid-stats-staging` | infrastructure | Stop applying namespace manifests. |
+| PostgreSQL and RabbitMQ | infrastructure | Stop applying shared database and broker manifests. |
+| `server-2` Deployment, Service, and ConfigMap | infrastructure | Keep building/publishing images; stop applying staging runtime wiring after handoff. |
+| `replay-parser-2` Deployment | infrastructure | Keep building/publishing images; stop applying staging runtime wiring after handoff. |
+| `replays-fetcher` CronJob | infrastructure | Keep building/publishing images; do not enable schedule outside the infra full-run plan. |
+| PostgreSQL backup CronJob | infrastructure | Do not apply from app repositories. |
+
+Legacy app deploy workflows may remain during the transition, but any workflow
+that still applies these resources can overwrite the infra-owned staging state.
+
+## Update a pinned app image
+
+Application repositories publish images to GHCR. To deploy one in staging:
+
+1. Find the immutable image tag or SHA produced by the app repository.
+2. Update the matching image in this repository:
+   - `server-2`: `k8s/staging/35-server-2-deployment.yaml`
+   - `replay-parser-2`: `k8s/staging/40-replay-parser-2.yaml`
+   - `replays-fetcher`: `k8s/staging/50-replays-fetcher.yaml`
+3. Do not use `latest`.
+4. Run `python3 scripts/validate-staging.py`.
+5. Deploy through the infrastructure workflow or `./scripts/deploy-staging.sh`.
+
 ## Deploy and Verify
 
 Run local validation before applying manifests:

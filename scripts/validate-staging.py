@@ -55,6 +55,12 @@ EXPECTED_WORKLOADS = {
     "postgres-backup": {"kind": "CronJob", "file": "60-postgres-backup.yaml", "long_running": False},
 }
 
+APP_IMAGES = {
+    "server-2": "k8s/staging/35-server-2-deployment.yaml",
+    "replay-parser-2": "k8s/staging/40-replay-parser-2.yaml",
+    "replays-fetcher": "k8s/staging/50-replays-fetcher.yaml",
+}
+
 
 class ValidationError(Exception):
     pass
@@ -198,6 +204,16 @@ def validate_workload_safety() -> None:
             require("livenessProbe:" in text, f"{path.relative_to(ROOT)} workload {name} missing livenessProbe")
 
 
+def validate_app_image_pins() -> None:
+    for app_name, rel_path in APP_IMAGES.items():
+        text = (ROOT / rel_path).read_text()
+        image_lines = [line.strip().split("image:", 1)[1].strip() for line in text.splitlines() if line.strip().startswith("image: ghcr.io/solid-stats/")]
+        require(image_lines, f"{rel_path} missing GHCR app image for {app_name}")
+        for image in image_lines:
+            require(":latest" not in image, f"{rel_path} uses mutable latest image tag: {image}")
+            require(":" in image.rsplit("/", 1)[-1], f"{rel_path} image must use an explicit tag: {image}")
+
+
 def validate_rendered_secrets() -> None:
     env = os.environ.copy()
     env.update(
@@ -260,6 +276,7 @@ def main() -> int:
         ("script syntax", validate_scripts),
         ("manifest shape", validate_manifest_shape),
         ("workload safety", validate_workload_safety),
+        ("app image pins", validate_app_image_pins),
         ("rendered secret structure", validate_rendered_secrets),
     ]
     try:
