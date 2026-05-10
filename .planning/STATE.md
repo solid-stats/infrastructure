@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 Phase: 05 — COMPLETE
 Plan: Not planned yet
-Status: Phase 05 complete
-Last activity: 2026-05-10 -- Phase 05 marked complete
+Status: Milestone v1.0 complete
+Last activity: 2026-05-10 -- Milestone v1.0 audited and archived
 
 Progress: [----------] 0%
 

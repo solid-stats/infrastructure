@@ -127,6 +127,20 @@ exceptions for any workload that must run outside those defaults.
 
 ## Evolution
 
+## Current State
+
+v1.0 is complete. Staging infrastructure can be deployed from this repository,
+the PostgreSQL backup gate has a verified backup point, app image/build
+ownership is separated from infra-owned staging wiring, a controlled full-run
+command is available behind the backup gate, and diff readiness keeps
+production cutover blocked pending review.
+
+## Next Milestone Goals
+
+- Decide whether to execute the controlled full run now or keep it operator-run.
+- Use full-run evidence to drive old-vs-new statistics comparison.
+- Plan production/edge work only after diff review is clean enough.
+
 This document evolves at phase transitions and milestone boundaries.
 
 **After each phase transition**:
