@@ -15,3 +15,19 @@ if ! kubectl -n "$namespace" wait --for=condition=complete "job/$job_name" --tim
 fi
 
 kubectl -n "$namespace" logs "job/$job_name" --all-containers=true
+logs="$(kubectl -n "$namespace" logs "job/$job_name" --all-containers=true)"
+
+backup_id="$(printf '%s\n' "$logs" | awk -F= '/^backup_id=/{print $2}' | tail -1)"
+dump_object="$(printf '%s\n' "$logs" | awk -F= '/^dump_object=/{print $2}' | tail -1)"
+dump_size_bytes="$(printf '%s\n' "$logs" | awk -F= '/^dump_size_bytes=/{print $2}' | tail -1)"
+
+echo
+echo "Backup gate summary"
+echo "backup_id=${backup_id:-MISSING}"
+echo "dump_object=${dump_object:-MISSING}"
+echo "dump_size_bytes=${dump_size_bytes:-MISSING}"
+
+if [[ -z "$backup_id" || -z "$dump_object" || -z "$dump_size_bytes" ]]; then
+  echo "Backup gate failed: backup evidence is incomplete" >&2
+  exit 1
+fi

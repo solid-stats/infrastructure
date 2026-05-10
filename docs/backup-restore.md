@@ -33,6 +33,9 @@ dump_object=s3://<bucket>/backups/postgres/<timestamp>/solid_stats.dump
 dump_size_bytes=<bytes>
 ```
 
+Record the result in `docs/backup-gate.md`. Full-run work must remain blocked
+until that gate records a successful backup Job and restore-list validation.
+
 ## Validate a Backup Object
 
 Download the dump and list it:
