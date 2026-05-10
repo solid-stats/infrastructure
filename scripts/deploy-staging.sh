@@ -21,10 +21,10 @@ K8S_NAMESPACE="$namespace" "$repo_root/scripts/render-staging-secrets.py" > "$tm
 
 ssh "${ssh_args[@]}" "$target" "kubectl get namespace '$namespace' >/dev/null 2>&1 || kubectl create namespace '$namespace'"
 scp "${scp_args[@]}" "$tmp_secrets" "$target:/tmp/solid-stats-staging-secrets.yaml"
-ssh "${ssh_args[@]}" "$target" "kubectl apply -f /tmp/solid-stats-staging-secrets.yaml && rm -f /tmp/solid-stats-staging-secrets.yaml"
+ssh "${ssh_args[@]}" "$target" "kubectl apply --validate=false -f /tmp/solid-stats-staging-secrets.yaml && rm -f /tmp/solid-stats-staging-secrets.yaml"
 
 awk 'FNR == 1 { print "---" } { print }' "$repo_root"/k8s/staging/*.yaml \
-  | ssh "${ssh_args[@]}" "$target" "kubectl apply -f -"
+  | ssh "${ssh_args[@]}" "$target" "kubectl apply --validate=false -f -"
 
 echo "Verifying staging rollouts in namespace $namespace"
 ssh "${ssh_args[@]}" "$target" "kubectl -n '$namespace' rollout status statefulset/postgres --timeout=300s"

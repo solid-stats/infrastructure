@@ -12,7 +12,7 @@ key-files:
   - docs/staging.md
 metrics:
   tasks_completed: 2
-  deviations: 0
+  deviations: 1
 ---
 
 # Plan 01-03 Summary - Deploy verification surface
@@ -41,7 +41,18 @@ metrics:
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+**[Rule 1 - Bug] Remote apply validation needs RBAC that deploy ServiceAccount
+does not have** - Found during: live validation | Issue: `kubectl apply -f -`
+failed while checking CRDs because
+`system:serviceaccount:solid-stats-staging:github-***er` cannot list
+cluster-scoped CRDs. | Fix: changed both remote apply calls in
+`scripts/deploy-staging.sh` to `kubectl apply --validate=false`, matching the
+repo-local validator's offline dry-run behavior. | Files modified:
+`scripts/deploy-staging.sh` | Verification: `bash -n scripts/deploy-staging.sh`
+and `python3 scripts/validate-staging.py` pass. | Commit hash: pending
+
+**Total deviations:** 1 auto-fixed. **Impact:** deploy no longer requires
+cluster-scoped CRD list permissions for client-side validation.
 
 ## Self-Check: PASSED
 
