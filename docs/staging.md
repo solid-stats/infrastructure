@@ -52,6 +52,10 @@ existing PVC-backed StatefulSets. These images and mounted data directories
 should be tested in an isolated restore or replacement environment before
 tightening UID, filesystem group, capability, or privilege settings.
 
+RabbitMQ includes a narrow init container that repairs `.erlang.cookie`
+ownership and mode on the existing PVC before startup. This exists because
+RabbitMQ refuses to boot unless the cookie file is accessible by the owner only.
+
 ## Required GitHub Secrets
 
 The `staging` GitHub environment must define:

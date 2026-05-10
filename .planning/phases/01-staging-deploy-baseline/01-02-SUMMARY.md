@@ -16,7 +16,7 @@ key-files:
   - docs/staging.md
 metrics:
   tasks_completed: 3
-  deviations: 2
+  deviations: 3
 ---
 
 # Plan 01-02 Summary - Kubernetes hardening baseline
@@ -61,9 +61,18 @@ prove stricter UID/fsGroup/capability settings are safe. | Files modified:
 `docs/staging.md`, `scripts/validate-staging.py` | Verification:
 `python3 scripts/validate-staging.py` passes. | Commit hash: pending
 
-**Total deviations:** 2 auto-fixed. **Impact:** Phase 1 avoids destabilizing
-existing durable StatefulSets while still documenting and validating the
-exception.
+**[Rule 1 - Bug] RabbitMQ cookie permissions repaired on existing PVC** -
+Found during: live diagnostics | Issue: `rabbitmq-0` crashed with `Cookie file
+/var/lib/rabbitmq/.erlang.cookie must be accessible by owner only` after the
+earlier StatefulSet permission changes touched the PVC. | Fix: added a narrow
+`repair-erlang-cookie-permissions` init container to `k8s/staging/20-rabbitmq.yaml`
+that runs `chown 999:999` and `chmod 600` on the cookie file when it exists. |
+Files modified: `k8s/staging/20-rabbitmq.yaml`, `docs/staging.md` |
+Verification: `python3 scripts/validate-staging.py` passes; live rollout
+pending retry. | Commit hash: pending
+
+**Total deviations:** 3 auto-fixed. **Impact:** RabbitMQ can recover the
+existing PVC cookie permissions without deleting durable broker state.
 
 ## Self-Check: PASSED
 

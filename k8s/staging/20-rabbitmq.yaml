@@ -48,6 +48,28 @@ spec:
     spec:
       serviceAccountName: rabbitmq
       automountServiceAccountToken: false
+      initContainers:
+        - name: repair-erlang-cookie-permissions
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              if [ -f /var/lib/rabbitmq/.erlang.cookie ]; then
+                chown 999:999 /var/lib/rabbitmq/.erlang.cookie
+                chmod 600 /var/lib/rabbitmq/.erlang.cookie
+              fi
+          volumeMounts:
+            - name: rabbitmq-data
+              mountPath: /var/lib/rabbitmq
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
       containers:
         - name: rabbitmq
           image: rabbitmq:4-management
