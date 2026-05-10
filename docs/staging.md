@@ -22,11 +22,13 @@ Not owned here:
 
 - application source code
 - container image builds
-- production traffic cutover
+- production cutover
 - old statistics migration logic
 - host nginx, certificate renewal, and firewall automation
 - the future `web` runtime
 - immediate removal of legacy application deploy workflows
+- scheduled replay fetching before backup verification
+- backup gate execution, controlled full run, and diff readiness
 
 ## Kubernetes Hardening Exceptions
 
@@ -77,7 +79,8 @@ Application repositories build and push images. This repository pins the images
 that staging should run.
 
 During the transition, application repositories may still have legacy deploy
-jobs. The target steady state is:
+jobs. This overlap is intentional until Phase 3; do not remove or disable those
+legacy deploy jobs as part of Phase 1. The target steady state is:
 
 1. App repository builds an image.
 2. App repository publishes the image to GHCR.
@@ -85,8 +88,45 @@ jobs. The target steady state is:
 
 This keeps shared runtime state, storage, backups, and app wiring in one place.
 
+## Deploy and Verify
+
+Run local validation before applying manifests:
+
+```bash
+python3 scripts/validate-staging.py
+```
+
+Apply staging from this repository:
+
+```bash
+./scripts/deploy-staging.sh
+```
+
+The deploy script verifies these rollout states:
+
+```bash
+kubectl -n solid-stats-staging rollout status statefulset/postgres --timeout=300s
+kubectl -n solid-stats-staging rollout status statefulset/rabbitmq --timeout=300s
+kubectl -n solid-stats-staging rollout status deployment/server-2 --timeout=300s
+kubectl -n solid-stats-staging rollout status deployment/replay-parser-2 --timeout=300s
+```
+
+It then lists the runtime Service and CronJob surface:
+
+```bash
+kubectl -n solid-stats-staging get service postgres rabbitmq server-2 -o wide
+kubectl -n solid-stats-staging get cronjob replays-fetcher postgres-backup -o wide
+```
+
+Phase 1 lists `cronjob replays-fetcher postgres-backup` but does not force-run
+either CronJob.
+
 ## Replays Fetcher
 
 The `replays-fetcher` CronJob is intentionally deployed with `suspend: true`.
 Use a manual Job for the first controlled ingest run. Enable the schedule only
 after backup verification and a clean full-run plan.
+
+Keep `suspend: true` until backup verification and the controlled full-run
+phase pass. Kubernetes hardening exceptions in this document are temporary
+Phase 1 decisions until they can be verified against the staging k3s runtime.

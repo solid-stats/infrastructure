@@ -26,8 +26,11 @@ ssh "${ssh_args[@]}" "$target" "kubectl apply -f /tmp/solid-stats-staging-secret
 awk 'FNR == 1 { print "---" } { print }' "$repo_root"/k8s/staging/*.yaml \
   | ssh "${ssh_args[@]}" "$target" "kubectl apply -f -"
 
+echo "Verifying staging rollouts in namespace $namespace"
 ssh "${ssh_args[@]}" "$target" "kubectl -n '$namespace' rollout status statefulset/postgres --timeout=300s"
 ssh "${ssh_args[@]}" "$target" "kubectl -n '$namespace' rollout status statefulset/rabbitmq --timeout=300s"
 ssh "${ssh_args[@]}" "$target" "kubectl -n '$namespace' rollout status deployment/server-2 --timeout=300s"
 ssh "${ssh_args[@]}" "$target" "kubectl -n '$namespace' rollout status deployment/replay-parser-2 --timeout=300s"
+echo "Verifying staging services and scheduled jobs"
+ssh "${ssh_args[@]}" "$target" "kubectl -n '$namespace' get service postgres rabbitmq server-2 -o wide"
 ssh "${ssh_args[@]}" "$target" "kubectl -n '$namespace' get cronjob replays-fetcher postgres-backup -o wide"

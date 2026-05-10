@@ -34,6 +34,31 @@ run manually with optional image overrides.
 Required GitHub environment secrets for `staging` are documented in
 `docs/staging.md`.
 
+Validate the staging manifests, scripts, and rendered Secret structure before
+deploy:
+
+```bash
+python3 scripts/validate-staging.py
+```
+
+Apply staging from this repository with:
+
+```bash
+./scripts/deploy-staging.sh
+```
+
+The deploy script waits for `statefulset/postgres`,
+`statefulset/rabbitmq`, `deployment/server-2`, and
+`deployment/replay-parser-2`, then lists the `postgres`, `rabbitmq`, and
+`server-2` Services plus the `replays-fetcher` and `postgres-backup` CronJobs.
+
+Phase 1 owns the namespace, PostgreSQL, RabbitMQ, `server-2`,
+`replay-parser-2`, suspended `replays-fetcher`, and `postgres-backup`.
+Production cutover, host edge automation, application source/image builds,
+immediate legacy deploy removal, scheduled replay fetching, backup gate
+execution, full run, diff readiness, and the future `web` runtime stay outside
+this phase.
+
 ## Manual Backup
 
 After the staging manifests are applied:
