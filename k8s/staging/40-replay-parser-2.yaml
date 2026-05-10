@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: replay-parser-2
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: replay-parser-2
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: replay-parser-2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: replay-parser-2
+        app.kubernetes.io/part-of: solid-stats
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: replay-parser-2
+          image: ghcr.io/solid-stats/replay-parser-2:5e09d33c2d02f67407d9f9921c72434076eee3e2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: probes
+              containerPort: 8080
+          env:
+            - name: REPLAY_PARSER_JOB_QUEUE
+              value: server2.parse.requested
+            - name: REPLAY_PARSER_RESULT_EXCHANGE
+              value: solid_stats.parser
+            - name: REPLAY_PARSER_COMPLETED_ROUTING_KEY
+              value: parse.completed
+            - name: REPLAY_PARSER_FAILED_ROUTING_KEY
+              value: parse.failed
+            - name: REPLAY_PARSER_S3_ENDPOINT
+              value: https://s3.twcstorage.ru
+            - name: AWS_REGION
+              value: ru-1
+            - name: REPLAY_PARSER_S3_FORCE_PATH_STYLE
+              value: "true"
+            - name: REPLAY_PARSER_ARTIFACT_PREFIX
+              value: artifacts/v3
+            - name: REPLAY_PARSER_PREFETCH
+              value: "1"
+            - name: REPLAY_PARSER_PROBE_BIND
+              value: 0.0.0.0
+            - name: REPLAY_PARSER_PROBE_PORT
+              value: "8080"
+            - name: REPLAY_PARSER_PROBES_ENABLED
+              value: "true"
+          envFrom:
+            - secretRef:
+                name: replay-parser-2-runtime
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: probes
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi

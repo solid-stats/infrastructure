@@ -1,0 +1,91 @@
+name: Deploy staging infrastructure
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: infrastructure-staging-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  K8S_NAMESPACE: solid-stats-staging
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Check YAML document markers
+        run: |
+          set -euo pipefail
+          test -d k8s/staging
+          test -f scripts/render-staging-secrets.py
+          test -f scripts/deploy-staging.sh
+          find k8s/staging -type f -name '*.yaml' -print | sort
+
+  deploy:
+    name: Deploy to k3s
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: validate
+    if: github.event_name != 'pull_request'
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install SSH key
+        env:
+          CD_SSH_PRIVATE_KEY: ${{ secrets.CD_SSH_PRIVATE_KEY }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$CD_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+      - name: Trust deploy host
+        env:
+          CD_SSH_HOST: ${{ secrets.CD_SSH_HOST }}
+          CD_SSH_PORT: ${{ secrets.CD_SSH_PORT || '22' }}
+        run: ssh-keyscan -p "$CD_SSH_PORT" "$CD_SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Apply staging manifests
+        env:
+          CD_SSH_HOST: ${{ secrets.CD_SSH_HOST }}
+          CD_SSH_PORT: ${{ secrets.CD_SSH_PORT || '22' }}
+          CD_SSH_USER: ${{ secrets.CD_SSH_USER }}
+          CD_SSH_KEY_PATH: ~/.ssh/deploy_key
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+          SERVER2_BOOTSTRAP_ADMIN_STEAM_ID: ${{ secrets.SERVER2_BOOTSTRAP_ADMIN_STEAM_ID }}
+          SERVER2_DATABASE_URL: ${{ secrets.SERVER2_DATABASE_URL }}
+          SERVER2_RABBITMQ_URL: ${{ secrets.SERVER2_RABBITMQ_URL }}
+          SERVER2_S3_ACCESS_KEY_ID: ${{ secrets.SERVER2_S3_ACCESS_KEY_ID }}
+          SERVER2_S3_BUCKET: ${{ secrets.SERVER2_S3_BUCKET }}
+          SERVER2_S3_SECRET_ACCESS_KEY: ${{ secrets.SERVER2_S3_SECRET_ACCESS_KEY }}
+          REPLAY_PARSER_AMQP_URL: ${{ secrets.REPLAY_PARSER_AMQP_URL }}
+          REPLAY_PARSER_S3_BUCKET: ${{ secrets.REPLAY_PARSER_S3_BUCKET }}
+          REPLAY_PARSER_AWS_ACCESS_KEY_ID: ${{ secrets.REPLAY_PARSER_AWS_ACCESS_KEY_ID }}
+          REPLAY_PARSER_AWS_SECRET_ACCESS_KEY: ${{ secrets.REPLAY_PARSER_AWS_SECRET_ACCESS_KEY }}
+          REPLAYS_FETCHER_DATABASE_URL: ${{ secrets.REPLAYS_FETCHER_DATABASE_URL }}
+          REPLAYS_FETCHER_REPLAY_SOURCE_TRANSPORT: ${{ secrets.REPLAYS_FETCHER_REPLAY_SOURCE_TRANSPORT }}
+          REPLAYS_FETCHER_REPLAY_SOURCE_URL: ${{ secrets.REPLAYS_FETCHER_REPLAY_SOURCE_URL }}
+          REPLAYS_FETCHER_REPLAY_SOURCE_SSH_HOST: ${{ secrets.REPLAYS_FETCHER_REPLAY_SOURCE_SSH_HOST }}
+          REPLAYS_FETCHER_REPLAY_SOURCE_SSH_COMMAND: ${{ secrets.REPLAYS_FETCHER_REPLAY_SOURCE_SSH_COMMAND }}
+          REPLAYS_FETCHER_S3_ACCESS_KEY_ID: ${{ secrets.REPLAYS_FETCHER_S3_ACCESS_KEY_ID }}
+          REPLAYS_FETCHER_S3_BUCKET: ${{ secrets.REPLAYS_FETCHER_S3_BUCKET }}
+          REPLAYS_FETCHER_S3_SECRET_ACCESS_KEY: ${{ secrets.REPLAYS_FETCHER_S3_SECRET_ACCESS_KEY }}
+        run: ./scripts/deploy-staging.sh

@@ -1,0 +1,126 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: postgres-backup
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  schedule: "15 4 * * *"
+  timeZone: Asia/Barnaul
+  suspend: false
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: postgres-backup
+            app.kubernetes.io/part-of: solid-stats
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          containers:
+            - name: postgres-backup
+              image: postgres:17-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  apk add --no-cache aws-cli
+
+                  backup_id="$(date -u +%Y%m%dT%H%M%SZ)"
+                  created_at="$(date -u +%FT%TZ)"
+                  object_prefix="${BACKUP_PREFIX%/}/${backup_id}"
+                  dump_path="/tmp/solid_stats.dump"
+                  list_path="/tmp/solid_stats.dump.list"
+                  manifest_path="/tmp/manifest.json"
+
+                  export PGPASSWORD="${POSTGRES_PASSWORD}"
+                  export AWS_CONFIG_FILE="/tmp/aws-config"
+                  aws configure set default.s3.addressing_style path
+
+                  pg_dump \
+                    --host="${POSTGRES_HOST}" \
+                    --port="${POSTGRES_PORT}" \
+                    --username="${POSTGRES_USER}" \
+                    --dbname="${POSTGRES_DB}" \
+                    --format=custom \
+                    --no-owner \
+                    --no-privileges \
+                    --file="${dump_path}"
+
+                  pg_restore --list "${dump_path}" > "${list_path}"
+                  dump_size_bytes="$(wc -c < "${dump_path}" | tr -d ' ')"
+                  dump_object="s3://${S3_BUCKET}/${object_prefix}/solid_stats.dump"
+                  list_object="${dump_object}.list"
+                  manifest_object="s3://${S3_BUCKET}/${object_prefix}/manifest.json"
+
+                  cat > "${manifest_path}" <<EOF
+                  {
+                    "backup_id": "${backup_id}",
+                    "created_at": "${created_at}",
+                    "database": "${POSTGRES_DB}",
+                    "dump_object": "${dump_object}",
+                    "list_object": "${list_object}",
+                    "dump_size_bytes": ${dump_size_bytes}
+                  }
+                  EOF
+
+                  aws --endpoint-url="${S3_ENDPOINT}" s3 cp "${dump_path}" "${dump_object}" --only-show-errors
+                  aws --endpoint-url="${S3_ENDPOINT}" s3 cp "${list_path}" "${list_object}" --only-show-errors
+                  aws --endpoint-url="${S3_ENDPOINT}" s3 cp "${manifest_path}" "${manifest_object}" --only-show-errors
+
+                  echo "backup_id=${backup_id}"
+                  echo "dump_object=${dump_object}"
+                  echo "dump_size_bytes=${dump_size_bytes}"
+              env:
+                - name: POSTGRES_HOST
+                  value: postgres
+                - name: POSTGRES_PORT
+                  value: "5432"
+                - name: POSTGRES_DB
+                  value: solid_stats
+                - name: POSTGRES_USER
+                  value: solid
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-auth
+                      key: POSTGRES_PASSWORD
+                - name: S3_ENDPOINT
+                  value: https://s3.twcstorage.ru
+                - name: S3_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: server-2-runtime
+                      key: S3_BUCKET
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: server-2-runtime
+                      key: S3_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: server-2-runtime
+                      key: S3_SECRET_ACCESS_KEY
+                - name: AWS_DEFAULT_REGION
+                  value: ru-1
+                - name: AWS_EC2_METADATA_DISABLED
+                  value: "true"
+                - name: BACKUP_PREFIX
+                  value: backups/postgres
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi

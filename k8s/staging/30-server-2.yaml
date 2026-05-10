@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: server-2-config
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: server-2
+    app.kubernetes.io/part-of: solid-stats
+data:
+  NODE_ENV: production
+  HOST: 0.0.0.0
+  PORT: "3000"
+  LOG_LEVEL: info
+  PARSER_CONTRACT_VERSION: 3.0.0
+  INGEST_PROMOTION_BATCH_SIZE: "25"
+  PARSE_JOB_PUBLISH_BATCH_SIZE: "25"
+  RUNTIME_POLL_INTERVAL_MS: "5000"
+  PUBLIC_BASE_URL: https://stats-staging.solid-stats.ru
+  SESSION_COOKIE_NAME: solid_stats_session
+  SESSION_TTL_SECONDS: "2592000"
+  S3_ENDPOINT: https://s3.twcstorage.ru
+  S3_REGION: ru-1
+  S3_FORCE_PATH_STYLE: "true"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: server-2
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: server-2
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: server-2

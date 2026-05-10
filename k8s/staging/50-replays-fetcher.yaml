@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: replays-fetcher
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: replays-fetcher
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  schedule: "*/30 * * * *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: replays-fetcher
+            app.kubernetes.io/part-of: solid-stats
+        spec:
+          restartPolicy: Never
+          imagePullSecrets:
+            - name: ghcr-pull
+          containers:
+            - name: replays-fetcher
+              image: ghcr.io/solid-stats/replays-fetcher:42614e08570b94f3d996ac8c3f60e831d9468894
+              imagePullPolicy: IfNotPresent
+              args: ["run-once"]
+              env:
+                - name: S3_ENDPOINT
+                  value: https://s3.twcstorage.ru
+                - name: S3_REGION
+                  value: ru-1
+                - name: S3_FORCE_PATH_STYLE
+                  value: "true"
+              envFrom:
+                - secretRef:
+                    name: replays-fetcher-runtime
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi

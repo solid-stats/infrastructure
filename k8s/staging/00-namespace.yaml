@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: solid-stats-staging
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
