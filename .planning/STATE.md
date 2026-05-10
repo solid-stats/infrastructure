@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-10)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 2: Backup Gate
+**Current focus:** Phase 3: App CD Boundary
 
 ## Current Position
 
-Phase: 02 — COMPLETE
+Phase: 03 — COMPLETE
 Plan: Not planned yet
-Status: Phase 02 complete
-Last activity: 2026-05-10 -- Phase 02 marked complete
+Status: Phase 03 complete
+Last activity: 2026-05-10 -- Phase 03 marked complete
 
 Progress: [----------] 0%
 
