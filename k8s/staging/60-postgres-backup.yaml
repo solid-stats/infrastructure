@@ -89,6 +89,8 @@ spec:
 
                   echo "backup_id=${backup_id}"
                   echo "dump_object=${dump_object}"
+                  echo "list_object=${list_object}"
+                  echo "manifest_object=${manifest_object}"
                   echo "dump_size_bytes=${dump_size_bytes}"
               env:
                 - name: POSTGRES_HOST

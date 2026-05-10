@@ -20,6 +20,8 @@ Status: pending
 |-------|-------|
 | Backup ID | pending |
 | Dump object | pending |
+| Restore-list object | pending |
+| Manifest object | pending |
 | Dump size bytes | pending |
 | Verified at | pending |
 | Verified by | pending |
