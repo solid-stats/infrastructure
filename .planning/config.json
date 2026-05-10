@@ -1,0 +1,89 @@
+{
+  "model_profile": "quality",
+  "mode": "yolo",
+  "granularity": "fine",
+  "commit_docs": true,
+  "search_gitignored": false,
+  "phase_naming": "sequential",
+  "project_code": null,
+  "response_language": "Russian",
+  "context_window": 200000,
+  "resolve_model_ids": "omit",
+  "context": null,
+  "review": {
+    "models": {
+      "gemini": null,
+      "claude": null,
+      "codex": null,
+      "opencode": null,
+      "ollama": null,
+      "lm_studio": null,
+      "llama_cpp": null
+    }
+  },
+  "workflow": {
+    "research": true,
+    "plan_check": true,
+    "verifier": true,
+    "nyquist_validation": true,
+    "auto_prune_state": false,
+    "auto_advance": false,
+    "node_repair": true,
+    "node_repair_budget": 2,
+    "ai_integration_phase": true,
+    "ui_phase": true,
+    "ui_safety_gate": true,
+    "text_mode": false,
+    "research_before_questions": true,
+    "discuss_mode": "discuss",
+    "skip_discuss": false,
+    "use_worktrees": true,
+    "subagent_timeout": 1200000,
+    "inline_plan_threshold": 2,
+    "code_review": true,
+    "code_review_depth": "deep",
+    "_auto_chain_active": false,
+    "security_enforcement": true,
+    "security_asvs_level": 2,
+    "security_block_on": "high",
+    "post_planning_gaps": true
+  },
+  "git": {
+    "branching_strategy": "none",
+    "base_branch": null,
+    "phase_branch_template": "gsd/phase-{phase}-{slug}",
+    "milestone_branch_template": "gsd/{milestone}-{slug}",
+    "quick_branch_template": null
+  },
+  "brave_search": false,
+  "firecrawl": false,
+  "exa_search": false,
+  "features": {
+    "thinking_partner": true,
+    "global_learnings": true
+  },
+  "hooks": {
+    "context_warnings": true
+  },
+  "learnings": {
+    "max_inject": 10
+  },
+  "intel": {
+    "enabled": true
+  },
+  "manager": {
+    "flags": {
+      "discuss": "",
+      "plan": "",
+      "execute": ""
+    }
+  },
+  "parallelization": true,
+  "model_overrides": null,
+  "agent_skills": {},
+  "planning": {
+    "commit_docs": true,
+    "search_gitignored": false,
+    "sub_repos": []
+  }
+}
