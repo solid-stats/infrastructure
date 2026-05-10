@@ -14,20 +14,20 @@ backup point is verified.
 
 ## Latest verified backup
 
-Status: pending
+Status: verified
 
 | Field | Value |
 |-------|-------|
-| Backup ID | pending |
-| Dump object | pending |
-| Restore-list object | pending |
-| Manifest object | pending |
-| Dump size bytes | pending |
-| Verified at | pending |
-| Verified by | pending |
-| Evidence | pending |
+| Backup ID | `20260510T073635Z` |
+| Dump object | `s3://sg-replays/backups/postgres/20260510T073635Z/solid_stats.dump` |
+| Restore-list object | `s3://sg-replays/backups/postgres/20260510T073635Z/solid_stats.dump.list` |
+| Manifest object | `s3://sg-replays/backups/postgres/20260510T073635Z/manifest.json` |
+| Dump size bytes | `61286` |
+| Verified at | `2026-05-10T07:36:35Z` |
+| Verified by | `postgres-backup-manual-20260510073632` |
+| Evidence | Job completed; logs emitted backup id, dump object, list object, manifest object, and dump size. |
 
 ## Full-run remains blocked
 
-Full-run remains blocked until the latest verified backup section is updated
-with a successful backup Job result.
+Full-run may proceed only while this latest verified backup remains acceptable
+for the planned ingest window.
