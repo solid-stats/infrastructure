@@ -3,3 +3,4 @@
 !.env.example
 *.log
 tmp/
+__pycache__
