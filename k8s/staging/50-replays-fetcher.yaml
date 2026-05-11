@@ -37,7 +37,7 @@ spec:
             - name: ghcr-pull
           containers:
             - name: replays-fetcher
-              image: ghcr.io/solid-stats/replays-fetcher:542b43d2c6141e95f1dfe13207c9944ef5913159
+              image: ghcr.io/solid-stats/replays-fetcher:8395fbc58df3422a235d0a198e34eaf460491f21
               imagePullPolicy: IfNotPresent
               args: ["run-once"]
               env:
@@ -47,6 +47,8 @@ spec:
                   value: ru-1
                 - name: S3_FORCE_PATH_STYLE
                   value: "true"
+                - name: REPLAY_SOURCE_MAX_PAGES
+                  value: "786"
               envFrom:
                 - secretRef:
                     name: replays-fetcher-runtime
