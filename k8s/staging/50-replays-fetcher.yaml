@@ -37,7 +37,7 @@ spec:
             - name: ghcr-pull
           containers:
             - name: replays-fetcher
-              image: ghcr.io/solid-stats/replays-fetcher:42614e08570b94f3d996ac8c3f60e831d9468894
+              image: ghcr.io/solid-stats/replays-fetcher:542b43d2c6141e95f1dfe13207c9944ef5913159
               imagePullPolicy: IfNotPresent
               args: ["run-once"]
               env:
