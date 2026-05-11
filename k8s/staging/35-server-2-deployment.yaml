@@ -47,7 +47,7 @@ spec:
             - until nc -z rabbitmq 5672; do sleep 2; done
       containers:
         - name: server-2
-          image: ghcr.io/solid-stats/server-2:8ff00358a034a3b653cd43abdc7a1e1affe2bd59
+          image: ghcr.io/solid-stats/server-2:3866f6b422c506a429e12658aaaedb0dd5c16b8e
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
