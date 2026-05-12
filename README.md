@@ -27,6 +27,8 @@ repository owns how those images are wired together in staging.
 - `docs/backup-restore.md` - PostgreSQL backup and restore runbook.
 - `docs/diff-readiness.md` - old-vs-new statistics diff contract and cutover
   block.
+- `docs/observability-plan.md` - proposed staging observability architecture
+  and rollout plan.
 
 ## Deploy
 
