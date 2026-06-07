@@ -6,6 +6,12 @@
       "sourceType": "github",
       "skillPath": "skills/kubernetes-specialist/SKILL.md",
       "computedHash": "9c5eb68fc9d553ee29e745258bc6198563158c4b2c57436d63647e61010b5f0a"
+    },
+    "solidstats-process-project-standards": {
+      "source": "solid-stats/skills",
+      "sourceType": "github",
+      "skillPath": "solidstats-process-project-standards/SKILL.md",
+      "computedHash": "4333ac10b8f09bea8e3bfc79f3ad041de5b19a95eac4d14d8a810eae98bf33d6"
     }
   }
 }
