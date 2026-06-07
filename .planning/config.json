@@ -1,5 +1,5 @@
 {
-  "model_profile": "quality",
+  "model_profile": "adaptive",
   "mode": "yolo",
   "granularity": "fine",
   "commit_docs": true,
@@ -7,7 +7,7 @@
   "phase_naming": "sequential",
   "project_code": null,
   "response_language": "Russian",
-  "context_window": 200000,
+  "context_window": 1000000,
   "resolve_model_ids": "omit",
   "context": null,
   "review": {
@@ -46,7 +46,8 @@
     "security_enforcement": true,
     "security_asvs_level": 2,
     "security_block_on": "high",
-    "post_planning_gaps": true
+    "post_planning_gaps": true,
+    "plan_review_convergence": true
   },
   "git": {
     "branching_strategy": "none",
@@ -63,7 +64,8 @@
     "global_learnings": true
   },
   "hooks": {
-    "context_warnings": true
+    "context_warnings": true,
+    "workflow_guard": true
   },
   "learnings": {
     "max_inject": 10
@@ -121,6 +123,9 @@
       ".agents/skills/kubernetes-specialist"
     ],
     "gsd-roadmapper": [
+      ".agents/skills/kubernetes-specialist"
+    ],
+    "gsd-pattern-mapper": [
       ".agents/skills/kubernetes-specialist"
     ]
   },
