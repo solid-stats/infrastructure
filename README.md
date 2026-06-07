@@ -27,8 +27,10 @@ repository owns how those images are wired together in staging.
 - `docs/backup-restore.md` - PostgreSQL backup and restore runbook.
 - `docs/diff-readiness.md` - old-vs-new statistics diff contract and cutover
   block.
-- `docs/observability-plan.md` - proposed staging observability architecture
-  and rollout plan.
+
+Forward-looking planning docs live in the central plans repo. The staging
+observability architecture/rollout plan is at
+`/home/afgan0r/Projects/SolidGames/plans/infrastructure/briefs/observability-plan.md`.
 
 ## Deploy
 
