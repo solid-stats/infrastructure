@@ -79,7 +79,7 @@ the backup-before-full-run safety gate and avoid secret leakage.
 - The backup CronJob uses `server-2-runtime` S3 keys and `postgres-auth` for the
   database password.
 - Phase 4 full-run work must consult the backup gate before starting ingest.
-- Live verification can run over SSH against `deploy@89.223.124.200` with the
+- Live verification can run over SSH against `deploy@$STAGING_HOST` with the
   staging deploy key when available.
 
 </code_context>

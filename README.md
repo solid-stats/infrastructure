@@ -30,7 +30,7 @@ repository owns how those images are wired together in staging.
 
 Forward-looking planning docs live in the central plans repo. The staging
 observability architecture/rollout plan is at
-`/home/afgan0r/Projects/SolidGames/plans/infrastructure/briefs/observability-plan.md`.
+`plans/infrastructure/briefs/observability-plan.md`.
 
 ## Deploy
 
