@@ -111,9 +111,68 @@
           }
         ]
       }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/home/afgan0r/.nvm/versions/node/v22.16.0/bin/node\" \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/gsd-context-monitor.js",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/home/afgan0r/.nvm/versions/node/v22.16.0/bin/node\" \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/gsd-context-monitor.js",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/home/afgan0r/.nvm/versions/node/v22.16.0/bin/node\" \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/gsd-context-monitor.js",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "FileChanged": [
+      {
+        "matcher": "config.json",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/home/afgan0r/.nvm/versions/node/v22.16.0/bin/node\" \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/gsd-config-reload.js",
+            "timeout": 8
+          }
+        ]
+      }
     ]
   },
   "worktree": {
     "baseRef": "head"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npx gsd-core *)",
+      "Read(.planning/*)",
+      "Write(.planning/*)",
+      "Read(STATE.md)",
+      "Write(STATE.md)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(.secrets)"
+    ]
   }
 }

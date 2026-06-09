@@ -34,7 +34,10 @@ const VALID_CHOICES = ['keep', 'remove'];
 exports.BUNDLED_GSD_HOOK_FILES = Object.freeze(new Set([
     'hooks/gsd-check-update-worker.js',
     'hooks/gsd-check-update.js',
+    'hooks/gsd-config-reload.js',
     'hooks/gsd-context-monitor.js',
+    'hooks/gsd-cursor-post-tool.js',
+    'hooks/gsd-cursor-session-start.js',
     'hooks/gsd-graphify-update.sh',
     'hooks/gsd-phase-boundary.sh',
     'hooks/gsd-prompt-guard.js',

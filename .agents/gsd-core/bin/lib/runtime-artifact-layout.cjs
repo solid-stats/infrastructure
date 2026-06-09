@@ -18,7 +18,7 @@ const node_path_1 = __importDefault(require("node:path"));
 const node_fs_1 = __importDefault(require("node:fs"));
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const installProfiles = require("./install-profiles.cjs");
-const { stageSkillsForProfile, stageAgentsForProfile, stageSkillsForRuntimeAsSkills, } = installProfiles;
+const { stageSkillsForProfile, stageAgentsForProfile, stageSkillsForRuntimeAsSkills, stageCommandsForRuntimeFlat, } = installProfiles;
 // In .cts (CommonJS output) files, `require` is available as a global.
 const _require = require;
 /**
@@ -175,6 +175,34 @@ function skillsKind(destSubpath, prefix, converterName, runtime, configDir) {
         },
     };
 }
+/**
+ * Build a converted-commands kind descriptor for runtimes that use a flat
+ * commands directory with per-file conversion (e.g. Cursor 1.6 slash commands).
+ *
+ * Unlike `commandsKind` (which passes raw source files through), this kind
+ * applies `converterName` from bin/install.js exports to each file during
+ * staging, writing flat `${prefix}${stem}.md` files to the staged directory.
+ *
+ * The staged files are then written by `_copyStaged` (commands branch) which
+ * handles prefix logic via the existing layout machinery.
+ *
+ * @param destSubpath   destination subpath within configDir (e.g. 'commands')
+ * @param prefix        filename prefix, e.g. 'gsd-'
+ * @param converterName name of converter function in bin/install.js exports
+ * @param configDir     runtime config dir (for .gsd-source marker resolution)
+ */
+function convertedCommandsKind(destSubpath, prefix, converterName, configDir) {
+    return {
+        kind: 'commands',
+        destSubpath,
+        prefix,
+        stage: (resolved) => {
+            const installExports = getInstallExports();
+            const converter = installExports[converterName];
+            return stageCommandsForRuntimeFlat(findInstallSourceRoot(configDir), resolved, converter, prefix);
+        },
+    };
+}
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -205,7 +233,14 @@ function resolveRuntimeArtifactLayout(runtime, configDir, scope = 'global') {
             }
             break;
         case 'cursor':
-            kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToCursorSkill', 'cursor', configDir)];
+            // Cursor 1.6+ supports two artifact surfaces:
+            //   1. skills/gsd-<name>/SKILL.md  — rich skills with frontmatter + adapter header
+            //   2. commands/gsd-<name>.md      — plain markdown slash commands (no frontmatter)
+            //      accessed via '/' in the Agent input (#785)
+            kinds = [
+                skillsKind('skills', 'gsd-', 'convertClaudeCommandToCursorSkill', 'cursor', configDir),
+                convertedCommandsKind('commands', 'gsd-', 'convertClaudeCommandToCursorCommand', configDir),
+            ];
             break;
         case 'gemini':
             kinds = [commandsKind('commands/gsd', 'gsd-', configDir)];
@@ -223,7 +258,10 @@ function resolveRuntimeArtifactLayout(runtime, configDir, scope = 'global') {
             kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToWindsurfSkill', 'windsurf', configDir)];
             break;
         case 'augment':
-            kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToAugmentSkill', 'augment', configDir)];
+            kinds = [
+                commandsKind('commands', 'gsd-', configDir),
+                skillsKind('skills', 'gsd-', 'convertClaudeCommandToAugmentSkill', 'augment', configDir),
+            ];
             break;
         case 'trae':
             kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToTraeSkill', 'trae', configDir)];
@@ -235,20 +273,40 @@ function resolveRuntimeArtifactLayout(runtime, configDir, scope = 'global') {
             kinds = [skillsKind('skills/gsd', '', 'convertClaudeCommandToClaudeSkill', 'hermes', configDir)];
             break;
         case 'codebuddy':
-            kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToCodebuddySkill', 'codebuddy', configDir)];
+            // CodeBuddy (Tencent) reads two user-level surfaces (codebuddy.ai/docs/cli):
+            //   1. commands/gsd-<name>.md      — slash commands shown in the '/' menu (#789)
+            //   2. skills/gsd-<name>/SKILL.md  — model-invocable skills, emitted with
+            //      user-invocable:false so they stay OUT of '/' (the commands surface is
+            //      the sole '/' entry point) — avoids a duplicated /gsd-* per workflow.
+            // Subagents (~/.codebuddy/agents/) are already emitted by the generic agents
+            // block in bin/install.js; MCP is excluded (gsd ships no MCP server).
+            kinds = [
+                convertedCommandsKind('commands', 'gsd-', 'convertClaudeCommandToCodebuddyCommand', configDir),
+                skillsKind('skills', 'gsd-', 'convertClaudeCommandToCodebuddySkill', 'codebuddy', configDir),
+            ];
             break;
         case 'cline':
-            kinds = [];
+            kinds = scope === 'global' ? [skillsKind('skills', 'gsd-', 'convertClaudeCommandToClineSkill', 'cline', configDir)] : [];
             break;
         case 'opencode':
-            kinds = [commandsKind('command', 'gsd-', configDir)];
+            // OpenCode reads flat slash commands from command/ and on-demand skills
+            // from skills/<name>/SKILL.md (https://opencode.ai/docs/skills). Emit both.
+            kinds = [
+                commandsKind('command', 'gsd-', configDir),
+                skillsKind('skills', 'gsd-', 'convertClaudeCommandToOpencodeSkill', 'opencode', configDir),
+            ];
             break;
         case 'kilo':
-            kinds = [commandsKind('command', 'gsd-', configDir)];
+            // Kilo derives from OpenCode and shares the skills/<name>/SKILL.md layout
+            // (https://kilo.ai/docs/customize/skills). Emit flat commands + skills.
+            kinds = [
+                commandsKind('command', 'gsd-', configDir),
+                skillsKind('skills', 'gsd-', 'convertClaudeCommandToKiloSkill', 'kilo', configDir),
+            ];
             break;
         default:
             throw new TypeError(`Unknown runtime: '${runtime}' — add to runtime-artifact-layout.cjs table`);
     }
-    return { runtime, configDir, kinds };
+    return { runtime, configDir, scope, kinds };
 }
-module.exports = { resolveRuntimeArtifactLayout, findInstallSourceRoot };
+module.exports = { resolveRuntimeArtifactLayout, findInstallSourceRoot, getInstallExports };

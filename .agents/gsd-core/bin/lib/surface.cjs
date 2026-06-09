@@ -26,6 +26,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
+const node_os_1 = __importDefault(require("node:os"));
 const shell_command_projection_cjs_1 = require("./shell-command-projection.cjs");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const installProfiles = require("./install-profiles.cjs");
@@ -33,7 +34,7 @@ const { readActiveProfile, resolveProfile, loadSkillsManifest, } = installProfil
 const clusters_cjs_1 = require("./clusters.cjs");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const runtimeArtifactLayout = require("./runtime-artifact-layout.cjs");
-const { findInstallSourceRoot } = runtimeArtifactLayout;
+const { findInstallSourceRoot, getInstallExports } = runtimeArtifactLayout;
 const SURFACE_FILE_NAME = '.gsd-surface.json';
 /**
  * Read the surface state from a runtime config directory.
@@ -210,8 +211,29 @@ function applySurface(runtimeConfigDir, layout, manifest, clusterMap) {
     }
     const skillManifest = normalizeSkillManifest(layout.configDir, manifest);
     const resolved = resolveSurface(layout.configDir, skillManifest, clusterMap);
+    // Mirror installRuntimeArtifacts: skills kinds get per-runtime path rewrites
+    // so SKILL.md bodies reference the install target (pathPrefix), not the
+    // converter's default ~/.claude paths (#813). Computed lazily so command-only
+    // runtimes do not trigger the install.js require.
+    let pathPrefix = null;
     for (const kind of layout.kinds) {
         const staged = kind.stage(resolved);
+        if (kind.kind === 'skills') {
+            const installExports = getInstallExports();
+            if (pathPrefix === null) {
+                const scope = layout.scope ?? 'global';
+                const resolvedTarget = node_path_1.default.resolve(layout.configDir).replace(/\\/g, '/');
+                const homeDir = node_os_1.default.homedir().replace(/\\/g, '/');
+                pathPrefix = installExports.computePathPrefix({
+                    isGlobal: scope === 'global',
+                    isOpencode: layout.runtime === 'opencode',
+                    isWindowsHost: process.platform === 'win32',
+                    resolvedTarget,
+                    homeDir,
+                });
+            }
+            installExports.applyRuntimeContentRewritesInPlace(staged, layout.runtime, pathPrefix);
+        }
         const dest = node_path_1.default.join(layout.configDir, kind.destSubpath);
         _syncGsdDir(staged, dest, kind, skillManifest);
     }
@@ -335,20 +357,41 @@ function _syncGsdDir(stagedDir, destDir, kind, manifest) {
         pruneSkillDirs(destDir, stagedDirs, kindPrefix, manifest);
     }
     else {
-        // commands / agents kind: work with .md files
-        const stagedFiles = new Set(node_fs_1.default.readdirSync(stagedDir).filter(f => f.endsWith('.md')));
-        // Copy files from staged to dest (overwrite to keep content current)
+        // commands / agents kind: mirror installRuntimeArtifacts (_copyStaged /
+        // _removeGsdEntries in bin/install.js) so surface produces the SAME files as a
+        // fresh install (#816). Flat command dirs (opencode/cursor/augment/kilo) take
+        // the gsd- prefix on copy; namespaced command dirs (commands/gsd) and agents
+        // keep their staged names. Copying staged names verbatim previously diverged
+        // from install and orphaned the installed gsd-*.md files, and the unscoped
+        // prune deleted user-owned command files.
+        //
+        // NOTE: the destName rule below intentionally mirrors bin/install.js
+        // `_copyStaged` (the `namespacedByDir` decision). Keep them in sync.
+        const destLast = (typeof kind === 'object' && kind !== null && kind.destSubpath)
+            ? node_path_1.default.basename(kind.destSubpath)
+            : '';
+        const prefixStem = kindPrefix ? kindPrefix.replace(/-$/, '') : '';
+        const namespacedByDir = kindName === 'commands' && destLast === prefixStem;
+        const stagedFiles = node_fs_1.default.readdirSync(stagedDir).filter(f => f.endsWith('.md'));
+        const stagedDestNames = new Set();
         for (const file of stagedFiles) {
-            node_fs_1.default.copyFileSync(node_path_1.default.join(stagedDir, file), node_path_1.default.join(destDir, file));
+            const destName = (kindName === 'agents' || namespacedByDir)
+                ? file
+                : `${kindPrefix}${file.slice(0, -3)}.md`;
+            node_fs_1.default.copyFileSync(node_path_1.default.join(stagedDir, file), node_path_1.default.join(destDir, destName));
+            stagedDestNames.add(destName);
         }
-        // Remove gsd-only files from dest that aren't in staged set
-        // For commands dir: all .md files are gsd skills
-        // For agents dir: only gsd-* files
-        const destEntries = node_fs_1.default.readdirSync(destDir).filter(f => f.endsWith('.md'));
-        for (const file of destEntries) {
+        // Prune stale GSD-owned files not in the staged set, preserving user-owned files
+        // (mirrors install's prefix-scoped _removeGsdEntries):
+        //   - agents: only gsd-* are GSD-owned
+        //   - flat command dirs: only `${kindPrefix}`-prefixed are GSD-owned
+        //   - namespaced command dirs: the whole dir is GSD-owned
+        for (const file of node_fs_1.default.readdirSync(destDir).filter(f => f.endsWith('.md'))) {
             if (kindName === 'agents' && !file.startsWith('gsd-'))
                 continue;
-            if (!stagedFiles.has(file)) {
+            if (kindName === 'commands' && !namespacedByDir && kindPrefix && !file.startsWith(kindPrefix))
+                continue;
+            if (!stagedDestNames.has(file)) {
                 try {
                     node_fs_1.default.unlinkSync(node_path_1.default.join(destDir, file));
                 }
