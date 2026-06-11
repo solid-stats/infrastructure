@@ -1,5 +1,5 @@
 {
-  "model_profile": "adaptive",
+  "model_profile": "budget",
   "mode": "yolo",
   "granularity": "fine",
   "commit_docs": true,
@@ -35,8 +35,8 @@
     "ui_safety_gate": true,
     "text_mode": false,
     "research_before_questions": true,
-    "discuss_mode": "discuss",
-    "skip_discuss": false,
+    "discuss_mode": "assumptions",
+    "skip_discuss": true,
     "use_worktrees": true,
     "subagent_timeout": 1200000,
     "inline_plan_threshold": 2,
