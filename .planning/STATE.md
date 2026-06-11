@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: completed
-stopped_at: Roadmap, state, and requirements traceability initialized.
-last_updated: "2026-05-10T07:31:54.666Z"
-last_activity: 2026-05-10 -- Phase 01 marked complete
+milestone: v2.0
+milestone_name: Production-Ready Infra & kubectl-native CD
+status: planning
+last_updated: "2026-06-11T05:00:43.138Z"
+last_activity: 2026-06-11
 progress:
-  total_phases: 5
-  completed_phases: 1
-  total_plans: 4
-  completed_plans: 4
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,12 +24,10 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 ## Current Position
 
-Phase: 05 — COMPLETE
-Plan: Not planned yet
-Status: Milestone v1.0 complete
-Last activity: 2026-05-10 -- Milestone v1.0 audited and archived
-
-Progress: [----------] 0%
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-06-11 — Milestone v2.0 started
 
 ## Performance Metrics
 

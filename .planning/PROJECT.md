@@ -15,6 +15,23 @@ project owns how those images are composed into a reliable Solid Stats runtime.
 Staging must be reproducible, backed up, and safe to run end-to-end before it is
 used to produce or compare new statistics.
 
+## Current Milestone: v2.0 — Production-Ready Infra & kubectl-native CD
+
+**Goal:** Deploy staging with direct `kubectl` from CI over WireGuard (no SSH),
+make git the source of truth for what ships, and close the remaining
+production-readiness gaps deferred from v1 — edge automation, S3 lifecycle,
+automated restore drill, the `web` runtime, and a controlled production cutover.
+
+**Target features:**
+- kubectl-native CD: WireGuard in the CI job → `kubectl` against the closed k3s
+  API, scoped ServiceAccount + namespace RBAC, SSH/scp removed.
+- Production cutover: controlled switch of traffic from legacy to the new runtime.
+- Edge automation: host nginx, certificate renewal, and firewall management.
+- S3 lifecycle: retention/lifecycle policies across backup, replay, and artifact
+  prefixes.
+- Automated restore drill: scripted PostgreSQL restore validation.
+- `web` runtime wiring: Kubernetes manifests for the future `web` application.
+
 ## Requirements
 
 ### Validated
@@ -157,4 +174,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state.
 
 ---
-*Last updated: 2026-05-10 after initialization*
+*Last updated: 2026-06-11 — milestone v2.0 started*
