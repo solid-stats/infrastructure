@@ -1,133 +1,135 @@
-# Requirements
+# Requirements: Solid Stats Infrastructure — Milestone v2.0
 
-## v1 Requirements
+**Defined:** 2026-06-11
+**Core Value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
 
-### Infrastructure Ownership
+> v1.0 requirements are archived at `.planning/milestones/v1.0-REQUIREMENTS.md`.
 
-- [ ] **OWN-01**: Operator can see all staging shared runtime resources in the
-  infrastructure repository.
-- [ ] **OWN-02**: Operator can deploy staging shared resources and app runtime
-  wiring from the infrastructure repository.
-- [ ] **OWN-03**: Application repositories can gradually stop applying shared
-  Kubernetes resources and keep ownership of image builds.
-- [ ] **OWN-04**: Staging app image tags are pinned explicitly and can be
-  updated without relying on mutable `latest`.
+## Milestone v2.0 Requirements
 
-### Staging Runtime
+Committed scope for v2.0 (Production-Ready Infra & kubectl-native CD). Each maps to a roadmap phase.
 
-- [ ] **RUN-01**: Operator can apply namespace, PostgreSQL, RabbitMQ,
-  `server-2`, `replay-parser-2`, and `replays-fetcher` manifests to k3s.
-- [ ] **RUN-02**: Operator can verify PostgreSQL, RabbitMQ, `server-2`, and
-  `replay-parser-2` rollouts after deploy.
-- [ ] **RUN-03**: `replays-fetcher` remains deployed but suspended until a
-  controlled manual ingest run is explicitly started.
-- [ ] **RUN-04**: Runtime secrets are rendered from GitHub environment secrets
-  without storing secret values in git.
+### CD — kubectl-native CD
 
-### Backup and Restore
+- [ ] **CD-01**: Operator can deploy staging via `kubectl` run on the CI runner over a WireGuard tunnel, with no SSH/scp to the VPS.
+- [ ] **CD-02**: CI authenticates to the k3s API as a namespace-scoped ServiceAccount using a long-lived token Secret (not the admin kubeconfig, not an SSH key).
+- [ ] **CD-03**: The deploy job gates on a verified WireGuard handshake before running any `kubectl`.
+- [ ] **CD-04**: ServiceAccount RBAC is restricted to the `solid-stats-staging` namespace and covers apply plus `rollout status` for every staging workload kind.
+- [ ] **CD-05**: Namespace and CI RBAC are bootstrapped once by the operator via a documented runbook; CI never creates the namespace.
+- [ ] **CD-06**: Push to `master` deploys staging automatically; PRs run validate plus a server-side dry-run without deploying.
+- [ ] **CD-07**: All `CD_SSH_*` secrets and SSH code paths are removed after the migration.
+- [ ] **CD-08**: Only one deploy runs at a time (workflow concurrency lock).
+- [ ] **CD-09**: A long-lived SA-token rotation runbook (owner plus cadence, paired with WG key rotation) is documented.
 
-- [ ] **BKP-01**: PostgreSQL nightly backup CronJob writes custom-format dumps
-  to Timeweb S3 under `backups/postgres/`.
-- [ ] **BKP-02**: Manual backup command creates a one-off backup Job from the
-  CronJob and waits for completion.
-- [ ] **BKP-03**: Every backup upload includes a dump, `pg_restore --list`
-  output, and manifest metadata.
-- [ ] **BKP-04**: Backup verification gate passes before any full ingest run:
-  backup Job completes, S3 upload succeeds, and `pg_restore --list` succeeds.
-- [ ] **BKP-05**: Restore drill runbook explains how to restore into an isolated
-  database and run smoke checks.
+### EDGE — Edge automation
 
-### Full Run Readiness
+- [ ] **EDGE-01**: The host nginx vhost config for staging is managed in the repo.
+- [ ] **EDGE-02**: TLS certificates renew automatically via host `certbot` on a systemd timer with an `nginx -t`-gated reload hook.
+- [ ] **EDGE-03**: Certificate-renewal failures are surfaced (alert or log), not silent.
+- [ ] **EDGE-04**: The host firewall allows 80/443 inbound and keeps `6443` reachable only through the WireGuard tunnel.
+- [ ] **EDGE-05**: Edge setup is an idempotent, re-runnable bootstrap script.
 
-- [ ] **FULL-01**: Operator has a manual full-run path for `replays-fetcher`
-  that does not require enabling the recurring schedule first.
-- [ ] **FULL-02**: Full-run procedure records checkpoints and logs sufficient to
-  resume or diagnose ingest failures.
-- [ ] **FULL-03**: Queue depth, parser consumers, server readiness, and S3
-  object writes can be monitored during the run.
+### DRILL — Automated restore drill
 
-### Diff Readiness
+- [ ] **DRILL-01**: Operator can run an on-demand restore drill that restores the latest S3 backup into an ephemeral scratch PostgreSQL, never touching live `postgres-0`/`postgres-data`.
+- [ ] **DRILL-02**: The drill runs post-restore sanity assertions (e.g. row-count / object checks) and fails loudly if they do not pass.
+- [ ] **DRILL-03**: The drill tears down its scratch resources and logs the result as evidence.
+- [ ] **DRILL-04**: Drill manifests live outside the staging deploy glob so CD never schedules them.
 
-- [ ] **DIFF-01**: Project defines how to compare old statistics against new
-  statistics after a full run.
-- [ ] **DIFF-02**: Diff output separates strict failures from allowlisted known
-  differences.
-- [ ] **DIFF-03**: Production traffic cutover remains blocked until diff output
-  is clean enough to review.
+### WEB — `web` runtime wiring
 
-### Validation and Safety
+- [ ] **WEB-01**: `web` Deployment, Service, and ConfigMap exist following existing `server-2` conventions (dedicated ServiceAccount, resource requests/limits, probes, pinned image).
+- [ ] **WEB-02**: `web` deploys as a 0-replica / image-pending stub until a real image exists.
+- [ ] **WEB-03**: `validate-staging.py` `EXPECTED_*` and the rollout-status verification include `web`.
 
-- [ ] **VAL-01**: CI validates manifest and script syntax before deploy.
-- [ ] **VAL-02**: Live deploy verification checks current Kubernetes resource
-  state after apply.
-- [ ] **VAL-03**: Secret rendering is validated so GHCR pull credentials and
-  runtime secrets are accepted by Kubernetes.
-- [ ] **VAL-04**: Documentation states which resources are intentionally outside
-  infra ownership in v1.
+### S3 — S3 lifecycle / retention
 
-### Kubernetes Safety
+- [ ] **S3-01**: A per-prefix expiration lifecycle policy for `backups/postgres/` is stored in the repo and applied via script.
+- [ ] **S3-02**: The lifecycle config aborts incomplete multipart uploads.
+- [ ] **S3-03**: Timeweb S3 lifecycle support is proven empirically (put-then-get plus an observed test-object expiry) before retention is relied upon.
 
-- [ ] **K8S-01**: Workloads use explicit ServiceAccounts and avoid the default
-  ServiceAccount unless an exception is documented.
-- [ ] **K8S-02**: Workloads define resource requests, resource limits, health
-  probes, and security contexts where container images allow it.
-- [ ] **K8S-03**: Namespace network isolation is defined through NetworkPolicies
-  or a documented k3s/CNI exception with a follow-up path.
-- [ ] **K8S-04**: Persistent storage and PVC changes are documented and verified
-  so infra deploys do not accidentally destroy PostgreSQL or RabbitMQ state.
+### CUT — Production cutover
 
-## v2 Requirements
+- [ ] **CUT-01**: Legacy and new runtimes run in parallel; the cutover is a single reversible nginx-upstream switch.
+- [ ] **CUT-02**: A tested rollback path reverts the upstream in one edit.
+- [ ] **CUT-03**: Cutover is gated on a fresh backup point and a green diff gate.
+- [ ] **CUT-04**: A post-cutover smoke check curls the public host to confirm the new runtime responds before legacy is retired.
 
-- [ ] **PROD-01**: Add production environment manifests and cutover procedure.
-- [ ] **EDGE-01**: Bring host nginx/certificate/firewall state under explicit
-  infrastructure management or documented automation.
-- [ ] **LIFE-01**: Configure S3 lifecycle or retention policy for backups,
-  reports, raw replays, and artifacts.
-- [ ] **REST-01**: Automate restore drill validation beyond the documented
-  manual runbook.
-- [ ] **WEB-01**: Add `web` runtime wiring after the web application is ready.
+## Future Requirements
+
+Deferred to v2.x. Tracked but not in the current roadmap.
+
+### S3
+
+- **S3-04**: Distinct shorter expiration windows for `replay/` and `artifact/` prefixes (beyond backups).
+
+### CD
+
+- **CD-10**: PR dry-run diff comment posted on the pull request.
+
+### DRILL
+
+- **DRILL-05**: Scheduled restore-drill CronJob with failure alerting.
+
+### CUT
+
+- **CUT-05**: Weighted / blue-green nginx cutover with gradual traffic shift.
 
 ## Out of Scope
 
-- Production cutover in v1 — staging must complete backup, full-run, and diff
-  verification first.
-- Application source changes — source code and image publishing stay in app
-  repositories.
-- Immediate removal of all app deploy workflows — ownership transfer is gradual
-  to avoid breaking current staging.
-- Scheduled replay fetching before backup verification — the first ingest run is
-  manual and monitored.
-- Replacing k3s or rebuilding the VPS from scratch — v1 uses the existing
-  staging server.
+Explicitly excluded. Anti-features confirmed across all four research files for a single-namespace, solo-operator cluster.
+
+| Feature | Reason |
+|---------|--------|
+| GitOps controller (ArgoCD/Flux) | Overkill for one namespace on one VPS; push-based `kubectl apply` from CI is sufficient. |
+| Service mesh / progressive canary | Unjustified complexity at this scale. |
+| cert-manager + k8s ingress | Edge is host-nginx; there is no k8s ingress to issue certificates for. |
+| `mc` (MinIO client) | Timeweb does not document it; vendored `aws-cli` covers S3 lifecycle. |
+| Full-tunnel WireGuard | Split-tunnel `AllowedIPs=10.8.0.1/32` only — CI must not route all traffic through the VPS. |
+| PITR / WAL archiving | Backup + restore drill is the recovery model for staging. |
+| `--insecure-skip-tls-verify` | Real CA + `10.8.0.1` in serving-cert SANs are required. |
+| Storage-class transitions (S3 tiers) | Timeweb supports expiration only, not tiering. |
 
 ## Traceability
 
+Populated during roadmap creation. Phase numbers continue from v1.0 (ended at Phase 5).
+
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| OWN-01 | Phase 1 | Pending |
-| OWN-02 | Phase 1 | Pending |
-| OWN-03 | Phase 3 | Pending |
-| OWN-04 | Phase 3 | Pending |
-| RUN-01 | Phase 1 | Pending |
-| RUN-02 | Phase 1 | Pending |
-| RUN-03 | Phase 4 | Pending |
-| RUN-04 | Phase 1 | Pending |
-| BKP-01 | Phase 2 | Pending |
-| BKP-02 | Phase 2 | Pending |
-| BKP-03 | Phase 2 | Pending |
-| BKP-04 | Phase 2 | Pending |
-| BKP-05 | Phase 2 | Pending |
-| FULL-01 | Phase 4 | Pending |
-| FULL-02 | Phase 4 | Pending |
-| FULL-03 | Phase 4 | Pending |
-| DIFF-01 | Phase 5 | Pending |
-| DIFF-02 | Phase 5 | Pending |
-| DIFF-03 | Phase 5 | Pending |
-| VAL-01 | Phase 1 | Pending |
-| VAL-02 | Phase 1 | Pending |
-| VAL-03 | Phase 1 | Pending |
-| VAL-04 | Phase 1 | Pending |
-| K8S-01 | Phase 1 | Pending |
-| K8S-02 | Phase 1 | Pending |
-| K8S-03 | Phase 1 | Pending |
-| K8S-04 | Phase 2 | Pending |
+| CD-01 | Phase 6 | Pending |
+| CD-02 | Phase 6 | Pending |
+| CD-03 | Phase 6 | Pending |
+| CD-04 | Phase 6 | Pending |
+| CD-05 | Phase 6 | Pending |
+| CD-06 | Phase 6 | Pending |
+| CD-07 | Phase 6 | Pending |
+| CD-08 | Phase 6 | Pending |
+| CD-09 | Phase 6 | Pending |
+| EDGE-01 | Phase 7 | Pending |
+| EDGE-02 | Phase 7 | Pending |
+| EDGE-03 | Phase 7 | Pending |
+| EDGE-04 | Phase 7 | Pending |
+| EDGE-05 | Phase 7 | Pending |
+| DRILL-01 | Phase 8 | Pending |
+| DRILL-02 | Phase 8 | Pending |
+| DRILL-03 | Phase 8 | Pending |
+| DRILL-04 | Phase 8 | Pending |
+| WEB-01 | Phase 9 | Pending |
+| WEB-02 | Phase 9 | Pending |
+| WEB-03 | Phase 9 | Pending |
+| S3-01 | Phase 10 | Pending |
+| S3-02 | Phase 10 | Pending |
+| S3-03 | Phase 10 | Pending |
+| CUT-01 | Phase 11 | Pending |
+| CUT-02 | Phase 11 | Pending |
+| CUT-03 | Phase 11 | Pending |
+| CUT-04 | Phase 11 | Pending |
+
+**Coverage:**
+- v2.0 requirements: 28 total
+- Mapped to phases: 28
+- Unmapped: 0 ✓
+
+---
+*Requirements defined: 2026-06-11*
+*Last updated: 2026-06-11 after initial definition*
