@@ -92,7 +92,7 @@ Explicitly excluded. Anti-features confirmed across all four research files for 
 
 ## Traceability
 
-Populated during roadmap creation. Phase numbers continue from v1.0 (ended at Phase 5).
+Finalized during roadmap creation. Phase numbers continue from v1.0 (ended at Phase 5).
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -132,4 +132,4 @@ Populated during roadmap creation. Phase numbers continue from v1.0 (ended at Ph
 
 ---
 *Requirements defined: 2026-06-11*
-*Last updated: 2026-06-11 after initial definition*
+*Last updated: 2026-06-11 after roadmap creation (Phases 6-11)*
