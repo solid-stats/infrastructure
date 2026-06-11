@@ -18,11 +18,12 @@ const REGISTRY = Object.freeze({
     cursor: Object.freeze({ installSurface: 'cursor-hooks-json', writesSharedSettings: false, finishPermissionWriter: null }),
     windsurf: Object.freeze({ installSurface: 'profile-marker-only', writesSharedSettings: false, finishPermissionWriter: null }),
     trae: Object.freeze({ installSurface: 'profile-marker-only', writesSharedSettings: false, finishPermissionWriter: null }),
+    kimi: Object.freeze({ installSurface: 'profile-marker-only', writesSharedSettings: false, finishPermissionWriter: null }),
 });
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
-/** The complete set of 15 supported runtimes for config-adapter dispatch. */
+/** The complete set of 16 supported runtimes for config-adapter dispatch. */
 const ALLOWED_CONFIG_RUNTIMES = new Set(Object.keys(REGISTRY));
 /** All valid installSurface values. */
 const INSTALL_SURFACES = Object.freeze([
