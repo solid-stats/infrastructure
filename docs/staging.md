@@ -2,6 +2,9 @@
 
 This repository owns the staging runtime infrastructure for Solid Stats.
 
+For remote `kubectl` access from a workstation over WireGuard (instead of running
+kubectl on the VPS over SSH), see [WireGuard Access](./wireguard-access.md).
+
 ## Scope
 
 The staging cluster runs on the Timeweb VPS under the Kubernetes namespace
