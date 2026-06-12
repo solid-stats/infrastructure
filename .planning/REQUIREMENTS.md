@@ -11,9 +11,9 @@ Committed scope for v2.0 (Production-Ready Infra & kubectl-native CD). Each maps
 
 ### CD — kubectl-native CD
 
-- [ ] **CD-01**: Operator can deploy staging via `kubectl` run on the CI runner over a WireGuard tunnel, with no SSH/scp to the VPS.
+- [x] **CD-01**: Operator can deploy staging via `kubectl` run on the CI runner over a WireGuard tunnel, with no SSH/scp to the VPS.
 - [x] **CD-02**: CI authenticates to the k3s API as a namespace-scoped ServiceAccount using a long-lived token Secret (not the admin kubeconfig, not an SSH key).
-- [ ] **CD-03**: The deploy job gates on a verified WireGuard handshake before running any `kubectl`.
+- [x] **CD-03**: The deploy job gates on a verified WireGuard handshake before running any `kubectl`.
 - [x] **CD-04**: ServiceAccount RBAC is restricted to the `solid-stats-staging` namespace and covers apply plus `rollout status` for every staging workload kind.
 - [x] **CD-05**: Namespace and CI RBAC are bootstrapped once by the operator via a documented runbook; CI never creates the namespace.
 - [ ] **CD-06**: Push to `master` deploys staging automatically; PRs run validate plus a server-side dry-run without deploying.
@@ -96,9 +96,9 @@ Finalized during roadmap creation. Phase numbers continue from v1.0 (ended at Ph
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CD-01 | Phase 6 | Pending |
+| CD-01 | Phase 6 | Complete |
 | CD-02 | Phase 6 | Complete |
-| CD-03 | Phase 6 | Pending |
+| CD-03 | Phase 6 | Complete |
 | CD-04 | Phase 6 | Complete |
 | CD-05 | Phase 6 | Complete |
 | CD-06 | Phase 6 | Pending |
