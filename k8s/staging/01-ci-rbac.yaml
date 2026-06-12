@@ -1,0 +1,77 @@
+# Operator-applied bootstrap manifest — DO NOT apply from CI.
+# This file is applied ONCE by the operator: kubectl apply -f k8s/staging/01-ci-rbac.yaml
+# CI (GitHub Actions) never applies this file. The deploy glob in Plan 04 must exclude
+# 01-ci-rbac.yaml so that each master-push deploy does not overwrite operator-managed RBAC.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-deployer
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+---
+# k8s ≥1.24: token Secrets are NOT auto-generated for ServiceAccounts.
+# The annotation below instructs the control plane to populate .data.token
+# after the Secret is created. No token value is stored in git.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ci-deployer-token
+  namespace: solid-stats-staging
+  annotations:
+    kubernetes.io/service-account.name: ci-deployer
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+type: kubernetes.io/service-account-token
+---
+# Namespace-scoped Role — covers verbs needed for kubectl apply and kubectl rollout status.
+# No cluster-scoped resources (namespaces, nodes, clusterroles) are granted.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ci-deployer
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+rules:
+  # Deployments and StatefulSets: apply + rollout status
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # CronJobs: apply (rollout status is not applicable to CronJobs)
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Pods: needed for kubectl rollout status --watch
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Core resources: apply
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "secrets", "persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  # ServiceAccounts in namespace (workload manifests may create them)
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ci-deployer
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+roleRef:
+  kind: Role
+  name: ci-deployer
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    name: ci-deployer
+    namespace: solid-stats-staging
