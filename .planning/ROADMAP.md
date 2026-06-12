@@ -191,8 +191,8 @@ Plans:
 Plans:
 **Wave 1** *(parallel — no shared files)*
 
-- [ ] 08-01-PLAN.md — Job manifest (k8s/staging/restore-drill/70-restore-drill.yaml) + operator script (scripts/restore-drill.sh)
-- [ ] 08-02-PLAN.md — DRILL-04 depth-1 guard + restore-drill.sh syntax check in scripts/validate-staging.py
+- [x] 08-01-PLAN.md — Job manifest (k8s/staging/restore-drill/70-restore-drill.yaml) + operator script (scripts/restore-drill.sh)
+- [x] 08-02-PLAN.md — DRILL-04 depth-1 guard + restore-drill.sh syntax check in scripts/validate-staging.py
 
 **Wave 2** *(depends on Wave 1)*
 
@@ -254,7 +254,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 5. Diff and Cutover Readiness | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 6. kubectl-native CD | v2.0 | 4/4 | Complete   | 2026-06-12 |
 | 7. Edge Automation | v2.0 | 4/4 | Complete    | 2026-06-12 |
-| 8. Automated Restore Drill | v2.0 | 0/TBD | Not started | - |
+| 8. Automated Restore Drill | v2.0 | 2/3 | In progress | - |
 | 9. web Runtime Wiring | v2.0 | 0/TBD | Not started | - |
 | 10. S3 Lifecycle & Retention | v2.0 | 0/TBD | Not started | - |
 | 11. Production Cutover | v2.0 | 0/TBD | Not started | - |

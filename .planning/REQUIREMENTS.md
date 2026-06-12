@@ -34,7 +34,7 @@ Committed scope for v2.0 (Production-Ready Infra & kubectl-native CD). Each maps
 - [ ] **DRILL-01**: Operator can run an on-demand restore drill that restores the latest S3 backup into an ephemeral scratch PostgreSQL, never touching live `postgres-0`/`postgres-data`.
 - [ ] **DRILL-02**: The drill runs post-restore sanity assertions (e.g. row-count / object checks) and fails loudly if they do not pass.
 - [ ] **DRILL-03**: The drill tears down its scratch resources and logs the result as evidence.
-- [ ] **DRILL-04**: Drill manifests live outside the staging deploy glob so CD never schedules them.
+- [x] **DRILL-04**: Drill manifests live outside the staging deploy glob so CD never schedules them.
 
 ### WEB — `web` runtime wiring
 
