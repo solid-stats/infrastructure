@@ -4,14 +4,14 @@ milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
 stopped_at: "Completed 08-03: automated restore drill runbook; live-drill checkpoint awaiting operator"
-last_updated: "2026-06-13T00:00:00Z"
-last_activity: 2026-06-13 -- Phase 08 plan 03 complete (doc task); live-drill gate pending
+last_updated: "2026-06-12T19:12:05.797Z"
+last_activity: 2026-06-12
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 12
-  completed_plans: 10
-  percent: 38
+  completed_plans: 11
+  percent: 33
 ---
 
 # Project State
@@ -25,8 +25,8 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 ## Current Position
 
-Phase: 08 (automated-restore-drill) — EXECUTING
-Plan: 3 of 3 (doc task complete; live-drill checkpoint awaiting operator)
+Phase: 9
+Plan: Not started
 Status: Executing Phase 08
 Plans: 4/4 complete (07-01, 07-02 [wave 1] → 07-03 [wave 2] → 07-04 [wave 3])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
@@ -37,7 +37,7 @@ Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   + backup-before-overwrite reversibility. Real upstream = server-2 ClusterIP
   10.43.94.103:3000. http2 preserved.
 Prev: Phase 06 COMPLETE ✓ (verification human_needed — live CI deploy deferred)
-Last activity: 2026-06-12 -- Phase 08 execution started
+Last activity: 2026-06-12
 
 Progress: [██░░░░░░░░] 33% (2/6 phases complete; Phase 07 complete)
 
@@ -45,7 +45,7 @@ Progress: [██░░░░░░░░] 33% (2/6 phases complete; Phase 07 co
 
 **Velocity:**
 
-- Total plans completed: 4 (this milestone)
+- Total plans completed: 7 (this milestone)
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -54,6 +54,7 @@ Progress: [██░░░░░░░░] 33% (2/6 phases complete; Phase 07 co
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 07 | 4 | - | - |
+| 08 | 3 | - | - |
 
 **Recent Trend:**
 

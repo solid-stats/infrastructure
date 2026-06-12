@@ -31,9 +31,9 @@ Committed scope for v2.0 (Production-Ready Infra & kubectl-native CD). Each maps
 
 ### DRILL — Automated restore drill
 
-- [ ] **DRILL-01**: Operator can run an on-demand restore drill that restores the latest S3 backup into an ephemeral scratch PostgreSQL, never touching live `postgres-0`/`postgres-data`.
-- [ ] **DRILL-02**: The drill runs post-restore sanity assertions (e.g. row-count / object checks) and fails loudly if they do not pass.
-- [ ] **DRILL-03**: The drill tears down its scratch resources and logs the result as evidence.
+- [x] **DRILL-01**: Operator can run an on-demand restore drill that restores the latest S3 backup into an ephemeral scratch PostgreSQL, never touching live `postgres-0`/`postgres-data`.
+- [x] **DRILL-02**: The drill runs post-restore sanity assertions (e.g. row-count / object checks) and fails loudly if they do not pass.
+- [x] **DRILL-03**: The drill tears down its scratch resources and logs the result as evidence.
 - [x] **DRILL-04**: Drill manifests live outside the staging deploy glob so CD never schedules them.
 
 ### WEB — `web` runtime wiring
@@ -110,10 +110,10 @@ Finalized during roadmap creation. Phase numbers continue from v1.0 (ended at Ph
 | EDGE-03 | Phase 7 | Complete |
 | EDGE-04 | Phase 7 | Complete |
 | EDGE-05 | Phase 7 | Complete |
-| DRILL-01 | Phase 8 | Pending |
-| DRILL-02 | Phase 8 | Pending |
-| DRILL-03 | Phase 8 | Pending |
-| DRILL-04 | Phase 8 | Pending |
+| DRILL-01 | Phase 8 | Complete |
+| DRILL-02 | Phase 8 | Complete |
+| DRILL-03 | Phase 8 | Complete |
+| DRILL-04 | Phase 8 | Complete |
 | WEB-01 | Phase 9 | Pending |
 | WEB-02 | Phase 9 | Pending |
 | WEB-03 | Phase 9 | Pending |

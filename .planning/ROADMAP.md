@@ -25,7 +25,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: Diff and Cutover Readiness** - Operator can produce reviewable old-vs-new diff output while production cutover remains blocked.
 - [ ] **Phase 6: kubectl-native CD** - CI deploys staging via `kubectl` over a WireGuard tunnel as a namespace-scoped ServiceAccount, with SSH removed.
 - [x] **Phase 7: Edge Automation** - Host nginx, TLS renewal, and firewall for staging are repo-managed, idempotent, and proven reversible. (completed 2026-06-12)
-- [ ] **Phase 8: Automated Restore Drill** - Operator can prove the latest S3 backup restores cleanly into an ephemeral scratch PostgreSQL, never touching live data.
+- [x] **Phase 8: Automated Restore Drill** - Operator can prove the latest S3 backup restores cleanly into an ephemeral scratch PostgreSQL, never touching live data. (completed 2026-06-12)
 - [ ] **Phase 9: web Runtime Wiring** - The future `web` application has a conventions-compliant, validated Kubernetes slot deployed as a stub.
 - [ ] **Phase 10: S3 Lifecycle & Retention** - Backup-prefix retention is enforced via a repo-stored expiration policy, with Timeweb support proven empirically.
 - [ ] **Phase 11: Production Cutover** - Operator can flip production traffic to the new runtime in one reversible nginx-upstream edit, gated and smoke-checked.
@@ -254,7 +254,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 5. Diff and Cutover Readiness | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 6. kubectl-native CD | v2.0 | 4/4 | Complete   | 2026-06-12 |
 | 7. Edge Automation | v2.0 | 4/4 | Complete    | 2026-06-12 |
-| 8. Automated Restore Drill | v2.0 | 3/3 | Live-drill gate pending | - |
+| 8. Automated Restore Drill | v2.0 | 3/3 | Complete    | 2026-06-12 |
 | 9. web Runtime Wiring | v2.0 | 0/TBD | Not started | - |
 | 10. S3 Lifecycle & Retention | v2.0 | 0/TBD | Not started | - |
 | 11. Production Cutover | v2.0 | 0/TBD | Not started | - |
