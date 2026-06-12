@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
-status: paused
-stopped_at: "Phase 07 COMPLETE + live-verified on staging VPS (all 6 UAT items green; 2 live-only bugs found+fixed). Paused before Phase 08 — awaiting user go to resume autonomous run."
-last_updated: "2026-06-13T01:15:00Z"
-last_activity: 2026-06-13 -- Phase 07 live verification PASSED on root@89.223.124.200; edge adopted into repo-managed state
+status: executing
+stopped_at: "Completed 07-04: edge-bootstrap.md operator runbook (EDGE-01..05)"
+last_updated: "2026-06-12T18:33:28.253Z"
+last_activity: 2026-06-12 -- Phase 08 execution started
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 8
+  total_plans: 12
   completed_plans: 8
   percent: 33
 ---
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 07 — edge-automation
+**Current focus:** Phase 08 — automated-restore-drill
 
 ## Current Position
 
-Phase: 8 (automated-restore-drill) — NOT STARTED (next)
-Plan: Not started
-Status: Phase 07 COMPLETE ✓ and LIVE-VERIFIED on staging VPS (root@89.223.124.200) — all 6 UAT items green. Edge now adopted into repo-managed state (vhost+HSTS, deploy-hook, OnFailure drop-in, ufw 6443/wg0). Two live-only defects found+fixed: vhost drift (03521f5), ufw 6443 syntax (cfa2485). Autonomous run paused before Phase 08 — awaiting user go.
+Phase: 08 (automated-restore-drill) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 08
 Plans: 4/4 complete (07-01, 07-02 [wave 1] → 07-03 [wave 2] → 07-04 [wave 3])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
@@ -37,7 +37,7 @@ Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   + backup-before-overwrite reversibility. Real upstream = server-2 ClusterIP
   10.43.94.103:3000. http2 preserved.
 Prev: Phase 06 COMPLETE ✓ (verification human_needed — live CI deploy deferred)
-Last activity: 2026-06-12
+Last activity: 2026-06-12 -- Phase 08 execution started
 
 Progress: [██░░░░░░░░] 33% (2/6 phases complete; Phase 07 complete)
 
