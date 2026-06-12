@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: "Completed 08-02: DRILL-04 depth-1 guard + restore-drill.sh syntax check"
-last_updated: "2026-06-12T18:38:21Z"
-last_activity: 2026-06-12 -- Phase 08 plan 02 complete
+stopped_at: "Completed 08-03: automated restore drill runbook; live-drill checkpoint awaiting operator"
+last_updated: "2026-06-13T00:00:00Z"
+last_activity: 2026-06-13 -- Phase 08 plan 03 complete (doc task); live-drill gate pending
 progress:
   total_phases: 6
   completed_phases: 2
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 08 (automated-restore-drill) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3 (doc task complete; live-drill checkpoint awaiting operator)
 Status: Executing Phase 08
 Plans: 4/4 complete (07-01, 07-02 [wave 1] → 07-03 [wave 2] → 07-04 [wave 3])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
@@ -69,6 +69,7 @@ Progress: [██░░░░░░░░] 33% (2/6 phases complete; Phase 07 co
 | Phase 07-edge-automation P07-04 | 60 | 1 tasks | 1 files |
 | Phase 08-automated-restore-drill P08-01 | 88 | 2 tasks | 2 files |
 | Phase 08-automated-restore-drill P08-02 | 10 | 1 tasks | 1 files |
+| Phase 08-automated-restore-drill P08-03 | 52 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -135,6 +136,6 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-12T18:38:21Z
-Stopped at: Completed 08-02: DRILL-04 depth-1 guard + restore-drill.sh syntax check
+Last session: 2026-06-13T00:00:00Z
+Stopped at: Completed 08-03: automated restore drill runbook; live-drill checkpoint awaiting operator
 Resume file: None

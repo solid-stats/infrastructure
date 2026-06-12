@@ -196,7 +196,7 @@ Plans:
 
 **Wave 2** *(depends on Wave 1)*
 
-- [ ] 08-03-PLAN.md — docs/backup-restore.md automated runbook + live drill human checkpoint (DRILL_RESULT=PASS evidence)
+- [x] 08-03-PLAN.md — docs/backup-restore.md automated runbook (doc task complete; live-drill checkpoint awaiting operator)
 
 #### Phase 9: web Runtime Wiring
 
@@ -254,7 +254,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 5. Diff and Cutover Readiness | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 6. kubectl-native CD | v2.0 | 4/4 | Complete   | 2026-06-12 |
 | 7. Edge Automation | v2.0 | 4/4 | Complete    | 2026-06-12 |
-| 8. Automated Restore Drill | v2.0 | 2/3 | In progress | - |
+| 8. Automated Restore Drill | v2.0 | 3/3 | Live-drill gate pending | - |
 | 9. web Runtime Wiring | v2.0 | 0/TBD | Not started | - |
 | 10. S3 Lifecycle & Retention | v2.0 | 0/TBD | Not started | - |
 | 11. Production Cutover | v2.0 | 0/TBD | Not started | - |
