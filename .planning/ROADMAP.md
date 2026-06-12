@@ -226,7 +226,16 @@ Plans:
   2. The lifecycle config aborts incomplete multipart uploads.
   3. Timeweb S3 lifecycle support is proven empirically — a put-then-get round-trip plus an observed test-object expiry — recorded as evidence before retention is trusted.
 
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+**Wave 1** *(parallel — no shared files)*
+
+- [ ] 10-01-PLAN.md — Lifecycle JSON (config/s3/backups-lifecycle.json) + offline validator (validate-s3-lifecycle.py) + apply script (apply-s3-lifecycle.sh) + validate-staging.py extension
+- [ ] 10-02-PLAN.md — S3-03 empirical proof Job (k8s/staging/s3-lifecycle/80-s3-lifecycle-probe-job.yaml) + operator-gated checkpoint
+
+**Wave 2** *(depends on Wave 1)*
+
+- [ ] 10-03-PLAN.md — Operator runbook (docs/s3-lifecycle.md) + validate-staging.py docs check + final operator confirmation checkpoint
 
 #### Phase 11: Production Cutover
 
