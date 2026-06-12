@@ -22,7 +22,15 @@ fi
 
 # --- Section 2: nginx reload ---
 echo "[$TIMESTAMP] [certbot-deploy-hook] Reloading nginx..."
-systemctl reload nginx
+# Surface a reload failure that happens AFTER a passing nginx -t — otherwise the
+# bare command dies under set -e with no actionable line, leaving the operator
+# unsure whether validation or the reload itself failed (the renewed cert is
+# already on disk; only the reload is missing).
+if ! systemctl reload nginx; then
+  echo "[$TIMESTAMP] [certbot-deploy-hook] FATAL: nginx reload failed AFTER passing nginx -t" >&2
+  echo "[$TIMESTAMP] [certbot-deploy-hook] Renewed cert is installed; reload manually: systemctl reload nginx" >&2
+  exit 1
+fi
 
 # --- Section 3: success log ---
 TIMESTAMP=$(date +'%Y-%m-%d %H:%M:%S')
