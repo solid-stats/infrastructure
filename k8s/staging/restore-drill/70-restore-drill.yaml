@@ -31,11 +31,96 @@ spec:
       restartPolicy: Never
       serviceAccountName: restore-drill
       automountServiceAccountToken: false
+      # fsGroup makes the emptyDir group-writable by gid 999 so the non-root main
+      # container can read files written by the root initContainer.
+      # runAsUser/runAsGroup/runAsNonRoot are intentionally absent at pod level —
+      # they are set per-container so the initContainer can run as root (apk add
+      # requires root) while the main container runs as non-root (pg_ctl/initdb
+      # refuse root).
       securityContext:
-        runAsUser: 999
-        runAsGroup: 999
-        runAsNonRoot: true
         fsGroup: 999
+      initContainers:
+        - name: fetch-backup
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          # Root is required here: `apk add` writes to /var/lib/apk, /etc/apk, /var/log/apk
+          # which are owned by root and cannot be written by uid 999 (exitCode 99 on live run).
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: scratch
+              mountPath: /scratch
+          env:
+            - name: S3_ENDPOINT
+              value: https://s3.twcstorage.ru
+            - name: S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: server-2-runtime
+                  key: S3_BUCKET
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: server-2-runtime
+                  key: S3_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: server-2-runtime
+                  key: S3_SECRET_ACCESS_KEY
+            - name: AWS_DEFAULT_REGION
+              value: ru-1
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            - name: BACKUP_PREFIX
+              value: backups/postgres
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              apk add --no-cache aws-cli
+
+              export AWS_CONFIG_FILE=/scratch/aws-config
+              aws configure set default.s3.addressing_style path
+
+              # Discover latest backup (lexicographic max of directory entries).
+              backup_id=$(aws --endpoint-url="$S3_ENDPOINT" \
+                s3 ls "s3://${S3_BUCKET}/${BACKUP_PREFIX}/" \
+                | awk '{print $NF}' | sed 's|/$||' | sort -r | head -1)
+              if [ -z "$backup_id" ]; then echo "ERROR: no backups found in s3://${S3_BUCKET}/${BACKUP_PREFIX}/"; exit 1; fi
+
+              # Require manifest.json to confirm backup is complete.
+              if ! aws --endpoint-url="$S3_ENDPOINT" s3 ls \
+                  "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/manifest.json" >/dev/null 2>&1; then
+                echo "ERROR: manifest.json missing for backup_id=${backup_id}"; exit 1; fi
+              echo "backup_id=${backup_id}"
+
+              # Download dump and associated files to shared scratch volume.
+              aws --endpoint-url="$S3_ENDPOINT" \
+                s3 cp "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/solid_stats.dump" \
+                /scratch/solid_stats.dump --only-show-errors
+              aws --endpoint-url="$S3_ENDPOINT" \
+                s3 cp "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/solid_stats.dump.list" \
+                /scratch/solid_stats.dump.list --only-show-errors
+              aws --endpoint-url="$S3_ENDPOINT" \
+                s3 cp "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/manifest.json" \
+                /scratch/manifest.json --only-show-errors
+
+              # Make files readable by the non-root main container (uid 999, gid 999).
+              chmod 0644 /scratch/solid_stats.dump /scratch/solid_stats.dump.list /scratch/manifest.json
+              echo "fetch-backup: files ready in /scratch"
+
       containers:
         - name: restore-drill
           image: postgres:17-alpine
@@ -48,12 +133,14 @@ spec:
               cpu: "1"
               memory: 2Gi
           securityContext:
-            allowPrivilegeEscalation: false
+            runAsUser: 999
+            runAsGroup: 999
             runAsNonRoot: true
+            allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
-            # readOnlyRootFilesystem is NOT viable here — `apk add aws-cli` and
-            # `pg_ctl` write to the rootfs; scratch DB writes go under /scratch.
+            # readOnlyRootFilesystem is NOT viable here — pg_ctl writes to the
+            # rootfs; scratch DB writes go under /scratch.
           volumeMounts:
             - name: scratch
               mountPath: /scratch
@@ -61,14 +148,10 @@ spec:
             - /bin/sh
             - -ec
             - |
-              apk add --no-cache aws-cli
-
               # Step 1 — set local postgres env (NEVER accept these from pod env)
               PGHOST=localhost
               PGPORT=5432
               PGUSER=postgres
-              export AWS_CONFIG_FILE=/scratch/aws-config
-              aws configure set default.s3.addressing_style path
 
               # Step 2 — DRILL-01 safety barrier — refuse if any injected host points off-localhost.
               _injected_host="${POSTGRES_HOST:-${PGHOST:-localhost}}"
@@ -97,35 +180,19 @@ spec:
               if ! pg_isready -h localhost -p 5432 -U postgres >/dev/null 2>&1; then
                 echo "ERROR: scratch postgres did not start"; cat /scratch/postgres.log >&2 || true; exit 1; fi
 
-              # Step 4 — discover latest backup (lexicographic max)
-              backup_id=$(aws --endpoint-url="$S3_ENDPOINT" \
-                s3 ls "s3://${S3_BUCKET}/${BACKUP_PREFIX}/" \
-                | awk '{print $NF}' | sed 's|/$||' | sort -r | head -1)
-              if [ -z "$backup_id" ]; then echo "ERROR: no backups found"; exit 1; fi
-              if ! aws --endpoint-url="$S3_ENDPOINT" s3 ls \
-                  "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/manifest.json" >/dev/null 2>&1; then
-                echo "ERROR: manifest.json missing for backup_id=${backup_id}"; exit 1; fi
-              echo "backup_id=${backup_id}"
-
-              # Step 5 — download dump and list files
-              aws --endpoint-url="$S3_ENDPOINT" \
-                s3 cp "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/solid_stats.dump" \
-                /scratch/solid_stats.dump --only-show-errors
-              aws --endpoint-url="$S3_ENDPOINT" \
-                s3 cp "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/solid_stats.dump.list" \
-                /scratch/solid_stats.dump.list --only-show-errors
-
               # WR-01 — teardown in an EXIT trap so it ALWAYS runs (even if an
               # assertion command exits non-zero under `sh -e` and aborts the script).
-              # The trap never masks the result: Step 9 exits with $drill_result.
+              # The trap never masks the result: Step 7 exits with $drill_result.
               cleanup() {
                 dropdb -h localhost -U postgres solid_stats_drill 2>/dev/null || true
                 pg_ctl -D "$initdb_dir" stop 2>/dev/null || true
-                rm -rf /scratch/pgdata /scratch/solid_stats.dump /scratch/solid_stats.dump.list 2>/dev/null || true
+                rm -rf /scratch/pgdata /scratch/solid_stats.dump /scratch/solid_stats.dump.list \
+                       /scratch/manifest.json /scratch/aws-config 2>/dev/null || true
               }
               trap cleanup EXIT
 
-              # Step 6 — create guarded scratch database and restore
+              # Step 4 — create guarded scratch database and restore from pre-fetched dump.
+              # The dump was downloaded by the fetch-backup initContainer; no S3 access here.
               createdb -h localhost -U postgres solid_stats_drill
               # WR-02 — capture pg_restore rc instead of discarding it. Custom-format
               # dumps can emit non-fatal warnings, so do not hard-fail on rc alone;
@@ -135,13 +202,20 @@ spec:
                    /scratch/solid_stats.dump; then
                 echo "WARN: pg_restore exited non-zero (continuing to assertions)"; fi
 
-              # Step 7 — sanity assertions with captured result code.
+              # Step 5 — sanity assertions with captured result code.
               # CR-03 — every numeric value is validated as a real integer BEFORE the
               # `-lt` comparison. An empty/non-numeric value (psql error, connection
               # loss) is a FAILED assertion, never a silently-skipped one — a query
               # error must never yield a false PASS.
               drill_result=0
               drill_start=$(date +%s)
+
+              # Infer backup_id from manifest written by initContainer.
+              backup_id="unknown"
+              if [ -f /scratch/manifest.json ]; then
+                backup_id=$(grep -o '"backup_id"[[:space:]]*:[[:space:]]*"[^"]*"' /scratch/manifest.json \
+                  | sed 's/.*"backup_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/') || backup_id="unknown"
+              fi
 
               table_count=$(psql -h localhost -U postgres -d solid_stats_drill -t -A \
                 -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';")
@@ -180,36 +254,15 @@ spec:
                 echo "DRILL_RESULT=FAIL backup_id=${backup_id} table_count=${table_count} total_rows=${row_count} duration_s=${drill_duration}"
               fi
 
-              # Step 8 — teardown runs via the EXIT trap (WR-01); see cleanup() above.
-              # Step 9 — exit with captured result
+              # Step 6 — teardown runs via the EXIT trap (WR-01); see cleanup() above.
+              # Step 7 — exit with captured result
               exit $drill_result
           env:
-            # No POSTGRES_PASSWORD here by design: the scratch DB uses trust auth
-            # (Step 3) and never touches the live postgres-auth secret. Only the
-            # read-only S3 credentials the drill genuinely needs are mounted.
+            # No POSTGRES_PASSWORD and no S3 credentials here by design:
+            # - the scratch DB uses trust auth (Step 3) and never touches postgres-auth secret.
+            # - S3 download was handled by the fetch-backup initContainer; dump is at /scratch.
             - name: S3_ENDPOINT
               value: https://s3.twcstorage.ru
-            - name: S3_BUCKET
-              valueFrom:
-                secretKeyRef:
-                  name: server-2-runtime
-                  key: S3_BUCKET
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: server-2-runtime
-                  key: S3_ACCESS_KEY_ID
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: server-2-runtime
-                  key: S3_SECRET_ACCESS_KEY
-            - name: AWS_DEFAULT_REGION
-              value: ru-1
-            - name: AWS_EC2_METADATA_DISABLED
-              value: "true"
-            - name: BACKUP_PREFIX
-              value: backups/postgres
       volumes:
         - name: scratch
           emptyDir: {}

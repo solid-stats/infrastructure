@@ -289,22 +289,70 @@ def validate_drill_manifest() -> None:
     text = path.read_text()
     rel = path.relative_to(ROOT)
 
-    # CR-01 — container must not run as root (initdb refuses root).
-    require("runAsNonRoot: true" in text, f"{rel} missing runAsNonRoot: true (CR-01)")
-    require("runAsUser: 999" in text, f"{rel} missing runAsUser: 999 (CR-01)")
-    # WR-04 — standard container hardening.
-    require("allowPrivilegeEscalation: false" in text, f"{rel} missing allowPrivilegeEscalation: false")
+    # CR-01 — the MAIN container (restore-drill) must not run as root: pg_ctl/initdb
+    # refuse to start as root.  The initContainer (fetch-backup) runs as root
+    # intentionally so apk can write its package DB — do NOT fail on runAsUser: 0.
+    #
+    # Parse per-container security contexts by splitting on container name markers
+    # so we can check each container independently.
+    lines = text.splitlines()
+
+    def _lines_for_container(name: str) -> str:
+        """Return the text block starting from '- name: {name}' to the next
+        sibling '- name:' line or end-of-document."""
+        start = None
+        for i, line in enumerate(lines):
+            if line.strip() == f"- name: {name}":
+                start = i
+                break
+        if start is None:
+            return ""
+        block: list[str] = []
+        for line in lines[start + 1:]:
+            # A sibling container starts with another '- name:' at the same indent.
+            if line.strip().startswith("- name:") and line == line.lstrip():
+                # top-level list item — stop (shouldn't happen inside spec, but safe)
+                break
+            if line.rstrip() and not line.startswith(" ") and not line.startswith("\t"):
+                break
+            block.append(line)
+        return "\n".join(block)
+
+    main_ctx = _lines_for_container("restore-drill")
+    init_ctx = _lines_for_container("fetch-backup")
+
+    require(main_ctx, f"{rel} missing main container 'restore-drill'")
+    require(init_ctx, f"{rel} missing initContainer 'fetch-backup'")
+
+    # Main container must be non-root (CR-01).
+    require("runAsNonRoot: true" in main_ctx, f"{rel} main container missing runAsNonRoot: true (CR-01)")
+    require("runAsUser: 999" in main_ctx, f"{rel} main container missing runAsUser: 999 (CR-01)")
+
+    # initContainer is expected to run as root (apk add requires root).
+    require("runAsUser: 0" in init_ctx, f"{rel} fetch-backup initContainer must declare runAsUser: 0 (apk needs root)")
+    require("runAsNonRoot: false" in init_ctx, f"{rel} fetch-backup initContainer must declare runAsNonRoot: false")
+
+    # WR-04 — both containers must have standard hardening.
+    require("allowPrivilegeEscalation: false" in main_ctx, f"{rel} main container missing allowPrivilegeEscalation: false")
+    require("allowPrivilegeEscalation: false" in init_ctx, f"{rel} fetch-backup initContainer missing allowPrivilegeEscalation: false")
     require('drop: ["ALL"]' in text or "drop: ['ALL']" in text, f"{rel} must drop ALL capabilities (WR-04)")
+
     # CR-02 — trust auth for the scratch DB; the live postgres-auth secret must
-    # NOT be mounted into the drill.
+    # NOT be mounted anywhere in the drill.
     require("-A trust" in text, f"{rel} scratch initdb must use -A trust (CR-02)")
     require("name: postgres-auth" not in text, f"{rel} must not mount the live postgres-auth secret (CR-02)")
+
     # DRILL-01 — isolation barriers must stay intact.
     require("refusing drill to protect live data (DRILL-01)" in text, f"{rel} missing refuse-if-live-host barrier (DRILL-01)")
     require("solid_stats_drill" in text, f"{rel} missing guarded scratch DB name (DRILL-01)")
     require("name: postgres-data" not in text and "claimName: postgres-data" not in text, f"{rel} must not mount the live postgres-data PVC (DRILL-01)")
     require("emptyDir" in text, f"{rel} scratch volume must be emptyDir (DRILL-01)")
     require("automountServiceAccountToken: false" in text, f"{rel} must disable API token automount")
+
+    # New invariant: S3 secret (server-2-runtime) must be referenced by the
+    # initContainer, NOT the main container (main container has no S3 access).
+    require("server-2-runtime" in init_ctx, f"{rel} fetch-backup initContainer must reference server-2-runtime secret for S3 access")
+    require("server-2-runtime" not in main_ctx, f"{rel} main container must NOT reference server-2-runtime (S3 access belongs to initContainer only)")
 
 
 def validate_rendered_secrets() -> None:
