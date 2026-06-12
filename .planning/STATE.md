@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: "Completed 07-04: edge-bootstrap.md operator runbook (EDGE-01..05)"
+stopped_at: "Phase 07 executed + reviewed + fixed; verification human_needed (live-VPS checks in 07-UAT.md). Autonomous run STOPPED by user to validate Phase 07 live before continuing to Phase 08."
 last_updated: "2026-06-13T00:00:00Z"
-last_activity: 2026-06-13 -- Phase 07 complete (4/4 plans)
+last_activity: 2026-06-13 -- Phase 07 plans done, code review fixed (2 crit + 7 warn), verification human_needed, run paused for live validation
 progress:
   total_phases: 6
   completed_phases: 2
@@ -25,9 +25,9 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 ## Current Position
 
-Phase: 07 (edge-automation) — COMPLETE ✓
+Phase: 07 (edge-automation) — PLANS DONE, verification human_needed ⏸
 Plan: 4 of 4
-Status: All plans executed
+Status: All 4 plans executed; code review (2 crit + 7 warn) fixed; verification human_needed — 6 live-VPS checks pending in 07-UAT.md. Run `/gsd-verify-work 7` from the VPS to close. Autonomous run STOPPED by user to validate live first.
 Plans: 4/4 complete (07-01, 07-02 [wave 1] → 07-03 [wave 2] → 07-04 [wave 3])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
@@ -96,6 +96,12 @@ Recent decisions affecting current work:
   runner + SA-token auth + actual `kubectl apply`/`rollout` can only be confirmed
   by a real CI run on `master` — this environment is VPN-isolated from the cluster.
   Confirm on the first real master deploy. See `06-VERIFICATION.md`.
+- Phase 7 (human_needed, PENDING — user chose to validate before continuing): 6
+  live-VPS checks in `07-UAT.md` (nginx -t, `certbot renew --dry-run`, OnFailure
+  drop-in, ufw 6443-on-wg0, live `curl` TLS+upstream, teardown reversibility
+  round-trip). Bootstrap is operator-run; nothing was applied to the VPS during
+  execution. Run `/gsd-verify-work 7` from the VPS, then resume with
+  `/gsd:autonomous --from 8`. See `07-VERIFICATION.md`.
 
 ### Blockers/Concerns
 
