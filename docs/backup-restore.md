@@ -106,15 +106,28 @@ in the operations log when using the drill as a cutover gate.
 
 ### Live drill evidence (operator-captured)
 
-<!-- PLACEHOLDER: To be filled by the operator after running the live drill on the staging cluster.
-     Run: K8S_NAMESPACE=solid-stats-staging bash scripts/restore-drill.sh
-     Paste the DRILL_RESULT= line here and confirm postgres-0 is untouched.
+First successful live run on the staging k3s cluster (`solid-stats-staging`):
 
-Example format:
-  DRILL_RESULT=PASS backup_id=<timestamp> table_count=<n> total_rows=<n> duration_s=<n>
-  Date run: <YYYY-MM-DD>
-  Operator: <name>
--->
+```
+DRILL_RESULT=PASS backup_id=20260612T030008Z table_count=26 total_rows=303267 duration_s=0
+RESTORE DRILL PASSED
+job.batch "restore-drill" deleted from solid-stats-staging namespace
+```
+
+- **Date run:** 2026-06-13
+- **Result:** PASS — latest S3 backup (`backups/postgres/20260612T030008Z`) restored into the
+  ephemeral scratch `solid_stats_drill`; sanity assertions saw 26 tables / 303,267 rows.
+- **DRILL-01 isolation confirmed live:** the live `postgres-0` pod was byte-for-byte untouched
+  across the run — `startTime 2026-05-11T09:47:22Z`, `restartCount 3` before AND after the drill;
+  the live `solid_stats` DB still reports 26 public tables. The drill never connected to the live
+  `postgres` Service and never mounted `postgres-data`.
+- **DRILL-03 self-teardown confirmed:** the Job and its pod were removed after PASS; no drill
+  resources linger (`kubectl get job,pod -l app.kubernetes.io/name=restore-drill` → none).
+- **Architecture note (found during this live run):** the drill uses a root `fetch-backup`
+  initContainer (so `apk add aws-cli` works) that hands the dump to the non-root main container
+  (uid 70 = the real `postgres` user in `postgres:17-alpine`) via a shared `emptyDir`. Running the
+  main container as an arbitrary uid (e.g. 999) fails because `initdb` does `getpwuid()` and refuses
+  a uid with no `/etc/passwd` entry.
 
 ### Scheduled drill (future)
 

@@ -102,3 +102,18 @@ No new network endpoints or trust boundaries introduced. This plan is a document
 - postgres-data in docs/backup-restore.md — FOUND
 - DRILL-05 in docs/backup-restore.md — FOUND
 - Commit ca6e5bb — FOUND
+
+## Live drill checkpoint — RESOLVED 2026-06-13
+
+The deferred live-drill checkpoint was executed by the orchestrator against the staging
+k3s cluster (root@89.223.124.200, namespace solid-stats-staging):
+
+```
+DRILL_RESULT=PASS backup_id=20260612T030008Z table_count=26 total_rows=303267 duration_s=0
+RESTORE DRILL PASSED
+```
+
+- Latest S3 backup restored into ephemeral scratch `solid_stats_drill`; 26 tables / 303,267 rows asserted.
+- DRILL-01 proven live: `postgres-0` untouched (startTime 2026-05-11T09:47:22Z, restarts=3 before+after; live DB still 26 tables).
+- DRILL-03 proven: Job + pod self-removed after PASS.
+- Two live-only defects found+fixed before PASS: (1) `apk add` needs root → split into a root `fetch-backup` initContainer + non-root main container (commit 978e2f2); (2) main container must run as uid 70 (real postgres user), not 999 — `initdb` getpwuid refuses an unknown uid (commit in 08-fix). Evidence recorded in docs/backup-restore.md.
