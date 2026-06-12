@@ -232,3 +232,22 @@ aws --endpoint-url=https://s3.twcstorage.ru \
 Run this periodically after the policy is applied to confirm old objects are being expired. Each
 backup ID occupies three objects (`solid_stats.dump`, `.list`, `manifest.json`), so the count
 should decrease in multiples of three as backup IDs age past 30 days.
+
+---
+
+## 7. Known fragilities
+
+- **Runtime `apk add aws-cli` (WR-04).** Both the apply Job (`scripts/apply-s3-lifecycle.sh`)
+  and the probe Job (`k8s/staging/s3-lifecycle/80-s3-lifecycle-probe-job.yaml`) install the AWS
+  CLI at container start via `apk add --no-cache aws-cli` against the Alpine package mirror.
+  This is an unpinned, network-dependent dependency fetched at execution time: if the mirror is
+  unreachable, or Alpine ships a breaking aws-cli major bump, the Jobs behave non-reproducibly
+  (the apply Job would fail before the PUT, which is the safe direction). This matches the
+  existing `60-postgres-backup.yaml` precedent and is deliberately left as-is for consistency.
+  To remove the fragility, either pin the package (`apk add --no-cache aws-cli=<ver>`) or move to
+  an image with the CLI baked in — track this as a known operational risk until then.
+
+- **Overwrite guard on apply (WR-02).** `apply-s3-lifecycle.sh` refuses to replace an existing
+  bucket lifecycle configuration. If the bucket already has a config, the Job dumps it to the log
+  and exits non-zero. To intentionally replace it after reviewing the dumped config, re-run with
+  `FORCE_OVERWRITE=1` set in the environment.
