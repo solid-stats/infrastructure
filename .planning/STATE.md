@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: "Phase 08 COMPLETE + live-verified (restore drill PASS on cluster; postgres-0 untouched). Autonomous run continuing to Phase 09."
-last_updated: "2026-06-13T01:20:00Z"
-last_activity: 2026-06-13 -- Phase 08 complete; live restore drill PASSED (26 tables / 303267 rows to scratch, live DB untouched)
+stopped_at: "Completed 09-01: web Kubernetes slot + validation wiring"
+last_updated: "2026-06-13T19:22:27Z"
+last_activity: 2026-06-13 -- Phase 09-01 complete
 progress:
   total_phases: 6
-  completed_phases: 3
-  total_plans: 12
-  completed_plans: 11
-  percent: 50
+  completed_phases: 2
+  total_plans: 14
+  completed_plans: 12
+  percent: 36
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 09 — web-runtime-wiring (next)
+**Current focus:** Phase 09 — web-runtime-wiring
 
 ## Current Position
 
-Phase: 9 (web-runtime-wiring) — NOT STARTED (next)
-Plan: Not started
-Status: Phase 08 COMPLETE ✓ + live-verified (restore drill PASS on staging cluster; postgres-0 untouched, 26 tables/303267 rows restored to scratch). Phases 06, 07, 08 done. Autonomous run continuing.
+Phase: 09 (web-runtime-wiring) — COMPLETE
+Plan: 1 of 1 DONE
+Status: Phase 09 complete
 Plans: Phase 08 = 3/3 complete (08-01, 08-02 [wave 1] → 08-03 [wave 2])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
@@ -37,9 +37,9 @@ Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   + backup-before-overwrite reversibility. Real upstream = server-2 ClusterIP
   10.43.94.103:3000. http2 preserved.
 Prev: Phase 06 COMPLETE ✓ (verification human_needed — live CI deploy deferred)
-Last activity: 2026-06-12
+Last activity: 2026-06-12 -- Phase 09 execution started
 
-Progress: [██░░░░░░░░] 33% (2/6 phases complete; Phase 07 complete)
+Progress: [███░░░░░░░] 36% (2/6 phases complete; Phase 07, 09 complete)
 
 ## Performance Metrics
 
@@ -71,6 +71,7 @@ Progress: [██░░░░░░░░] 33% (2/6 phases complete; Phase 07 co
 | Phase 08-automated-restore-drill P08-01 | 88 | 2 tasks | 2 files |
 | Phase 08-automated-restore-drill P08-02 | 10 | 1 tasks | 1 files |
 | Phase 08-automated-restore-drill P08-03 | 52 | 1 tasks | 1 files |
+| Phase 09-web-runtime-wiring P09-01 | 10 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -137,6 +138,6 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-13T00:00:00Z
-Stopped at: Completed 08-03: automated restore drill runbook; live-drill checkpoint awaiting operator
+Last session: 2026-06-13T19:22:27Z
+Stopped at: Completed 09-01: web Kubernetes slot + validation wiring
 Resume file: None

@@ -213,7 +213,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 09-01-PLAN.md — web manifests (ConfigMap + Service + ServiceAccount + Deployment) + validate-staging.py + deploy-staging.yml rollout gate
+- [x] 09-01-PLAN.md — web manifests (ConfigMap + Service + ServiceAccount + Deployment) + validate-staging.py + deploy-staging.yml rollout gate
 
 #### Phase 10: S3 Lifecycle & Retention
 
@@ -258,6 +258,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. kubectl-native CD | v2.0 | 4/4 | Complete   | 2026-06-12 |
 | 7. Edge Automation | v2.0 | 4/4 | Complete    | 2026-06-12 |
 | 8. Automated Restore Drill | v2.0 | 3/3 | Complete    | 2026-06-12 |
-| 9. web Runtime Wiring | v2.0 | 0/TBD | Not started | - |
+| 9. web Runtime Wiring | v2.0 | 1/1 | Complete    | 2026-06-13 |
 | 10. S3 Lifecycle & Retention | v2.0 | 0/TBD | Not started | - |
 | 11. Production Cutover | v2.0 | 0/TBD | Not started | - |
