@@ -105,24 +105,50 @@ def split_documents(text: str) -> list[str]:
     return docs
 
 
+# NOTE: These helpers are intentionally minimal, line-based parsers — NOT a full
+# YAML implementation. The project convention is "standard library only" for
+# scripts, so PyYAML is deliberately not imported. They therefore ASSUME the
+# canonical 2-space block style emitted by scripts/render-staging-secrets.py and
+# used throughout k8s/staging/*.yaml: top-level keys unindented, one nesting level
+# at exactly two spaces, plain (non-flow, non-multiline) scalars. Comment and
+# blank lines are tolerated so key reordering / interleaved comments no longer
+# break detection. If a manifest deviates from this style these helpers may
+# misread it — the live `kubectl apply --dry-run` path in
+# validate_manifest_shape() is the authoritative gate when a cluster is reachable.
+
+
+def _is_comment_or_blank(line: str) -> bool:
+    stripped = line.strip()
+    return not stripped or stripped.startswith("#")
+
+
 def top_value(doc: str, key: str) -> str | None:
     prefix = f"{key}:"
     for line in doc.splitlines():
-        if line.startswith(prefix):
+        # Top-level keys are unindented; require the prefix to be followed by a
+        # space/tab/EOL so a deeper key that merely starts with the same text
+        # (e.g. 'kindOf:') cannot satisfy top_value('kind').
+        if line.startswith(prefix) and (line == prefix or line[len(prefix)] in (" ", "\t")):
             return line.split(":", 1)[1].strip()
     return None
 
 
 def metadata_name(doc: str) -> str | None:
-    lines = doc.splitlines()
     in_metadata = False
-    for line in lines:
-        if line == "metadata:":
+    for line in doc.splitlines():
+        if line.rstrip() == "metadata:":
             in_metadata = True
             continue
-        if in_metadata and line and not line.startswith(" "):
-            return None
-        if in_metadata and line.startswith("  name:"):
+        if not in_metadata:
+            continue
+        if _is_comment_or_blank(line):
+            continue
+        # A non-indented, non-comment line ends the metadata block.
+        if not line.startswith(" "):
+            break
+        # Match the direct child 'name:' at exactly two spaces of indent
+        # (reject deeper 'name:' keys nested under labels/annotations).
+        if line.startswith("  name:") and not line.startswith("   "):
             return line.split(":", 1)[1].strip()
     return None
 
@@ -131,12 +157,18 @@ def string_data(doc: str) -> dict[str, str]:
     values: dict[str, str] = {}
     in_string_data = False
     for line in doc.splitlines():
-        if line == "stringData:":
+        if line.rstrip() == "stringData:":
             in_string_data = True
             continue
-        if in_string_data and line and not line.startswith(" "):
+        if not in_string_data:
+            continue
+        if _is_comment_or_blank(line):
+            continue
+        # A non-indented line ends the stringData block.
+        if not line.startswith(" "):
             break
-        if in_string_data and line.startswith("  ") and ":" in line:
+        # Direct children at exactly two spaces of indent.
+        if line.startswith("  ") and not line.startswith("   ") and ":" in line:
             key, raw_value = line.strip().split(":", 1)
             raw_value = raw_value.strip()
             try:
