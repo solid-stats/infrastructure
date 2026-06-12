@@ -38,9 +38,9 @@ Committed scope for v2.0 (Production-Ready Infra & kubectl-native CD). Each maps
 
 ### WEB — `web` runtime wiring
 
-- [ ] **WEB-01**: `web` Deployment, Service, and ConfigMap exist following existing `server-2` conventions (dedicated ServiceAccount, resource requests/limits, probes, pinned image).
-- [ ] **WEB-02**: `web` deploys as a 0-replica / image-pending stub until a real image exists.
-- [ ] **WEB-03**: `validate-staging.py` `EXPECTED_*` and the rollout-status verification include `web`.
+- [x] **WEB-01**: `web` Deployment, Service, and ConfigMap exist following existing `server-2` conventions (dedicated ServiceAccount, resource requests/limits, probes, pinned image).
+- [x] **WEB-02**: `web` deploys as a 0-replica / image-pending stub until a real image exists.
+- [x] **WEB-03**: `validate-staging.py` `EXPECTED_*` and the rollout-status verification include `web`.
 
 ### S3 — S3 lifecycle / retention
 
@@ -114,9 +114,9 @@ Finalized during roadmap creation. Phase numbers continue from v1.0 (ended at Ph
 | DRILL-02 | Phase 8 | Complete |
 | DRILL-03 | Phase 8 | Complete |
 | DRILL-04 | Phase 8 | Complete |
-| WEB-01 | Phase 9 | Pending |
-| WEB-02 | Phase 9 | Pending |
-| WEB-03 | Phase 9 | Pending |
+| WEB-01 | Phase 9 | Complete |
+| WEB-02 | Phase 9 | Complete |
+| WEB-03 | Phase 9 | Complete |
 | S3-01 | Phase 10 | Pending |
 | S3-02 | Phase 10 | Pending |
 | S3-03 | Phase 10 | Pending |
