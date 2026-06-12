@@ -88,6 +88,11 @@ spec:
               value: "true"
             - name: S3_ENDPOINT
               value: https://s3.twcstorage.ru
+            # WR-02: forward the operator's overwrite opt-in into the pod. Without
+            # FORCE_OVERWRITE=1 the Job aborts rather than clobbering an existing
+            # (possibly out-of-band) lifecycle configuration.
+            - name: FORCE_OVERWRITE
+              value: "${FORCE_OVERWRITE:-}"
           resources:
             requests:
               cpu: 50m
@@ -112,7 +117,18 @@ spec:
                 echo "FATAL: Timeweb S3 endpoint does not support lifecycle API. S3-03 empirical proof did not complete successfully. Do not apply retention policy." >&2
                 exit 1
               elif [ "\$get_rc" -eq 0 ]; then
-                echo "WARN: bucket already has a lifecycle configuration — review before applying" >&2
+                # WR-02: put-bucket-lifecycle-configuration is a WHOLESALE replace,
+                # not a merge. An existing config (possibly with retention windows
+                # for other prefixes added out-of-band) would be silently lost.
+                # Dump it to the Job log as a record, then refuse to clobber unless
+                # the operator explicitly opts in after reviewing it.
+                echo "WARN: bucket already has a lifecycle configuration:" >&2
+                echo "\$get_output" >&2
+                if [ "\${FORCE_OVERWRITE:-}" != "1" ]; then
+                  echo "FATAL: refusing to overwrite existing lifecycle config; set FORCE_OVERWRITE=1 to proceed after reviewing the config above" >&2
+                  exit 1
+                fi
+                echo "INFO: FORCE_OVERWRITE=1 set — replacing the existing lifecycle config" >&2
               elif echo "\$get_output" | grep -q "NoSuchLifecycleConfiguration"; then
                 echo "INFO: no existing lifecycle config (expected on first apply)"
               else
