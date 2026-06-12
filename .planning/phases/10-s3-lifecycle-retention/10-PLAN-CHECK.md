@@ -1,10 +1,12 @@
 ---
 phase: 10-s3-lifecycle-retention
-status: NEEDS_REVISION
-revision_cycle: 1
+status: REVISED — awaiting re-check
+revision_cycle: 2
 total_issues: 8
 blockers: 4
 warnings: 4
+blockers_addressed: 4
+warnings_addressed: 3
 ---
 
 # Phase 10 Plan Verification
@@ -402,4 +404,54 @@ The three plans claim to deliver S3-01, S3-02, S3-03, but:
 **Issue Count:** 8 issues (4 blockers, 4 warnings, 0 info)
 
 **Path Forward:** Planner must address all 4 blockers. Warnings are improvements but not execution-blocking. Return plans with revised Task 1, Task 2, Task 3, and corrected dependencies for re-verification.
+
+---
+
+## Revision 2 — Changes Applied (2026-06-13)
+
+### BLOCKER 1 (10-01 Task 1) — RESOLVED
+Added verbatim JSON content for `config/s3/backups-lifecycle.json` directly in the Task 1 action.
+The exact `PutBucketLifecycleConfiguration` shape is now specified, including both Rule objects
+with all required keys (`ID`, `Status`, `Filter`, `Expiration`/`AbortIncompleteMultipartUpload`).
+
+### BLOCKER 2 (10-01 Task 2) — RESOLVED
+Replaced the shell-variable-embedding approach with the ConfigMap approach (Option A from checker):
+- Script creates a temporary ConfigMap via `kubectl create configmap --from-file=backups-lifecycle.json`
+- Job mounts the ConfigMap as a volume at `/config/`
+- Job command uses `file:///config/backups-lifecycle.json` — no shell escaping of JSON at all
+- ConfigMap deleted after Job completes
+- NotImplemented branch in GET-before-PUT is now an explicit `exit 1` with a clear fatal message
+  (Warning from checker also addressed here)
+
+### BLOCKER 3 (10-02) — RESOLVED
+- `wave: 1` → `wave: 2`
+- `depends_on: []` → `depends_on: ["10-01"]`
+- 10-03 wave updated from 2 → 3 to maintain consistent ordering (01 → 02 → 03)
+
+### BLOCKER 4 (10-03 Task 3) — RESOLVED
+Task 3 checkpoint `<how-to-verify>` now includes explicit Step 5 that:
+- Requires the Evidence table in docs/s3-lifecycle.md to contain real values (date, API result, operator)
+- Provides the grep command to verify non-blank evidence
+- Explains that blank evidence fails the phase goal
+
+`<resume-signal>` now has three distinct outcomes:
+- "approved" — requires all four conditions including filled Evidence section
+- "awaiting-probe" — defers Phase 10 until probe is run
+- "not-implemented" — escalation path if API is unsupported
+
+### WARNING (10-01 Task 3 validate structure) — RESOLVED
+`validate_s3_lifecycle_config()` in validate-staging.py now uses strict structural validation:
+isinstance checks on Filter (must be dict), Expiration (must be dict), Days (must be int),
+AbortIncompleteMultipartUpload (must be dict), DaysAfterInitiation (must be int).
+
+### WARNING (10-02 Task 1 dry-run limitation) — DOCUMENTED
+Added comment in Task 1 `<verify>` noting that kubectl dry-run validates YAML structure only,
+not the embedded shell script. Also added `s3-lifecycle` token assertion for validate-staging.py
+out-of-glob guard. The shell script is validated at runtime by the operator running the probe Job.
+
+### WARNING (CONTEXT.md D-XX citations) — NOT ADDRESSED
+CONTEXT.md for phase 10 has no formal D-XX decision IDs (decisions are described inline, not
+numbered). Adding synthetic D-XX markers to the context file is out of scope for this revision.
+The plans already reference the locked constraints by value (30-day window, backups/postgres/ prefix,
+in-cluster creds, https://s3.twcstorage.ru) in action text.
 
