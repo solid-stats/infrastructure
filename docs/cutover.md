@@ -120,15 +120,22 @@ post-cutover monitoring reveals a problem.
 
 ## Cutover Procedure (CUT-01)
 
-Confirm all four gates are satisfied, then on the VPS:
+Confirm all four gates are satisfied, then on the VPS. **Run from the repo
+root.** The script resolves the gate evidence files
+(`docs/backup-gate.md`, `docs/diff-readiness.md`) relative to its own
+location, so it reads the in-repo files regardless of CWD; running from the
+repo root additionally keeps every relative path in this runbook valid and
+avoids confusion with any stray same-named file under another directory:
 
 ```bash
+cd <path-to-infrastructure-repo>
 NEW_UPSTREAM=<target_address:port> scripts/cutover.sh
 ```
 
 For a dry-run preview (**does NOT touch nginx**):
 
 ```bash
+cd <path-to-infrastructure-repo>
 DRY_RUN=1 NEW_UPSTREAM=<target_address:port> scripts/cutover.sh
 ```
 

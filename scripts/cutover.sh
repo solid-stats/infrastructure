@@ -46,10 +46,18 @@ required() {
 
 required NEW_UPSTREAM
 
+# Resolve gate files relative to the repo root (this script lives in scripts/),
+# so the gates always read the in-repo evidence files regardless of the operator's
+# CWD (WR-05). Running from anywhere other than the repo root no longer makes the
+# gates fail on a missing file, and a stray docs/backup-gate.md under some other
+# CWD can never gate the flip.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
 : "${VHOST_HOST:=stats-staging.solid-stats.ru}"
 : "${VHOST_CONF:=/etc/nginx/sites-available/stats-staging-solid-stats.conf}"
-: "${BACKUP_GATE_FILE:=docs/backup-gate.md}"
-: "${DIFF_GATE_FILE:=docs/diff-readiness.md}"
+: "${BACKUP_GATE_FILE:=${REPO_ROOT}/docs/backup-gate.md}"
+: "${DIFF_GATE_FILE:=${REPO_ROOT}/docs/diff-readiness.md}"
 : "${SMOKE_RETRIES:=3}"
 : "${SMOKE_DELAY:=5}"
 : "${DRY_RUN:=}"
