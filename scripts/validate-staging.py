@@ -184,7 +184,8 @@ def string_data(doc: str) -> dict[str, str]:
 def validate_scripts() -> None:
     py_compile.compile(str(ROOT / "scripts" / "render-staging-secrets.py"), doraise=True)
     py_compile.compile(str(ROOT / "scripts" / "validate-edge.py"), doraise=True)
-    for script in ["scripts/backup-postgres-now.sh", "scripts/restore-drill.sh"]:
+    py_compile.compile(str(ROOT / "scripts" / "validate-s3-lifecycle.py"), doraise=True)
+    for script in ["scripts/backup-postgres-now.sh", "scripts/restore-drill.sh", "scripts/apply-s3-lifecycle.sh"]:
         result = run(["bash", "-n", script])
         require(result.returncode == 0, f"{script} failed bash syntax check: {result.stderr.strip()}")
 
@@ -360,6 +361,40 @@ def validate_drill_manifest() -> None:
     require("server-2-runtime" not in main_ctx, f"{rel} main container must NOT reference server-2-runtime (S3 access belongs to initContainer only)")
 
 
+def validate_s3_lifecycle_config() -> None:
+    lifecycle_path = ROOT / "config" / "s3" / "backups-lifecycle.json"
+    require(lifecycle_path.exists(), "config/s3/backups-lifecycle.json missing")
+    parsed = json.loads(lifecycle_path.read_text())
+    require(isinstance(parsed, dict) and "Rules" in parsed, "Rules key missing")
+    require(isinstance(parsed["Rules"], list) and len(parsed["Rules"]) > 0, "Rules must be a non-empty list")
+
+    has_expiration = False
+    has_abort = False
+
+    for rule in parsed["Rules"]:
+        # Expiration rule for backups/postgres/
+        filter_ = rule.get("Filter")
+        if isinstance(filter_, dict) and filter_.get("Prefix") == "backups/postgres/":
+            require(rule.get("Status") == "Enabled", "Expiration rule must be Enabled")
+            expiration = rule.get("Expiration")
+            require(isinstance(expiration, dict), "Expiration must be a dict")
+            days = expiration.get("Days") if isinstance(expiration, dict) else None
+            require(isinstance(days, int) and days >= 1, "Expiration.Days must be an integer >= 1")
+            has_expiration = True
+
+        # AbortIncompleteMultipartUpload rule
+        if "AbortIncompleteMultipartUpload" in rule:
+            require(rule.get("Status") == "Enabled", "AbortIncompleteMultipartUpload rule must be Enabled")
+            abort = rule["AbortIncompleteMultipartUpload"]
+            require(isinstance(abort, dict), "AbortIncompleteMultipartUpload must be a dict")
+            days_init = abort.get("DaysAfterInitiation")
+            require(isinstance(days_init, int), "DaysAfterInitiation must be an int")
+            has_abort = True
+
+    require(has_expiration, "missing Expiration rule for backups/postgres/")
+    require(has_abort, "missing AbortIncompleteMultipartUpload rule")
+
+
 def validate_rendered_secrets() -> None:
     env = os.environ.copy()
     env.update(
@@ -425,6 +460,7 @@ def main() -> int:
         ("workload safety", validate_workload_safety),
         ("app image pins", validate_app_image_pins),
         ("rendered secret structure", validate_rendered_secrets),
+        ("s3 lifecycle config", validate_s3_lifecycle_config),
     ]
     try:
         for label, check in checks:
