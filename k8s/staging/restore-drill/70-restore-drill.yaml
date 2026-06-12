@@ -32,6 +32,9 @@ spec:
       serviceAccountName: restore-drill
       automountServiceAccountToken: false
       securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        runAsNonRoot: true
         fsGroup: 999
       containers:
         - name: restore-drill
@@ -46,6 +49,11 @@ spec:
               memory: 2Gi
           securityContext:
             allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            # readOnlyRootFilesystem is NOT viable here — `apk add aws-cli` and
+            # `pg_ctl` write to the rootfs; scratch DB writes go under /scratch.
           volumeMounts:
             - name: scratch
               mountPath: /scratch
