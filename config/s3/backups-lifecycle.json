@@ -1,0 +1,16 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-postgres-backups",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "backups/postgres/" },
+      "Expiration": { "Days": 30 }
+    },
+    {
+      "ID": "abort-incomplete-multipart",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "" },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+    }
+  ]
+}
