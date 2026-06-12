@@ -66,7 +66,9 @@ class ValidationError(Exception):
     pass
 
 
-def run(cmd: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+def run(
+    cmd: list[str], *, input_text: str | None = None, timeout: float | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         cwd=ROOT,
@@ -75,6 +77,7 @@ def run(cmd: list[str], *, input_text: str | None = None) -> subprocess.Complete
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
+        timeout=timeout,
     )
 
 
@@ -83,17 +86,21 @@ def require(condition: bool, message: str) -> None:
         raise ValidationError(message)
 
 
+def _has_yaml_content(lines: list[str]) -> bool:
+    return any(part.strip() and not part.lstrip().startswith("#") for part in lines)
+
+
 def split_documents(text: str) -> list[str]:
     docs: list[str] = []
     current: list[str] = []
     for line in text.splitlines():
         if line.strip() == "---":
-            if any(part.strip() for part in current):
+            if _has_yaml_content(current):
                 docs.append("\n".join(current))
             current = []
         else:
             current.append(line)
-    if any(part.strip() for part in current):
+    if _has_yaml_content(current):
         docs.append("\n".join(current))
     return docs
 
@@ -172,11 +179,22 @@ def validate_manifest_shape() -> list[tuple[str, str, str]]:
             combined_docs.append("---\n" + doc)
 
     if shutil.which("kubectl"):
-        result = run(["kubectl", "apply", "--dry-run=client", "--validate=false", "-f", "-"], input_text="\n".join(combined_docs))
-        if result.returncode != 0 and "connection refused" not in result.stderr.lower():
-            raise ValidationError(f"kubectl dry-run failed: {result.stderr.strip() or result.stdout.strip()}")
-        if result.returncode != 0:
+        try:
+            result = run(
+                ["kubectl", "apply", "--dry-run=client", "--validate=false", "-f", "-"],
+                input_text="\n".join(combined_docs),
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            # An unreachable cluster (e.g. closed k3s API, VPN black-holing packets)
+            # makes kubectl block on discovery instead of failing fast; treat the
+            # timeout the same as a refused connection so validation stays local.
             print("warn: kubectl dry-run skipped because configured cluster is unreachable")
+        else:
+            if result.returncode != 0 and "connection refused" not in result.stderr.lower():
+                raise ValidationError(f"kubectl dry-run failed: {result.stderr.strip() or result.stdout.strip()}")
+            if result.returncode != 0:
+                print("warn: kubectl dry-run skipped because configured cluster is unreachable")
 
     return manifests
 
