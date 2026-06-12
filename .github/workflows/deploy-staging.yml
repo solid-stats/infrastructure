@@ -4,13 +4,12 @@ on:
   pull_request:
   push:
     branches:
-      - main
       - master
   workflow_dispatch:
 
 concurrency:
-  group: infrastructure-staging-${{ github.ref }}
-  cancel-in-progress: true
+  group: infrastructure-staging-deploy
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -27,46 +26,78 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Check YAML document markers
+      - name: Validate manifests and scripts
         run: |
           set -euo pipefail
           test -d k8s/staging
+          test -f scripts/wg-tunnel-up.sh
+          test -f scripts/kubeconfig-setup.sh
           test -f scripts/render-staging-secrets.py
-          test -f scripts/deploy-staging.sh
-          find k8s/staging -type f -name '*.yaml' -print | sort
+          find k8s/staging -type f -name '*.yaml' | sort
           python3 scripts/validate-staging.py
 
-  deploy:
-    name: Deploy to k3s
+  dry-run:
+    name: Dry-run (server-side)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: validate
-    if: github.event_name != 'pull_request'
+    timeout-minutes: 15
+    needs: [validate]
     environment: staging
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install SSH key
+      - name: Install WireGuard tools
+        run: sudo apt-get update && sudo apt-get install -y wireguard-tools
+
+      - name: Bring up WireGuard tunnel
         env:
-          CD_SSH_PRIVATE_KEY: ${{ secrets.CD_SSH_PRIVATE_KEY }}
+          WG_PRIVATE_KEY: ${{ secrets.WG_PRIVATE_KEY }}
+          WG_PEER_PUBLIC_KEY: ${{ secrets.WG_PEER_PUBLIC_KEY }}
+          WG_ENDPOINT: ${{ secrets.WG_ENDPOINT }}
+        run: bash scripts/wg-tunnel-up.sh
+
+      - name: Setup kubeconfig
+        env:
+          K8S_TOKEN: ${{ secrets.K8S_TOKEN }}
+          K8S_CA_CERT: ${{ secrets.K8S_CA_CERT }}
+        run: bash scripts/kubeconfig-setup.sh
+
+      - name: Dry-run kubectl apply (server-side)
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$CD_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          set -euo pipefail
+          # Exclude 01-ci-rbac.yaml — operator-bootstrapped, not CI-managed
+          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '01-ci-rbac.yaml' | sort | \
+            xargs kubectl apply -n "$K8S_NAMESPACE" --dry-run=server -f
 
-      - name: Trust deploy host
-        env:
-          CD_SSH_HOST: ${{ secrets.CD_SSH_HOST }}
-          CD_SSH_PORT: ${{ secrets.CD_SSH_PORT || '22' }}
-        run: ssh-keyscan -p "$CD_SSH_PORT" "$CD_SSH_HOST" >> ~/.ssh/known_hosts
+  deploy:
+    name: Deploy to k3s
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [validate, dry-run]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Apply staging manifests
+      - name: Install WireGuard tools
+        run: sudo apt-get update && sudo apt-get install -y wireguard-tools
+
+      - name: Bring up WireGuard tunnel
         env:
-          CD_SSH_HOST: ${{ secrets.CD_SSH_HOST }}
-          CD_SSH_PORT: ${{ secrets.CD_SSH_PORT || '22' }}
-          CD_SSH_USER: ${{ secrets.CD_SSH_USER }}
-          CD_SSH_KEY_PATH: ~/.ssh/deploy_key
+          WG_PRIVATE_KEY: ${{ secrets.WG_PRIVATE_KEY }}
+          WG_PEER_PUBLIC_KEY: ${{ secrets.WG_PEER_PUBLIC_KEY }}
+          WG_ENDPOINT: ${{ secrets.WG_ENDPOINT }}
+        run: bash scripts/wg-tunnel-up.sh
+
+      - name: Setup kubeconfig
+        env:
+          K8S_TOKEN: ${{ secrets.K8S_TOKEN }}
+          K8S_CA_CERT: ${{ secrets.K8S_CA_CERT }}
+        run: bash scripts/kubeconfig-setup.sh
+
+      - name: Render and apply staging secrets
+        env:
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
@@ -79,4 +110,31 @@ jobs:
           S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
           S3_BUCKET: ${{ secrets.S3_BUCKET }}
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
-        run: ./scripts/deploy-staging.sh
+        run: |
+          set -euo pipefail
+          tmp_secrets=$(mktemp)
+          trap 'rm -f "$tmp_secrets"' EXIT
+          K8S_NAMESPACE="$K8S_NAMESPACE" python3 scripts/render-staging-secrets.py > "$tmp_secrets"
+          kubectl apply -n "$K8S_NAMESPACE" -f "$tmp_secrets"
+
+      - name: Apply staging manifests
+        run: |
+          set -euo pipefail
+          # Exclude 01-ci-rbac.yaml — operator-bootstrapped, not CI-managed
+          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '01-ci-rbac.yaml' | sort | \
+            xargs kubectl apply -n "$K8S_NAMESPACE" -f
+
+      - name: Verify rollouts
+        run: |
+          set -euo pipefail
+          kubectl -n "$K8S_NAMESPACE" rollout status statefulset/postgres --timeout=300s
+          kubectl -n "$K8S_NAMESPACE" rollout status statefulset/rabbitmq --timeout=300s
+          kubectl -n "$K8S_NAMESPACE" rollout status deployment/server-2 --timeout=300s
+          kubectl -n "$K8S_NAMESPACE" rollout status deployment/replay-parser-2 --timeout=300s
+          echo "All workloads rolled out successfully"
+
+      - name: Verify services and CronJobs
+        run: |
+          set -euo pipefail
+          kubectl -n "$K8S_NAMESPACE" get service postgres rabbitmq server-2 -o wide
+          kubectl -n "$K8S_NAMESPACE" get cronjob replays-fetcher postgres-backup -o wide
