@@ -94,7 +94,7 @@ delete_rule() {
 
 delete_rule "80/tcp" allow 80/tcp
 delete_rule "443/tcp" allow 443/tcp
-delete_rule "6443/tcp on wg0" allow in on wg0 to any port 6443/tcp
+delete_rule "6443/tcp on wg0" allow in on wg0 to any port 6443 proto tcp
 echo "ufw edge rules removed (SSH rule preserved, firewall remains enabled)"
 ufw status verbose
 

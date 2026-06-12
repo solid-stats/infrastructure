@@ -192,11 +192,15 @@ def validate_bootstrap_idempotency_markers() -> None:  # OFFLINE CHECK
         has_backup,
         "bootstrap-edge.sh missing backup step (backup/cp .bak/.bak, per D-8)",
     )
-    # D-7, FIX 4: interface-qualified ufw rule must be exact literal
+    # D-7, FIX 4: interface-qualified ufw rule must be exact literal.
+    # Must use `proto tcp` form, NOT a `port 6443/tcp` suffix: in ufw's extended
+    # `to any port N` syntax the `/tcp` suffix is rejected ("Bad port '6443/tcp'").
+    # The looser `...port 6443` marker masked that live bug, so require the full form.
     require(
-        "ufw allow in on wg0 to any port 6443" in content,
-        "bootstrap-edge.sh missing exact literal 'ufw allow in on wg0 to any port 6443' "
-        "(interface-qualified rule required; bare 'ufw allow 6443' would expose k3s API publicly, D-7)",
+        "ufw allow in on wg0 to any port 6443 proto tcp" in content,
+        "bootstrap-edge.sh missing exact literal 'ufw allow in on wg0 to any port 6443 proto tcp' "
+        "(interface-qualified rule required; bare 'ufw allow 6443' would expose k3s API publicly, D-7; "
+        "the 'port 6443/tcp' suffix form is invalid in ufw's extended syntax)",
     )
     require("ufw allow 80" in content, "bootstrap-edge.sh missing 'ufw allow 80'")
     require("ufw allow 443" in content, "bootstrap-edge.sh missing 'ufw allow 443'")

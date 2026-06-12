@@ -153,7 +153,7 @@ else
   # wg0 pre-check: refuse to apply the 6443 rule if WireGuard tunnel is not up.
   # Without the interface qualifier the k3s API would be exposed on the public interface.
   if ip link show wg0 >/dev/null 2>&1; then
-    ufw allow in on wg0 to any port 6443/tcp comment 'k3s API via WireGuard only' || { echo "FATAL: ufw 6443/wg0 rule failed" >&2; exit 1; }
+    ufw allow in on wg0 to any port 6443 proto tcp comment 'k3s API via WireGuard only' || { echo "FATAL: ufw 6443/wg0 rule failed" >&2; exit 1; }
   else
     echo "FATAL: wg0 not found — refusing to apply firewall (6443 would be publicly exposed); bring up the WireGuard tunnel first" >&2
     exit 1
