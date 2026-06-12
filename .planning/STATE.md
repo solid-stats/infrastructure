@@ -4,13 +4,13 @@ milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
 stopped_at: "Completed 06-02: SA token and WireGuard key rotation runbook (CD-09)"
-last_updated: "2026-06-12T17:04:31.019Z"
+last_updated: "2026-06-12T17:09:39.216Z"
 last_activity: 2026-06-12 -- Phase 07 execution started
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 8
-  completed_plans: 5
+  completed_plans: 6
   percent: 17
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 07 (edge-automation) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Plans: 0/4 executed (07-01, 07-02 [wave 1] → 07-03 [wave 2] → 07-04 [wave 3])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
@@ -64,6 +64,7 @@ Progress: [█░░░░░░░░░] 17% (1/6 phases complete; Phase 07 pl
 | Phase 06-kubectl-native-cd P06-01 | 10m | 2 tasks | 2 files |
 | Phase 06-kubectl-native-cd P06-02 | 2 | 1 tasks | 1 files |
 | Phase 07-edge-automation P07-01 | 150 | 2 tasks | 3 files |
+| Phase 07-edge-automation P07-02 | 120 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -81,6 +82,8 @@ Recent decisions affecting current work:
 - [Phase ?]: 01-ci-rbac.yaml is operator-applied once; CI deploy glob (Plan 04) must exclude it
 - [Phase ?]: Both SA token and WireGuard key rotate in the same maintenance window to prevent credential gap
 - [Phase ?]: GitHub environment secrets updated before VPS rotation to prevent mid-window deploy failures
+- [Phase ?]: D-4: no custom certbot timer; drop-in extends stock certbot.service (EDGE-02, 07-02)
+- [Phase ?]: D-5: OnFailure= drop-in routes failures to certbot-renew-failure.service, logger -p user.crit (EDGE-03, 07-02)
 
 ### Pending Todos
 
@@ -116,6 +119,6 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-12T17:04:31.017Z
+Last session: 2026-06-12T17:08:51.524Z
 Stopped at: Completed 06-02: SA token and WireGuard key rotation runbook (CD-09)
 Resume file: None
