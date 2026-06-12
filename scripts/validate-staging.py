@@ -181,7 +181,7 @@ def string_data(doc: str) -> dict[str, str]:
 def validate_scripts() -> None:
     py_compile.compile(str(ROOT / "scripts" / "render-staging-secrets.py"), doraise=True)
     py_compile.compile(str(ROOT / "scripts" / "validate-edge.py"), doraise=True)
-    for script in ["scripts/backup-postgres-now.sh"]:
+    for script in ["scripts/backup-postgres-now.sh", "scripts/restore-drill.sh"]:
         result = run(["bash", "-n", script])
         require(result.returncode == 0, f"{script} failed bash syntax check: {result.stderr.strip()}")
 
@@ -189,6 +189,20 @@ def validate_scripts() -> None:
 def validate_manifest_shape() -> list[tuple[str, str, str]]:
     missing = [name for name in EXPECTED_MANIFESTS if not (MANIFEST_DIR / name).is_file()]
     require(not missing, f"missing expected manifests: {', '.join(missing)}")
+
+    # DRILL-04: drill manifests must live in a subdirectory, never at depth-1.
+    # CD glob: find k8s/staging -maxdepth 1 -name '*.yaml' — would accidentally
+    # schedule the drill Job on every deploy if any drill yaml leaks here.
+    drill_depth1 = [
+        f for f in MANIFEST_DIR.glob("*.yaml")
+        if any(tok in f.stem.lower() for tok in ("drill", "restore-drill"))
+    ]
+    require(
+        not drill_depth1,
+        "DRILL-04 violation: drill manifests must be in a subdirectory "
+        f"(k8s/staging/restore-drill/), not depth-1; found: "
+        + ", ".join(f.name for f in drill_depth1),
+    )
 
     manifests: list[tuple[str, str, str]] = []
     combined_docs: list[str] = []
