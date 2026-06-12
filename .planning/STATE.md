@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: "Phase 07 RE-PLANNED (adopt existing edge, post-SSH) + checker revision PASS; stopped before execute per user request"
-last_updated: "2026-06-12T08:22:21.903Z"
-last_activity: 2026-06-12 -- Phase 07 replanned adopt-not-build, revision verified, ready to execute
+stopped_at: "Completed 06-02: SA token and WireGuard key rotation runbook (CD-09)"
+last_updated: "2026-06-12T17:04:31.019Z"
+last_activity: 2026-06-12 -- Phase 07 execution started
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 8
+  completed_plans: 5
   percent: 17
 ---
 
@@ -21,21 +21,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 07 — Edge Automation
+**Current focus:** Phase 07 — edge-automation
 
 ## Current Position
 
-Phase: 07 (edge-automation) — RE-PLANNED ✓ (adopt-not-build; checker revision PASS)
-Status: Ready to execute Phase 07 — stopped before execute per user request
+Phase: 07 (edge-automation) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
 Plans: 0/4 executed (07-01, 07-02 [wave 1] → 07-03 [wave 2] → 07-04 [wave 3])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
   (only the stats-staging vhost; relay/auth/default operator-owned, one holds a
   secret) + add ufw 6443-on-wg0 + nginx -t-gated deploy-hook + OnFailure surfacing
+
   + backup-before-overwrite reversibility. Real upstream = server-2 ClusterIP
   10.43.94.103:3000. http2 preserved.
 Prev: Phase 06 COMPLETE ✓ (verification human_needed — live CI deploy deferred)
-Last activity: 2026-06-12 -- Phase 07 replanned adopt-not-build, revision verified
+Last activity: 2026-06-12 -- Phase 07 execution started
 
 Progress: [█░░░░░░░░░] 17% (1/6 phases complete; Phase 07 planned)
 
@@ -61,6 +63,7 @@ Progress: [█░░░░░░░░░] 17% (1/6 phases complete; Phase 07 pl
 *Updated after each plan completion*
 | Phase 06-kubectl-native-cd P06-01 | 10m | 2 tasks | 2 files |
 | Phase 06-kubectl-native-cd P06-02 | 2 | 1 tasks | 1 files |
+| Phase 07-edge-automation P07-01 | 150 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -113,6 +116,6 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-12T07:47:23.962Z
+Last session: 2026-06-12T17:04:31.017Z
 Stopped at: Completed 06-02: SA token and WireGuard key rotation runbook (CD-09)
 Resume file: None

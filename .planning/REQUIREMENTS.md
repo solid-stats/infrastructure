@@ -23,11 +23,11 @@ Committed scope for v2.0 (Production-Ready Infra & kubectl-native CD). Each maps
 
 ### EDGE — Edge automation
 
-- [ ] **EDGE-01**: The host nginx vhost config for staging is managed in the repo.
+- [x] **EDGE-01**: The host nginx vhost config for staging is managed in the repo.
 - [ ] **EDGE-02**: TLS certificates renew automatically via host `certbot` on a systemd timer with an `nginx -t`-gated reload hook.
 - [ ] **EDGE-03**: Certificate-renewal failures are surfaced (alert or log), not silent.
 - [ ] **EDGE-04**: The host firewall allows 80/443 inbound and keeps `6443` reachable only through the WireGuard tunnel.
-- [ ] **EDGE-05**: Edge setup is an idempotent, re-runnable bootstrap script.
+- [x] **EDGE-05**: Edge setup is an idempotent, re-runnable bootstrap script.
 
 ### DRILL — Automated restore drill
 
@@ -105,11 +105,11 @@ Finalized during roadmap creation. Phase numbers continue from v1.0 (ended at Ph
 | CD-07 | Phase 6 | Pending |
 | CD-08 | Phase 6 | Pending |
 | CD-09 | Phase 6 | Complete |
-| EDGE-01 | Phase 7 | Pending |
+| EDGE-01 | Phase 7 | Complete |
 | EDGE-02 | Phase 7 | Pending |
 | EDGE-03 | Phase 7 | Pending |
 | EDGE-04 | Phase 7 | Pending |
-| EDGE-05 | Phase 7 | Pending |
+| EDGE-05 | Phase 7 | Complete |
 | DRILL-01 | Phase 8 | Pending |
 | DRILL-02 | Phase 8 | Pending |
 | DRILL-03 | Phase 8 | Pending |
