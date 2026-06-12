@@ -1,0 +1,114 @@
+# S3 lifecycle empirical probe Job — operator-run once to validate Timeweb S3 lifecycle API support.
+# S3-LIFECYCLE: stored in k8s/staging/s3-lifecycle/ subdirectory so the CD apply glob
+# (find k8s/staging -maxdepth 1 -name '*.yaml') never matches this file.
+# Trigger via: kubectl apply -f k8s/staging/s3-lifecycle/80-s3-lifecycle-probe-job.yaml -n solid-stats-staging
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: s3-lifecycle-probe
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: s3-lifecycle-probe
+    app.kubernetes.io/part-of: solid-stats
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: s3-lifecycle-probe
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: s3-lifecycle-probe
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: s3-lifecycle-probe
+        app.kubernetes.io/part-of: solid-stats
+    spec:
+      restartPolicy: Never
+      serviceAccountName: s3-lifecycle-probe
+      automountServiceAccountToken: false
+      containers:
+        - name: s3-lifecycle-probe
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              apk add --no-cache aws-cli
+
+              export AWS_CONFIG_FILE=/tmp/aws-config
+              aws configure set default.s3.addressing_style path
+
+              PROBE_PREFIX="s3-lifecycle-probe"
+              TEST_KEY="${PROBE_PREFIX}/probe-$(date -u +%Y%m%dT%H%M%SZ).txt"
+
+              echo "=== API support: get-bucket-lifecycle-configuration ==="
+              get_output=$(aws --endpoint-url="$S3_ENDPOINT" s3api get-bucket-lifecycle-configuration \
+                --bucket "$S3_BUCKET" 2>&1 || true)
+              echo "$get_output"
+              if echo "$get_output" | grep -q "NotImplemented"; then
+                echo "RESULT: lifecycle API NOT implemented on this endpoint" >&2
+                exit 1
+              elif echo "$get_output" | grep -q "NoSuchLifecycleConfiguration"; then
+                echo "RESULT: API implemented — no lifecycle config currently set (expected on first run)"
+              else
+                echo "RESULT: API implemented — existing lifecycle config found"
+              fi
+
+              echo "=== PUT test object: $TEST_KEY ==="
+              echo "probe" | aws --endpoint-url="$S3_ENDPOINT" s3 cp - "s3://$S3_BUCKET/$TEST_KEY" --only-show-errors
+
+              echo "=== HEAD test object ==="
+              head_output=$(aws --endpoint-url="$S3_ENDPOINT" s3api head-object \
+                --bucket "$S3_BUCKET" --key "$TEST_KEY" 2>&1)
+              echo "$head_output"
+              if echo "$head_output" | grep -qi "expir"; then
+                echo "RESULT: x-amz-expiration PRESENT — lifecycle rule is recognized by endpoint"
+              else
+                echo "RESULT: x-amz-expiration ABSENT — endpoint may not compute expiry until a rule targets this prefix"
+                echo "NOTE: Apply a lifecycle rule to s3-lifecycle-probe/ prefix and re-run to observe expiry header"
+              fi
+
+              echo "=== CLEANUP: delete $TEST_KEY ==="
+              aws --endpoint-url="$S3_ENDPOINT" s3 rm "s3://$S3_BUCKET/$TEST_KEY" --only-show-errors
+              echo "probe cleanup complete"
+
+              echo "S3-03 proof run complete — record logs as evidence"
+          env:
+            - name: S3_ENDPOINT
+              value: https://s3.twcstorage.ru
+            - name: S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: server-2-runtime
+                  key: S3_BUCKET
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: server-2-runtime
+                  key: S3_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: server-2-runtime
+                  key: S3_SECRET_ACCESS_KEY
+            - name: AWS_DEFAULT_REGION
+              value: ru-1
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
