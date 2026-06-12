@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
-status: executing
-stopped_at: "Phase 07 executed + reviewed + fixed; verification human_needed (live-VPS checks in 07-UAT.md). Autonomous run STOPPED by user to validate Phase 07 live before continuing to Phase 08."
-last_updated: "2026-06-13T00:00:00Z"
-last_activity: 2026-06-13 -- Phase 07 plans done, code review fixed (2 crit + 7 warn), verification human_needed, run paused for live validation
+status: paused
+stopped_at: "Phase 07 COMPLETE + live-verified on staging VPS (all 6 UAT items green; 2 live-only bugs found+fixed). Paused before Phase 08 — awaiting user go to resume autonomous run."
+last_updated: "2026-06-13T01:15:00Z"
+last_activity: 2026-06-13 -- Phase 07 live verification PASSED on root@89.223.124.200; edge adopted into repo-managed state
 progress:
   total_phases: 6
   completed_phases: 2
@@ -25,9 +25,9 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 ## Current Position
 
-Phase: 07 (edge-automation) — PLANS DONE, verification human_needed ⏸
-Plan: 4 of 4
-Status: All 4 plans executed; code review (2 crit + 7 warn) fixed; verification human_needed — 6 live-VPS checks pending in 07-UAT.md. Run `/gsd-verify-work 7` from the VPS to close. Autonomous run STOPPED by user to validate live first.
+Phase: 8 (automated-restore-drill) — NOT STARTED (next)
+Plan: Not started
+Status: Phase 07 COMPLETE ✓ and LIVE-VERIFIED on staging VPS (root@89.223.124.200) — all 6 UAT items green. Edge now adopted into repo-managed state (vhost+HSTS, deploy-hook, OnFailure drop-in, ufw 6443/wg0). Two live-only defects found+fixed: vhost drift (03521f5), ufw 6443 syntax (cfa2485). Autonomous run paused before Phase 08 — awaiting user go.
 Plans: 4/4 complete (07-01, 07-02 [wave 1] → 07-03 [wave 2] → 07-04 [wave 3])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
@@ -37,7 +37,7 @@ Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   + backup-before-overwrite reversibility. Real upstream = server-2 ClusterIP
   10.43.94.103:3000. http2 preserved.
 Prev: Phase 06 COMPLETE ✓ (verification human_needed — live CI deploy deferred)
-Last activity: 2026-06-13 -- Phase 07 complete (all 4 plans executed)
+Last activity: 2026-06-12
 
 Progress: [██░░░░░░░░] 33% (2/6 phases complete; Phase 07 complete)
 
@@ -45,7 +45,7 @@ Progress: [██░░░░░░░░] 33% (2/6 phases complete; Phase 07 co
 
 **Velocity:**
 
-- Total plans completed: 0 (this milestone)
+- Total plans completed: 4 (this milestone)
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -53,7 +53,7 @@ Progress: [██░░░░░░░░] 33% (2/6 phases complete; Phase 07 co
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 07 | 4 | - | - |
 
 **Recent Trend:**
 
@@ -96,12 +96,14 @@ Recent decisions affecting current work:
   runner + SA-token auth + actual `kubectl apply`/`rollout` can only be confirmed
   by a real CI run on `master` — this environment is VPN-isolated from the cluster.
   Confirm on the first real master deploy. See `06-VERIFICATION.md`.
-- Phase 7 (human_needed, PENDING — user chose to validate before continuing): 6
-  live-VPS checks in `07-UAT.md` (nginx -t, `certbot renew --dry-run`, OnFailure
-  drop-in, ufw 6443-on-wg0, live `curl` TLS+upstream, teardown reversibility
-  round-trip). Bootstrap is operator-run; nothing was applied to the VPS during
-  execution. Run `/gsd-verify-work 7` from the VPS, then resume with
-  `/gsd:autonomous --from 8`. See `07-VERIFICATION.md`.
+
+- Phase 7 (RESOLVED 2026-06-13): all 6 live-VPS UAT checks PASSED on
+  root@89.223.124.200 (nginx -t, scoped certbot --dry-run, OnFailure drop-in, ufw
+  6443-on-wg0, live curl TLS+HSTS+upstream, teardown→re-bootstrap reversibility).
+  Edge adopted into repo-managed state. Found+fixed 2 live-only bugs: vhost drift
+  (03521f5), ufw 6443/tcp→proto tcp (cfa2485). NOTE: unscoped `certbot renew
+  --dry-run` hangs on operator-owned auth.solid-stats.ru cert (relay/auth vhost,
+  outside Phase 7 scope) — Phase 7 cert renews cleanly when scoped by --cert-name.
 
 ### Blockers/Concerns
 

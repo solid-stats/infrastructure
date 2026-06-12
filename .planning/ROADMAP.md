@@ -24,7 +24,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Controlled Full Run** - Operator can explicitly start and monitor a manual ingest run without enabling recurring fetching first.
 - [x] **Phase 5: Diff and Cutover Readiness** - Operator can produce reviewable old-vs-new diff output while production cutover remains blocked.
 - [ ] **Phase 6: kubectl-native CD** - CI deploys staging via `kubectl` over a WireGuard tunnel as a namespace-scoped ServiceAccount, with SSH removed.
-- [ ] **Phase 7: Edge Automation** - Host nginx, TLS renewal, and firewall for staging are repo-managed, idempotent, and proven reversible.
+- [x] **Phase 7: Edge Automation** - Host nginx, TLS renewal, and firewall for staging are repo-managed, idempotent, and proven reversible. (completed 2026-06-12)
 - [ ] **Phase 8: Automated Restore Drill** - Operator can prove the latest S3 backup restores cleanly into an ephemeral scratch PostgreSQL, never touching live data.
 - [ ] **Phase 9: web Runtime Wiring** - The future `web` application has a conventions-compliant, validated Kubernetes slot deployed as a stub.
 - [ ] **Phase 10: S3 Lifecycle & Retention** - Backup-prefix retention is enforced via a repo-stored expiration policy, with Timeweb support proven empirically.
@@ -244,7 +244,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 4. Controlled Full Run | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 5. Diff and Cutover Readiness | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 6. kubectl-native CD | v2.0 | 4/4 | Complete   | 2026-06-12 |
-| 7. Edge Automation | v2.0 | 4/4 | Complete   | 2026-06-13 |
+| 7. Edge Automation | v2.0 | 4/4 | Complete    | 2026-06-12 |
 | 8. Automated Restore Drill | v2.0 | 0/TBD | Not started | - |
 | 9. web Runtime Wiring | v2.0 | 0/TBD | Not started | - |
 | 10. S3 Lifecycle & Retention | v2.0 | 0/TBD | Not started | - |
