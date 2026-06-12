@@ -201,7 +201,12 @@ def validate_scripts() -> None:
     py_compile.compile(str(ROOT / "scripts" / "render-staging-secrets.py"), doraise=True)
     py_compile.compile(str(ROOT / "scripts" / "validate-edge.py"), doraise=True)
     py_compile.compile(str(ROOT / "scripts" / "validate-s3-lifecycle.py"), doraise=True)
-    for script in ["scripts/backup-postgres-now.sh", "scripts/restore-drill.sh", "scripts/apply-s3-lifecycle.sh"]:
+    for script in [
+        "scripts/backup-postgres-now.sh",
+        "scripts/restore-drill.sh",
+        "scripts/apply-s3-lifecycle.sh",
+        "scripts/cutover.sh",
+    ]:
         result = run(["bash", "-n", script])
         require(result.returncode == 0, f"{script} failed bash syntax check: {result.stderr.strip()}")
 
@@ -401,6 +406,60 @@ def validate_s3_lifecycle_docs() -> None:
     require("AbortIncompleteMultipartUpload" in content, "s3-lifecycle.md missing AbortIncompleteMultipartUpload documentation (S3-02)")
 
 
+def validate_cutover_artifacts() -> None:
+    """Offline gate for CUT-01..04: assert cutover script and runbook exist with required markers."""
+    # Script existence and bash syntax
+    script_path = ROOT / "scripts" / "cutover.sh"
+    require(script_path.is_file(), "scripts/cutover.sh missing (CUT-01)")
+    result = run(["bash", "-n", str(script_path)])
+    require(result.returncode == 0,
+            f"scripts/cutover.sh failed bash -n: {result.stderr.strip()}")
+
+    content = script_path.read_text()
+    require("set -euo pipefail" in content,
+            "scripts/cutover.sh missing 'set -euo pipefail'")
+    require("exit 64" in content,
+            "scripts/cutover.sh missing 'exit 64' (required env var guard)")
+    # Gate A: backup gate (CUT-03)
+    require("Status: verified" in content,
+            "scripts/cutover.sh missing backup gate grep for 'Status: verified' (CUT-03)")
+    # Gate B: diff/coverage gate (NOT equality — checks for coverage evidence marker)
+    require("strict_failures: 0" in content,
+            "scripts/cutover.sh missing diff coverage gate grep for 'strict_failures: 0' (CUT-03)")
+    # Rollback function (CUT-02)
+    require("rollback" in content,
+            "scripts/cutover.sh missing rollback function (CUT-02)")
+    # nginx fail-closed gate
+    require("nginx -t" in content,
+            "scripts/cutover.sh missing 'nginx -t' fail-closed gate")
+    # Smoke check (CUT-04)
+    require("curl" in content and "smoke" in content.lower(),
+            "scripts/cutover.sh missing smoke check curl (CUT-04)")
+    # No secrets: the script must not reference any well-known secret env var names
+    forbidden_secret_patterns = ["SECRET_KEY", "PASSWORD", "TOKEN", "PRIVATE_KEY"]
+    for pat in forbidden_secret_patterns:
+        require(pat not in content,
+                f"scripts/cutover.sh must not reference secret pattern {pat}")
+
+    # Runbook existence and markers
+    runbook_path = ROOT / "docs" / "cutover.md"
+    require(runbook_path.is_file(), "docs/cutover.md missing (CUT-01 runbook)")
+    runbook = runbook_path.read_text()
+    require("Status: verified" in runbook,
+            "docs/cutover.md missing backup gate reference ('Status: verified')")
+    require("strict_failures" in runbook,
+            "docs/cutover.md missing diff coverage gate reference ('strict_failures') (CUT-03)")
+    require("diff-readiness.md" in runbook,
+            "docs/cutover.md missing reference to docs/diff-readiness.md")
+    require("backup-gate.md" in runbook,
+            "docs/cutover.md missing reference to docs/backup-gate.md")
+    require("rollback" in runbook.lower(),
+            "docs/cutover.md missing rollback procedure (CUT-02)")
+    # Coverage-only note: the runbook must say this is NOT an equality gate
+    require("NOT" in runbook and ("equality" in runbook or "value-equality" in runbook),
+            "docs/cutover.md missing coverage-only / not-equality note (critical per D-XX)")
+
+
 def validate_rendered_secrets() -> None:
     env = os.environ.copy()
     env.update(
@@ -468,6 +527,7 @@ def main() -> int:
         ("rendered secret structure", validate_rendered_secrets),
         ("s3 lifecycle config", validate_s3_lifecycle_config),
         ("s3 lifecycle runbook", validate_s3_lifecycle_docs),
+        ("cutover artifacts", validate_cutover_artifacts),
     ]
     try:
         for label, check in checks:
