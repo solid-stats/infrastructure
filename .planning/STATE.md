@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
 stopped_at: "Completed 06-02: SA token and WireGuard key rotation runbook (CD-09)"
-last_updated: "2026-06-12T07:47:23.964Z"
-last_activity: 2026-06-12
+last_updated: "2026-06-12T08:22:21.903Z"
+last_activity: 2026-06-12 -- Phase 06 execution started
 progress:
   total_phases: 6
   completed_phases: 0
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 6 — kubectl-native CD
+**Current focus:** Phase 06 — kubectl-native-cd
 
 ## Current Position
 
-Phase: 6 (kubectl-native CD) — EXECUTING
-Plan: 4 of 4
-Status: Ready to execute
-Last activity: 2026-06-12
+Phase: 06 (kubectl-native-cd) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 06
+Last activity: 2026-06-12 -- Phase 06 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
