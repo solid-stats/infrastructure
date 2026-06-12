@@ -21,7 +21,9 @@ set -euo pipefail
 #   curl -fsS captures HTTP status; 2xx/3xx = success; all retries exhausted = auto-rollback.
 #
 # DRY_RUN=1: enforces both gates (still exits 1 if either gate unmet); skips all mutations.
-# SELF_TEST=1: exercises rollback() in isolation on a temp vhost copy; never touches live nginx.
+# SELF_TEST=1: exercises the REAL rollback() in isolation on a temp vhost copy with the
+#              nginx commands stubbed (NGINX_T_CMD/NGINX_RELOAD_CMD=true); never touches
+#              live nginx. This runs the actual restore + nginx -t + reload control flow.
 #
 # Usage:
 #   NEW_UPSTREAM=192.168.1.10:8080 scripts/cutover.sh
@@ -62,15 +64,59 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 : "${SMOKE_DELAY:=5}"
 : "${DRY_RUN:=}"
 
+# Injectable nginx commands so the REAL rollback() (and the live nginx -t / reload
+# gates) can be exercised by SELF_TEST with nginx stubbed out (CR-01). Defaults are
+# the real commands; SELF_TEST overrides them to `true` so the actual reversibility
+# control flow is genuinely tested instead of a stripped-down stub.
+: "${NGINX_T_CMD:=nginx -t}"
+: "${NGINX_RELOAD_CMD:=systemctl reload nginx}"
+
 BAK_VHOST="${VHOST_CONF}.cutover.bak"
 
 # ==============================================================================
-# SELF_TEST path (exercises rollback() on a temp copy; skips gate checks and
-# never touches live nginx — safe to run on any host with a readable VHOST_CONF)
+# rollback() function (CUT-02) — the SINGLE, REAL reversibility path.
+# Defined up front so it can be driven by SELF_TEST (with nginx stubbed via
+# NGINX_T_CMD/NGINX_RELOAD_CMD) AND called from the live smoke-check failure path.
+# There is intentionally only ONE rollback() — SELF_TEST exercises THIS one, not a
+# stripped-down copy, so the real restore + nginx -t + reload control flow is tested.
+# ==============================================================================
+
+rollback() {
+  echo "--- ROLLBACK: restoring vhost from backup ---" >&2
+
+  # 1. Verify backup exists
+  if [[ ! -f "${BAK_VHOST}" ]]; then
+    echo "FATAL: rollback backup not found at ${BAK_VHOST} — cannot roll back" >&2
+    exit 1
+  fi
+
+  # 2. Restore the backup byte-for-byte
+  echo "Restoring ${BAK_VHOST} -> ${VHOST_CONF}..." >&2
+  cp "${BAK_VHOST}" "${VHOST_CONF}"
+
+  # 3. nginx -t (fail-closed after restore) — injectable for SELF_TEST (CR-01)
+  if ! ${NGINX_T_CMD} 2>&1; then
+    echo "FATAL: nginx -t failed after rollback restore — config is broken; fix manually" >&2
+    exit 1
+  fi
+
+  # 4. Reload nginx — injectable for SELF_TEST (CR-01)
+  if ! ${NGINX_RELOAD_CMD}; then
+    echo "FATAL: nginx reload failed after rollback restore — investigate manually" >&2
+    exit 1
+  fi
+
+  # 5. Confirm completion
+  echo "ROLLBACK COMPLETE — upstream restored from backup: ${BAK_VHOST}" >&2
+}
+
+# ==============================================================================
+# SELF_TEST path (exercises the REAL rollback() on a temp copy with nginx stubbed;
+# skips gate checks and never touches live nginx — safe to run on any host)
 # ==============================================================================
 
 if [[ "${SELF_TEST:-}" == "1" ]]; then
-  echo "=== SELF_TEST: exercising rollback() on a temp vhost copy ==="
+  echo "=== SELF_TEST: exercising the REAL rollback() on a temp vhost copy (nginx stubbed) ==="
 
   TMP_VHOST=$(mktemp /tmp/cutover-selftest-XXXXXX.conf)
 
@@ -95,22 +141,18 @@ if [[ "${SELF_TEST:-}" == "1" ]]; then
   # Simulate a bad switch: corrupt the temp file
   echo "server CORRUPTED:9999;" >> "${TMP_VHOST}"
 
-  # Temporarily override VHOST_CONF and BAK_VHOST to point at temp files
+  # Point VHOST_CONF/BAK_VHOST at the temp files and stub the nginx commands so the
+  # REAL rollback() runs against temp state without touching live nginx. We call the
+  # function defined above — NOT a redefined stub — so the actual restore + nginx -t
+  # + reload control flow is genuinely exercised (CR-01). Stubbing with `true` means
+  # nginx -t / reload are invoked through the same code path that runs live; swap to
+  # `false` to prove the fail-closed branches still exit 1.
   ORIG_VHOST_CONF="${VHOST_CONF}"
   ORIG_BAK_VHOST="${BAK_VHOST}"
   VHOST_CONF="${TMP_VHOST}"
   BAK_VHOST="${TMP_VHOST}.cutover.bak"
-
-  # Define a self-test-local rollback that skips real nginx commands
-  rollback() {
-    echo "--- SELF_TEST rollback(): restoring ${VHOST_CONF} from ${BAK_VHOST} ---"
-    if [[ ! -f "${BAK_VHOST}" ]]; then
-      echo "FATAL: rollback backup not found at ${BAK_VHOST}" >&2
-      exit 1
-    fi
-    cp "${BAK_VHOST}" "${VHOST_CONF}"
-    echo "ROLLBACK COMPLETE — upstream restored from backup: ${BAK_VHOST}"
-  }
+  NGINX_T_CMD="true"
+  NGINX_RELOAD_CMD="true"
 
   rollback
 
@@ -185,40 +227,6 @@ cp -p "${VHOST_CONF}" "${BAK_VHOST}"
 echo "Backup written (will be overwritten on re-run to always reflect pre-run state)"
 
 # ==============================================================================
-# SECTION 4 — rollback() function (CUT-02)
-# Define before any nginx-touching code so it can be called from smoke-check failure path.
-# ==============================================================================
-
-rollback() {
-  echo "--- ROLLBACK: restoring vhost from backup ---" >&2
-
-  # 1. Verify backup exists
-  if [[ ! -f "${BAK_VHOST}" ]]; then
-    echo "FATAL: rollback backup not found at ${BAK_VHOST} — cannot roll back" >&2
-    exit 1
-  fi
-
-  # 2. Restore the backup byte-for-byte
-  echo "Restoring ${BAK_VHOST} -> ${VHOST_CONF}..." >&2
-  cp "${BAK_VHOST}" "${VHOST_CONF}"
-
-  # 3. nginx -t (fail-closed after restore)
-  if ! nginx -t 2>&1; then
-    echo "FATAL: nginx -t failed after rollback restore — config is broken; fix manually" >&2
-    exit 1
-  fi
-
-  # 4. Reload nginx
-  if ! systemctl reload nginx; then
-    echo "FATAL: nginx reload failed after rollback restore — investigate manually" >&2
-    exit 1
-  fi
-
-  # 5. Confirm completion
-  echo "ROLLBACK COMPLETE — upstream restored from backup: ${BAK_VHOST}" >&2
-}
-
-# ==============================================================================
 # SECTION 5 — upstream switch (CUT-01)
 # The # CUTOVER: marker precedes the server line in the upstream block.
 # sed replaces the "server <addr>;" line, preserving leading whitespace.
@@ -265,7 +273,7 @@ echo "Upstream line updated in ${VHOST_CONF}"
 # ==============================================================================
 
 echo "Validating nginx configuration..."
-if ! nginx -t 2>&1; then
+if ! ${NGINX_T_CMD} 2>&1; then
   echo "FATAL: nginx config invalid after upstream switch — rolling back" >&2
   rollback
   exit 1
@@ -276,7 +284,7 @@ fi
 # ==============================================================================
 
 echo "Reloading nginx..."
-if ! systemctl reload nginx; then
+if ! ${NGINX_RELOAD_CMD}; then
   echo "FATAL: nginx reload failed despite passing nginx -t — rolling back" >&2
   rollback
   exit 1
