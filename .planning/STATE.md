@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: "Phase 07 PLANNED & plan-checked (PASS); stopped before execute per user request"
+stopped_at: "Phase 07 RE-PLANNED (adopt existing edge, post-SSH) + checker revision PASS; stopped before execute per user request"
 last_updated: "2026-06-12T08:22:21.903Z"
-last_activity: 2026-06-12 -- Phase 07 planned (4 plans, 3 waves), ready to execute
+last_activity: 2026-06-12 -- Phase 07 replanned adopt-not-build, revision verified, ready to execute
 progress:
   total_phases: 6
   completed_phases: 1
@@ -25,11 +25,17 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 ## Current Position
 
-Phase: 07 (edge-automation) — PLANNED ✓ (research + validation + 4 plans, plan-checker PASS)
+Phase: 07 (edge-automation) — RE-PLANNED ✓ (adopt-not-build; checker revision PASS)
 Status: Ready to execute Phase 07 — stopped before execute per user request
 Plans: 0/4 executed (07-01, 07-02 [wave 1] → 07-03 [wave 2] → 07-04 [wave 3])
+Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
+  certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
+  (only the stats-staging vhost; relay/auth/default operator-owned, one holds a
+  secret) + add ufw 6443-on-wg0 + nginx -t-gated deploy-hook + OnFailure surfacing
+  + backup-before-overwrite reversibility. Real upstream = server-2 ClusterIP
+  10.43.94.103:3000. http2 preserved.
 Prev: Phase 06 COMPLETE ✓ (verification human_needed — live CI deploy deferred)
-Last activity: 2026-06-12 -- Phase 07 planned, ready to execute
+Last activity: 2026-06-12 -- Phase 07 replanned adopt-not-build, revision verified
 
 Progress: [█░░░░░░░░░] 17% (1/6 phases complete; Phase 07 planned)
 
