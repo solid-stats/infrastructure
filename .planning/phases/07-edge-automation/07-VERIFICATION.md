@@ -1,10 +1,10 @@
 ---
 phase: 07-edge-automation
-verified: 2026-06-13T00:00:00Z
-status: human_needed
-score: 9/9 must-haves verified (offline)
+verified: 2026-06-13T01:15:00Z
+status: passed
+score: 9/9 must-haves (offline) + 6/6 live UAT items verified on root@89.223.124.200
 overrides_applied: 0
-re_verification: false
+re_verification: true
 ---
 
 # Phase 7: Edge Automation Verification Report
@@ -12,8 +12,19 @@ re_verification: false
 **Phase Goal:** "The public staging edge — host nginx vhost, TLS renewal, and firewall — is repo-managed, idempotently re-runnable, and proven reversible in isolation before it becomes the cutover lever."
 
 **Verified:** 2026-06-13
-**Status:** human_needed
+**Status:** passed (live verification complete)
 **Mode:** ADOPT-NOT-BUILD (live edge already exists; Phase 7 adopts it into repo-managed state)
+
+> **LIVE VERIFICATION COMPLETE (2026-06-13 @ root@89.223.124.200).** All 6 human-verification
+> items in 07-UAT.md passed on the live staging VPS. The edge is now adopted into repo-managed
+> state (vhost + HSTS, certbot deploy-hook, OnFailure drop-in, ufw 6443/wg0). Two real defects
+> that offline validation could not catch were found and fixed during live verification:
+> - **G-1** (commit 03521f5): repo vhost had drifted from live — dropped `X-Forwarded-Host`
+>   header and `proxy_connect_timeout` 5s→60s. Reconciled to a true mirror + intended HSTS.
+> - **G-2** (commit cfa2485): bootstrap ufw rule used the invalid `port 6443/tcp` form (ufw
+>   rejects it); corrected to `port 6443 proto tcp` and the validator marker was tightened.
+> certbot renewal (scoped to stats-staging) succeeds; teardown→re-bootstrap round-trip is clean
+> with no edge outage. EDGE-01..05 confirmed live.
 
 ## Goal Achievement
 
