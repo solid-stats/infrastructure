@@ -132,8 +132,10 @@ fi
 # SECTION 2 — Gate checks (always enforced; DRY_RUN does NOT bypass these)
 # ==============================================================================
 
-# Gate A (CUT-03 backup): fresh verified backup required
-if ! grep -q "Status: verified" "${BACKUP_GATE_FILE}"; then
+# Gate A (CUT-03 backup): fresh verified backup required.
+# WR-04: anchor the match to a whole-line `Status: verified` so a negated/qualified
+# phrasing (e.g. "Status: verified backup is STALE — do not use") cannot false-pass.
+if ! grep -Eq '^[[:space:]]*Status:[[:space:]]+verified[[:space:]]*$' "${BACKUP_GATE_FILE}"; then
   echo "FATAL: backup gate not verified in ${BACKUP_GATE_FILE} — run a fresh backup first" >&2
   exit 1
 fi
@@ -143,7 +145,11 @@ fi
 # "strict_failures: 0" means no missing players/matches, no parser errors,
 # no unexplained aggregate differences outside tolerance. Value differences
 # by design are allowlisted and human-reviewed. See docs/diff-readiness.md.
-if ! grep -q "strict_failures: 0" "${DIFF_GATE_FILE}"; then
+# WR-04: anchor to a whole-line `strict_failures: 0` evidence marker (the format the
+# runbook prescribes under "## Cutover Gate Evidence") so a qualified phrasing
+# (e.g. "strict_failures: 0 (PLACEHOLDER, not yet run)") cannot false-pass, and the
+# prose mention of `strict_failures` elsewhere in the doc is not mistaken for evidence.
+if ! grep -Eq '^[[:space:]]*strict_failures:[[:space:]]*0[[:space:]]*$' "${DIFF_GATE_FILE}"; then
   echo "FATAL: diff coverage gate not met in ${DIFF_GATE_FILE} (strict_failures: 0 not found)" >&2
   echo "  The green-diff gate is coverage/integrity only — see docs/diff-readiness.md" >&2
   exit 1
