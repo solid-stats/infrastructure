@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: "Completed 06-02: SA token and WireGuard key rotation runbook (CD-09)"
-last_updated: "2026-06-12T17:09:39.216Z"
+stopped_at: "Completed 07-03: bootstrap-edge.sh + teardown-edge.sh (EDGE-04, EDGE-05)"
+last_updated: "2026-06-12T17:14:49.835Z"
 last_activity: 2026-06-12 -- Phase 07 execution started
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 8
-  completed_plans: 6
+  completed_plans: 7
   percent: 17
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 07 (edge-automation) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Plans: 0/4 executed (07-01, 07-02 [wave 1] → 07-03 [wave 2] → 07-04 [wave 3])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
@@ -65,6 +65,7 @@ Progress: [█░░░░░░░░░] 17% (1/6 phases complete; Phase 07 pl
 | Phase 06-kubectl-native-cd P06-02 | 2 | 1 tasks | 1 files |
 | Phase 07-edge-automation P07-01 | 150 | 2 tasks | 3 files |
 | Phase 07-edge-automation P07-02 | 120 | 2 tasks | 3 files |
+| Phase 07-edge-automation P07-03 | 117 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -84,6 +85,8 @@ Recent decisions affecting current work:
 - [Phase ?]: GitHub environment secrets updated before VPS rotation to prevent mid-window deploy failures
 - [Phase ?]: D-4: no custom certbot timer; drop-in extends stock certbot.service (EDGE-02, 07-02)
 - [Phase ?]: D-5: OnFailure= drop-in routes failures to certbot-renew-failure.service, logger -p user.crit (EDGE-03, 07-02)
+- [Phase 07-03]: D-7: ufw 6443 only on wg0 interface — wg0 pre-check exits 1 with FATAL if interface absent (EDGE-04)
+- [Phase 07-03]: D-8: backup live vhost to .bak before overwrite; teardown restores .bak exactly (EDGE-05)
 
 ### Pending Todos
 
@@ -119,6 +122,6 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-12T17:08:51.524Z
-Stopped at: Completed 06-02: SA token and WireGuard key rotation runbook (CD-09)
+Last session: 2026-06-12T17:14:49.833Z
+Stopped at: Completed 07-03: bootstrap-edge.sh + teardown-edge.sh (EDGE-04, EDGE-05)
 Resume file: None

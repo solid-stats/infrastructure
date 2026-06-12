@@ -169,7 +169,7 @@ Plans:
 
 **Wave 2** *(depends on Wave 1)*
 
-- [ ] 07-03-PLAN.md — Adopt-reconcile bootstrap (scripts/bootstrap-edge.sh: backup live vhost, install repo copy, ufw split-tunnel) + teardown (scripts/teardown-edge.sh: .bak restore)
+- [x] 07-03-PLAN.md — Adopt-reconcile bootstrap (scripts/bootstrap-edge.sh: backup live vhost, install repo copy, ufw split-tunnel) + teardown (scripts/teardown-edge.sh: .bak restore)
 
 **Wave 3** *(depends on Wave 2)*
 
@@ -244,7 +244,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 4. Controlled Full Run | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 5. Diff and Cutover Readiness | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 6. kubectl-native CD | v2.0 | 4/4 | Complete   | 2026-06-12 |
-| 7. Edge Automation | v2.0 | 2/4 | In Progress|  |
+| 7. Edge Automation | v2.0 | 3/4 | In Progress|  |
 | 8. Automated Restore Drill | v2.0 | 0/TBD | Not started | - |
 | 9. web Runtime Wiring | v2.0 | 0/TBD | Not started | - |
 | 10. S3 Lifecycle & Retention | v2.0 | 0/TBD | Not started | - |
