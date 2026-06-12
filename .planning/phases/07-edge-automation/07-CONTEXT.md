@@ -30,16 +30,52 @@ repo-managed and reversible in isolation.
 <decisions>
 ## Implementation Decisions
 
-### Claude's Discretion
-All implementation choices are at Claude's discretion — this is a pure
-infrastructure phase (host edge config + bootstrap scripting), with no
-user-facing behavior. Implementation is guided by the ROADMAP goal, the EDGE-01
-through EDGE-05 success criteria, the project anti-features (no cert-manager / no
-k8s ingress — the edge is host-nginx; no `--insecure-skip-tls-verify`), and the
-existing repo conventions (`#!/usr/bin/env bash`, `set -euo pipefail`, explicit
-required-env checks, idempotency, reversibility proven in isolation). Research
-during plan-phase will fix the concrete choices (certbot auth mode, firewall
-tool, renewal-failure surfacing mechanism, systemd timer cadence).
+### LOCKED — Revised after live SSH inspection (2026-06-12)
+The first research/plan treated this as greenfield. **It is NOT.** SSH inspection
+of the live host (`deploy@89.223.124.200`, Ubuntu 24.04.4, nginx 1.24.0, certbot
+2.9.0) shows the staging edge already exists and serves live traffic. Phase 7 is
+**ADOPT-the-existing-edge-into-the-repo + add firewall / renewal-hook / failure
+surfacing / reversibility**, NOT build-from-scratch. Locked decisions:
+
+1. **Scope = ONLY the `stats-staging-solid-stats.conf` vhost.** The same nginx also
+   serves `sg-stats-relay.conf` (auth.solid-stats.ru + relay.solid-stats.ru) and
+   `default`. Those are operator-owned, OUT OF PHASE-7 SCOPE, and the relay vhost
+   contains an unrelated auth secret — they MUST NOT be copied into the repo (git
+   secret-leak risk). Capture/manage only the stats-staging vhost.
+2. **Repo vhost = a verbatim mirror of the live `stats-staging-solid-stats.conf`**
+   (filename kept as `stats-staging-solid-stats.conf`). Real shape: a named
+   `upstream solid_stats_staging_server2 { server 10.43.94.103:3000; keepalive 16; }`
+   block with `proxy_pass http://solid_stats_staging_server2`; ACME webroot at
+   `/var/www/html`; HTTP→HTTPS redirect; TLS via
+   `/etc/letsencrypt/live/stats-staging.solid-stats.ru/` + `options-ssl-nginx.conf`
+   + `ssl-dhparams.pem`. The **CUTOVER lever (Phase 11)** is the single
+   `server 10.43.94.103:3000;` line inside the upstream block — mark it.
+3. **Real upstream is the server-2 ClusterIP `10.43.94.103:3000`** (k3s routes
+   ClusterIPs on the node), NOT a `127.0.0.1:3000` placeholder.
+4. **TLS renewal already runs via the stock `certbot.timer`** (systemd, twice
+   daily; cert already issued for lineage `stats-staging.solid-stats.ru`). **DO NOT
+   create a custom `certbot-renew.timer`/`.service`** — that would double-renew /
+   conflict. EDGE-02's repo value-add is ONLY: a repo-stored `nginx -t`-gated
+   **deploy-hook** installed idempotently at
+   `/etc/letsencrypt/renewal-hooks/deploy/` (reload nginx only after `nginx -t`).
+5. **EDGE-03 surfacing = an `OnFailure=` systemd drop-in on the STOCK
+   `certbot.service`** (`/etc/systemd/system/certbot.service.d/onfailure.conf`) →
+   a small failure-handler unit that logs to journald (`logger -p user.crit`). Do
+   not invent a parallel renewal service.
+6. **certbot authenticator = webroot** with webroot path `/var/www/html` (matches
+   the live ACME location). Do not re-issue the existing cert — bootstrap must
+   detect the existing lineage and skip issuance (idempotent).
+7. **EDGE-04 firewall = ufw.** The k3s API `6443` currently LISTENS on all
+   interfaces (`*:6443` per live `ss`); allow 80/443 inbound, allow 6443 only on
+   `wg0` (10.8.0.1/24), deny 6443 on the public interface, never lock out
+   WireGuard/SSH. Idempotent (re-run adds no dup rules). Operator confirms current
+   ufw state during bootstrap (deploy user lacks sudo, ufw status not yet read).
+8. **EDGE-05 bootstrap = adopt/reconcile, not create.** Before overwriting the
+   live vhost, back it up so `teardown-edge.sh` can restore the exact original.
+   Idempotent ops only (`install`/`ln -sf`/guarded `ufw`); no cert re-issue.
+9. **Offline validator (`scripts/validate-edge.py`)** stays — validates the repo
+   vhost + scripts + systemd units offline; live `nginx -t` / `certbot renew
+   --dry-run` / `ufw status` remain OPERATOR-ONLY (per 07-VALIDATION.md).
 
 </decisions>
 
@@ -57,11 +93,18 @@ tool, renewal-failure surfacing mechanism, systemd timer cadence).
   be validatable in the same spirit (syntax / shape checks runnable in CI without
   touching the live host).
 
-### Established Patterns
-- No host-level nginx / certbot / firewall tooling exists yet — this is the
-  repo's first edge layer (greenfield host automation).
-- Idempotent re-runnable bootstrap scripts; manifests/configs pinned in-repo;
-  one environment per directory; explicit namespace/host boundaries.
+### Established Patterns / Live Host State (verified via SSH 2026-06-12)
+- **NOT greenfield.** Host already runs: nginx 1.24.0 with sites-enabled
+  `default`, `sg-stats-relay.conf`, `stats-staging-solid-stats.conf`; certbot
+  2.9.0 with the stock `certbot.timer` auto-renewing twice daily; certs under
+  `/etc/letsencrypt/live/{stats-staging.solid-stats.ru,auth...,relay...}`; `wg0`
+  up at `10.8.0.1/24`; ports 80/443 (nginx) and 6443 (k3s, all interfaces)
+  listening.
+- Phase 7 captures ONLY the stats-staging vhost into the repo and adds firewall +
+  deploy-hook + failure surfacing + reversibility, idempotently, without
+  disrupting the live edge or the operator-owned relay/auth/default vhosts.
+- Idempotent re-runnable bootstrap scripts; configs pinned in-repo; one
+  environment per directory; explicit host boundaries.
 
 ### Integration Points
 - The k3s API (`6443`) is reached only over the WireGuard tunnel from Phase 6 —
