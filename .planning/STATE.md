@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
-status: verifying
+status: executing
 stopped_at: Completed 10-03-PLAN.md (docs tasks)
-last_updated: "2026-06-12T20:04:26.932Z"
-last_activity: 2026-06-13 -- Phase 10 Plan 02 complete
+last_updated: "2026-06-12T20:37:38.886Z"
+last_activity: 2026-06-12 -- Phase 11 execution started
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 18
-  completed_plans: 15
+  total_plans: 21
+  completed_plans: 16
   percent: 33
 ---
 
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 10 — s3-lifecycle-retention
+**Current focus:** Phase 11 — production-cutover
 
 ## Current Position
 
-Phase: 10 (s3-lifecycle-retention) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 11 (production-cutover) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
 Plans: Phase 08 = 3/3 complete (08-01, 08-02 [wave 1] → 08-03 [wave 2])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
@@ -37,7 +37,7 @@ Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   + backup-before-overwrite reversibility. Real upstream = server-2 ClusterIP
   10.43.94.103:3000. http2 preserved.
 Prev: Phase 06 COMPLETE ✓ (verification human_needed — live CI deploy deferred)
-Last activity: 2026-06-13 -- Phase 10 Plan 02 complete
+Last activity: 2026-06-12 -- Phase 11 execution started
 
 Progress: [███░░░░░░░] 36% (2/6 phases complete; Phase 07, 09 complete)
 
@@ -76,6 +76,7 @@ Progress: [███░░░░░░░] 36% (2/6 phases complete; Phase 07, 0
 | Phase 10-s3-lifecycle-retention P10-01 | 15 | 3 tasks | 4 files |
 | Phase 10-s3-lifecycle-retention P10-02 | 10 | 1 tasks | 1 files |
 | Phase 10-s3-lifecycle-retention P03 | 10 | 2 tasks | 2 files |
+| Phase 11-production-cutover P01 | 20 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -144,6 +145,6 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-12T20:04:26.929Z
+Last session: 2026-06-12T20:37:38.883Z
 Stopped at: Completed 10-03-PLAN.md (docs tasks)
 Resume file: None

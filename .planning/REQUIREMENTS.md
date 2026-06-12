@@ -50,10 +50,10 @@ Committed scope for v2.0 (Production-Ready Infra & kubectl-native CD). Each maps
 
 ### CUT — Production cutover
 
-- [ ] **CUT-01**: Legacy and new runtimes run in parallel; the cutover is a single reversible nginx-upstream switch.
-- [ ] **CUT-02**: A tested rollback path reverts the upstream in one edit.
-- [ ] **CUT-03**: Cutover is gated on a fresh backup point and a green diff gate.
-- [ ] **CUT-04**: A post-cutover smoke check curls the public host to confirm the new runtime responds before legacy is retired.
+- [x] **CUT-01**: Legacy and new runtimes run in parallel; the cutover is a single reversible nginx-upstream switch.
+- [x] **CUT-02**: A tested rollback path reverts the upstream in one edit.
+- [x] **CUT-03**: Cutover is gated on a fresh backup point and a green diff gate.
+- [x] **CUT-04**: A post-cutover smoke check curls the public host to confirm the new runtime responds before legacy is retired.
 
 ## Future Requirements
 
@@ -120,10 +120,10 @@ Finalized during roadmap creation. Phase numbers continue from v1.0 (ended at Ph
 | S3-01 | Phase 10 | Complete |
 | S3-02 | Phase 10 | Complete |
 | S3-03 | Phase 10 | Complete |
-| CUT-01 | Phase 11 | Pending |
-| CUT-02 | Phase 11 | Pending |
-| CUT-03 | Phase 11 | Pending |
-| CUT-04 | Phase 11 | Pending |
+| CUT-01 | Phase 11 | Complete |
+| CUT-02 | Phase 11 | Complete |
+| CUT-03 | Phase 11 | Complete |
+| CUT-04 | Phase 11 | Complete |
 
 **Coverage:**
 
