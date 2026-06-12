@@ -40,7 +40,7 @@ created: 2026-06-12
 
 ## Offline vs Operator-Only (critical distinction)
 
-Most edge behavior can only be fully proven on the live Ubuntu 22.04 host. The
+Most edge behavior can only be fully proven on the live Ubuntu 24.04 host. The
 plan MUST separate what CI/repo can validate from what is operator-only, and must
 NOT claim live success from offline checks.
 

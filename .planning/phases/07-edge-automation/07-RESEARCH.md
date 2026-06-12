@@ -4,6 +4,24 @@
 **Domain:** Host-level TLS, firewall, and certificate automation for staging edge
 **Confidence:** HIGH
 
+> ## ⚠ OS Correction (2026-06-12, post-research)
+>
+> This research was written assuming the host is **Ubuntu 22.04**. The live k3s
+> node (`kubectl get nodes`, OS-IMAGE) shows the VPS is actually **Ubuntu 24.04.4
+> LTS (noble)**, kernel 6.8, k3s v1.35.4. The edge runs on this same host, so it is
+> 24.04, not 22.04. **All "Ubuntu 22.04" / "jammy" references below are superseded
+> by 24.04.**
+>
+> Impact: the architecture and approach are unchanged — webroot certbot + systemd
+> renewal timer + `nginx -t`-gated deploy-hook + ufw split-tunnel all work
+> identically on noble. Only package versions differ. Corrected apt (noble) stack:
+> nginx ~1.24, systemd 255, **certbot ~2.9 via apt (the "certbot 5.6+ / PPA / pip"
+> note below is WRONG — there is no certbot 5.x; apt certbot on noble is current
+> and sufficient for webroot)**, ufw ~0.36.2, openssl ~3.0.13, curl ~8.5. The
+> bootstrap script installs via `apt` without pinning, so it picks up whatever
+> noble ships — no PPA/pip upgrade is needed or wanted. Confirm exact versions on
+> the host during operator bootstrap.
+
 ## Summary
 
 Phase 7 makes the staging public edge — host nginx vhost, TLS renewal, and firewall rules — repo-managed, idempotently re-runnable, and validated in isolation. The edge currently exposes `https://stats-staging.solid-stats.ru` to the public (a host nginx instance) and proxies upstream to the k3s-hosted `server-2` Service at internal IP. The phase must deliver:
@@ -11,7 +29,7 @@ Phase 7 makes the staging public edge — host nginx vhost, TLS renewal, and fir
 1. **Nginx vhost config** stored in-repo, applied idempotently via bootstrap script.
 2. **TLS renewal** via host `certbot` with `webroot` authenticator, systemd timer firing twice-daily, and an `nginx -t`-gated reload hook to avoid nginx config errors blocking renewal.
 3. **Renewal-failure surfacing** using a systemd `OnFailure=` unit to alert the operator if the renewal timer fails.
-4. **Host firewall** (ufw on Ubuntu 22.04) allowing inbound 80/443, keeping k3s API `6443` reachable only via the WireGuard tunnel (`wg0`), not the public interface.
+4. **Host firewall** (ufw on Ubuntu 24.04) allowing inbound 80/443, keeping k3s API `6443` reachable only via the WireGuard tunnel (`wg0`), not the public interface.
 5. **Reversibility proof** — the phase creates a teardown/restore runbook and a reversible bootstrap script so the cutover from legacy to new runtime (Phase 11) can be undone single-handedly.
 
 **Primary recommendation:** Use `certbot` with the **`webroot` authenticator** + `--no-eff-email` flag (no mailing list), `systemd.timer` for renewal, `deploy-hook` with `nginx -t` gate, and `ufw` for split-tunnel firewall rules on interface-basis. This minimizes complexity, avoids nginx config mutations, and provides clear idempotency gates.
@@ -57,8 +75,8 @@ All implementation choices are at Claude's discretion — no user-locked decisio
 ### Core
 | Library/Tool | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| Let's Encrypt (via certbot) | 5.6.0+ [VERIFIED: certbot docs] | TLS certificate issuance and automatic renewal | Industry standard for automated free ACME-based TLS; stable, well-tested renewal mechanism |
-| certbot | 5.6.0+ (Ubuntu 22.04 ships ~2.8+; upgrade to 5.6+ via PPA or pip) | ACME client for Let's Encrypt | Official EFF tool; supports webroot, nginx, and standalone authenticators; renewal hooks for nginx reload |
+| Let's Encrypt (via certbot) | n/a (free ACME service) | TLS certificate issuance and automatic renewal | Industry standard for automated free ACME-based TLS; stable, well-tested renewal mechanism |
+| certbot | ~2.9 via apt on Ubuntu 24.04 noble (NOTE: "5.6+ / PPA / pip" was a research error — there is no certbot 5.x; apt certbot is current and sufficient for webroot) | ACME client for Let's Encrypt | Official EFF tool; supports webroot, nginx, and standalone authenticators; renewal hooks for nginx reload |
 | systemd (timer) | 251+ (Ubuntu 22.04 includes systemd 251) [VERIFIED: Ubuntu 22.04 docs] | Recurring renewal jobs | Better than cron for service-aware tasks; integrates with journald for logging; `OnFailure=` target for alerts |
 | ufw (Uncomplicated Firewall) | 0.36+ (Ubuntu 22.04 includes 0.36) [VERIFIED: Ubuntu 22.04 docs] | Host-level firewall rules | Simpler abstraction over nftables/iptables; supports interface-specific rules needed for split-tunnel WireGuard |
 | nginx | 1.18+ (Ubuntu 22.04 includes 1.18) [VERIFIED: Ubuntu 22.04 docs] | HTTP/HTTPS reverse proxy to k3s upstream | Existing public edge; supports certificate reload without restart; `-t` syntax check is scriptable |
@@ -78,22 +96,23 @@ All implementation choices are at Claude's discretion — no user-locked decisio
 | ufw | nftables (direct) | nftables is lower-level and requires deeper rule knowledge; ufw abstracts the complexity for simple split-tunnel rules |
 | systemd `OnFailure=` unit | journald + automated alert agent (e.g., promtail + Loki) | OnFailure is simple and doesn't require external infra; if alerts are needed at scale, can wrap the unit in a monitoring loop later |
 
-**Installation (Ubuntu 22.04):**
+**Installation (Ubuntu 24.04 noble):**
 ```bash
 apt update
-apt install -y certbot python3-certbot nginx ufw curl openssl
-# Optional: upgrade certbot to latest via pip for newer ACME features
-pip install --upgrade certbot
+# webroot authenticator is built into certbot — no plugin package needed.
+# Do NOT pip-install certbot on top of apt: it creates a conflicting second
+# install and breaks the apt-managed systemd renewal units.
+apt install -y certbot nginx ufw curl openssl
 ```
 
 **Version verification:**
 ```bash
-certbot --version         # Should be ≥5.6.0 or current stable (check via pip)
-nginx -v                  # Should be ≥1.18
-systemctl --version       # Should be ≥251
-ufw version               # Should be ≥0.36
-curl --version            # Should be ≥7.68
-openssl version           # Should be ≥3.0
+certbot --version         # noble apt ships ~2.9 (there is no certbot 5.x)
+nginx -v                  # noble ships ~1.24
+systemctl --version       # noble ships systemd 255
+ufw version               # noble ships ~0.36
+curl --version            # noble ships ~8.5
+openssl version           # noble ships ~3.0.13
 ```
 
 ## Package Legitimacy Audit
@@ -123,7 +142,7 @@ openssl version           # Should be ≥3.0
 │ (opens 51820/udp for WireGuard, 80 & 443 for public)        │
 │                         ↓                                     │
 ├─────────────────────────────────────────────────────────────┤
-│ Ubuntu 22.04 VPS Host                                        │
+│ Ubuntu 24.04 noble VPS Host                                 │
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │ nginx (host)                                        │   │
@@ -810,7 +829,7 @@ WantedBy=multi-user.target
 | # | Claim | Section | Risk if Wrong |
 |---|-------|---------|---------------|
 | A1 | The public staging edge is host nginx at `https://stats-staging.solid-stats.ru` proxying to internal k3s `server-2` Service at `127.0.0.1:3000` (or a k3s Service IP). | Architecture Patterns | If the upstream is different (e.g., a k8s Ingress), the entire vhost structure needs rework. Phase 11 cutover depends on being able to switch upstreams via a single config edit. |
-| A2 | Ubuntu 22.04 is the host OS; default repositories have certbot 2.x (upgradeable to 5.6+), nginx 1.18, systemd 251, and ufw 0.36. | Standard Stack | If the VPS runs an older/newer OS or lacks these packages, installation commands and systemd integration may differ. |
+| A2 | Ubuntu 24.04 noble is the host OS (CORRECTED from 22.04 — verified via live k3s node OS-IMAGE); default repositories have certbot ~2.9, nginx ~1.24, systemd 255, and ufw ~0.36. There is no certbot 5.x — apt certbot is current. | Standard Stack | Confirm exact apt versions on the host during bootstrap; the webroot/systemd/ufw approach is OS-version-agnostic. |
 | A3 | Let's Encrypt's webroot authenticator can reach the challenge path at `/.well-known/acme-challenge/` via public HTTP on port 80. | Standard Stack, Pitfalls | If the VPS is behind a restrictive firewall or the Timeweb perimeter blocks port 80 to this domain, ACME validation will fail. Mitigation: operator must confirm port 80 is open before running the bootstrap script. |
 | A4 | Systemd timers are available and working on the VPS (k3s is already running, so systemd is functional). | Standard Stack | If systemd is disabled or malfunctioning, the renewal timer won't run. Fallback: use cron, but lose journald integration. |
 | A5 | The WireGuard interface (`wg0`) exists and is configured on the VPS from Phase 6. | Firewall Patterns | If WireGuard is not set up, the firewall rule `ufw allow in on wg0 to any port 6443/tcp` will silently do nothing (the interface doesn't exist). Mitigation: Phase 7 depends on Phase 6 being complete. |
@@ -839,9 +858,9 @@ WantedBy=multi-user.target
    - **Recommendation:** Start with journald logging (`OnFailure=` unit that calls `logger`). This is lightweight and works in an isolated environment. If monitoring integrations are added later (Datadog, Prometheus, etc.), the hook can be extended to scrape journald.
 
 5. **Should nginx and certbot be installed via apt or pip?**
-   - apt: certbot 2.x on Ubuntu 22.04 is stable but slightly older. systemd integration is baked in.
-   - pip: certbot 5.6+ is current but requires Python env management.
-   - **Recommendation:** Use apt for nginx and certbot (system packages, automatic updates, minimal dependency management). If a feature in certbot 5.6+ is required (very unlikely), upgrade via pip in the bootstrap script with a comment explaining why.
+   - apt: certbot ~2.9 on Ubuntu 24.04 noble is current and fully supports webroot + renewal hooks. systemd integration is baked in.
+   - There is no certbot 5.x (that was a research error); no PPA or pip upgrade is needed.
+   - **Recommendation:** Use apt for nginx and certbot (system packages, automatic updates, minimal dependency management). No pinning — the bootstrap installs whatever noble ships.
 
 ## Environment Availability
 
