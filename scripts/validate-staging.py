@@ -279,6 +279,34 @@ def validate_app_image_pins() -> None:
             require(":" in image.rsplit("/", 1)[-1], f"{rel_path} image must use an explicit tag: {image}")
 
 
+def validate_drill_manifest() -> None:
+    # WR-05: the restore-drill manifest lives in a subdirectory (DRILL-04) and is
+    # therefore never reached by validate_manifest_shape's depth-1 glob, so its
+    # safety-critical fields escaped CI. Assert the invariants that make the Job
+    # both runnable and safe here, WITHOUT re-adding it to the depth-1 glob.
+    path = MANIFEST_DIR / "restore-drill" / "70-restore-drill.yaml"
+    require(path.is_file(), f"missing drill manifest: {path.relative_to(ROOT)}")
+    text = path.read_text()
+    rel = path.relative_to(ROOT)
+
+    # CR-01 — container must not run as root (initdb refuses root).
+    require("runAsNonRoot: true" in text, f"{rel} missing runAsNonRoot: true (CR-01)")
+    require("runAsUser: 999" in text, f"{rel} missing runAsUser: 999 (CR-01)")
+    # WR-04 — standard container hardening.
+    require("allowPrivilegeEscalation: false" in text, f"{rel} missing allowPrivilegeEscalation: false")
+    require('drop: ["ALL"]' in text or "drop: ['ALL']" in text, f"{rel} must drop ALL capabilities (WR-04)")
+    # CR-02 — trust auth for the scratch DB; the live postgres-auth secret must
+    # NOT be mounted into the drill.
+    require("-A trust" in text, f"{rel} scratch initdb must use -A trust (CR-02)")
+    require("name: postgres-auth" not in text, f"{rel} must not mount the live postgres-auth secret (CR-02)")
+    # DRILL-01 — isolation barriers must stay intact.
+    require("refusing drill to protect live data (DRILL-01)" in text, f"{rel} missing refuse-if-live-host barrier (DRILL-01)")
+    require("solid_stats_drill" in text, f"{rel} missing guarded scratch DB name (DRILL-01)")
+    require("name: postgres-data" not in text and "claimName: postgres-data" not in text, f"{rel} must not mount the live postgres-data PVC (DRILL-01)")
+    require("emptyDir" in text, f"{rel} scratch volume must be emptyDir (DRILL-01)")
+    require("automountServiceAccountToken: false" in text, f"{rel} must disable API token automount")
+
+
 def validate_rendered_secrets() -> None:
     env = os.environ.copy()
     env.update(
@@ -340,6 +368,7 @@ def main() -> int:
     checks = [
         ("script syntax", validate_scripts),
         ("manifest shape", validate_manifest_shape),
+        ("drill manifest safety", validate_drill_manifest),
         ("workload safety", validate_workload_safety),
         ("app image pins", validate_app_image_pins),
         ("rendered secret structure", validate_rendered_secrets),
