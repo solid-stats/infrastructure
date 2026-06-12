@@ -138,7 +138,7 @@ Plans:
 **Wave 1**
 
 - [x] 06-01-PLAN.md — Operator bootstrap manifest (01-ci-rbac.yaml) + operator runbook (docs/operator-bootstrap.md)
-- [ ] 06-02-PLAN.md — SA-token and WireGuard key rotation runbook (docs/sa-token-rotation.md)
+- [x] 06-02-PLAN.md — SA-token and WireGuard key rotation runbook (docs/sa-token-rotation.md)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -231,7 +231,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. App CD Boundary | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 4. Controlled Full Run | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 5. Diff and Cutover Readiness | v1.0 | 1/1 | Complete | 2026-05-10 |
-| 6. kubectl-native CD | v2.0 | 1/4 | In Progress|  |
+| 6. kubectl-native CD | v2.0 | 2/4 | In Progress|  |
 | 7. Edge Automation | v2.0 | 0/TBD | Not started | - |
 | 8. Automated Restore Drill | v2.0 | 0/TBD | Not started | - |
 | 9. web Runtime Wiring | v2.0 | 0/TBD | Not started | - |

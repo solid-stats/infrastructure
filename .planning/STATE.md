@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: ROADMAP.md created for v2.0 (Phases 6-11); STATE.md and REQUIREMENTS.md traceability updated.
-last_updated: "2026-06-12T07:34:53.981Z"
+stopped_at: "Completed 06-02: SA token and WireGuard key rotation runbook (CD-09)"
+last_updated: "2026-06-12T07:40:31.763Z"
 last_activity: 2026-06-12 -- Phase 6 execution started
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 4
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 6 (kubectl-native CD) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-06-12 -- Phase 6 execution started
 
@@ -53,6 +53,7 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 06-kubectl-native-cd P06-01 | 10m | 2 tasks | 2 files |
+| Phase 06-kubectl-native-cd P06-02 | 2 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,8 @@ Recent decisions affecting current work:
 - Anti-features confirmed out of scope: ArgoCD/Flux, service mesh / canary, cert-manager/ingress, `mc`, full-tunnel WireGuard, PITR/WAL, `--insecure-skip-tls-verify`.
 - [Phase ?]: Long-lived kubernetes.io/service-account-token Secret used for ci-deployer (not TokenRequest)
 - [Phase ?]: 01-ci-rbac.yaml is operator-applied once; CI deploy glob (Plan 04) must exclude it
+- [Phase ?]: Both SA token and WireGuard key rotate in the same maintenance window to prevent credential gap
+- [Phase ?]: GitHub environment secrets updated before VPS rotation to prevent mid-window deploy failures
 
 ### Pending Todos
 
@@ -100,6 +103,6 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-12T07:34:47.587Z
-Stopped at: ROADMAP.md created for v2.0 (Phases 6-11); STATE.md and REQUIREMENTS.md traceability updated.
+Last session: 2026-06-12T07:40:31.760Z
+Stopped at: Completed 06-02: SA token and WireGuard key rotation runbook (CD-09)
 Resume file: None

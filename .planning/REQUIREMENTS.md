@@ -19,7 +19,7 @@ Committed scope for v2.0 (Production-Ready Infra & kubectl-native CD). Each maps
 - [ ] **CD-06**: Push to `master` deploys staging automatically; PRs run validate plus a server-side dry-run without deploying.
 - [ ] **CD-07**: All `CD_SSH_*` secrets and SSH code paths are removed after the migration.
 - [ ] **CD-08**: Only one deploy runs at a time (workflow concurrency lock).
-- [ ] **CD-09**: A long-lived SA-token rotation runbook (owner plus cadence, paired with WG key rotation) is documented.
+- [x] **CD-09**: A long-lived SA-token rotation runbook (owner plus cadence, paired with WG key rotation) is documented.
 
 ### EDGE — Edge automation
 
@@ -104,7 +104,7 @@ Finalized during roadmap creation. Phase numbers continue from v1.0 (ended at Ph
 | CD-06 | Phase 6 | Pending |
 | CD-07 | Phase 6 | Pending |
 | CD-08 | Phase 6 | Pending |
-| CD-09 | Phase 6 | Pending |
+| CD-09 | Phase 6 | Complete |
 | EDGE-01 | Phase 7 | Pending |
 | EDGE-02 | Phase 7 | Pending |
 | EDGE-03 | Phase 7 | Pending |
