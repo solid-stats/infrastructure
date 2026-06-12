@@ -1,6 +1,6 @@
 ---
 phase: 10-s3-lifecycle-retention
-status: REVISED — awaiting re-check
+status: revised_pass
 revision_cycle: 2
 total_issues: 8
 blockers: 4
