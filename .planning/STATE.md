@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
-status: completed
-stopped_at: "Completed 09-01: web Kubernetes slot + validation wiring"
-last_updated: "2026-06-12T19:30:58.305Z"
-last_activity: 2026-06-12
+status: executing
+stopped_at: "Completed 10-01: S3 lifecycle JSON + offline validator + apply script"
+last_updated: "2026-06-13T02:50:00.000Z"
+last_activity: 2026-06-13 -- Phase 10 Plan 01 complete
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 14
+  total_plans: 18
   completed_plans: 12
   percent: 33
 ---
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 09 — web-runtime-wiring
+**Current focus:** Phase 10 — s3-lifecycle-retention
 
 ## Current Position
 
-Phase: 10
-Plan: Not started
-Status: Phase 09 complete
+Phase: 10 (s3-lifecycle-retention) — EXECUTING
+Plan: 2 of 3
+Status: Executing Phase 10
 Plans: Phase 08 = 3/3 complete (08-01, 08-02 [wave 1] → 08-03 [wave 2])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
@@ -37,7 +37,7 @@ Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   + backup-before-overwrite reversibility. Real upstream = server-2 ClusterIP
   10.43.94.103:3000. http2 preserved.
 Prev: Phase 06 COMPLETE ✓ (verification human_needed — live CI deploy deferred)
-Last activity: 2026-06-12
+Last activity: 2026-06-12 -- Phase 10 execution started
 
 Progress: [███░░░░░░░] 36% (2/6 phases complete; Phase 07, 09 complete)
 
@@ -73,6 +73,7 @@ Progress: [███░░░░░░░] 36% (2/6 phases complete; Phase 07, 0
 | Phase 08-automated-restore-drill P08-02 | 10 | 1 tasks | 1 files |
 | Phase 08-automated-restore-drill P08-03 | 52 | 1 tasks | 1 files |
 | Phase 09-web-runtime-wiring P09-01 | 10 | 2 tasks | 4 files |
+| Phase 10-s3-lifecycle-retention P10-01 | 15 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -139,6 +140,6 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-13T19:22:27Z
-Stopped at: Completed 09-01: web Kubernetes slot + validation wiring
+Last session: 2026-06-13T02:50:00Z
+Stopped at: Completed 10-01: S3 lifecycle JSON + offline validator + apply script
 Resume file: None

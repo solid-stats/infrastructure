@@ -44,8 +44,8 @@ Committed scope for v2.0 (Production-Ready Infra & kubectl-native CD). Each maps
 
 ### S3 — S3 lifecycle / retention
 
-- [ ] **S3-01**: A per-prefix expiration lifecycle policy for `backups/postgres/` is stored in the repo and applied via script.
-- [ ] **S3-02**: The lifecycle config aborts incomplete multipart uploads.
+- [x] **S3-01**: A per-prefix expiration lifecycle policy for `backups/postgres/` is stored in the repo and applied via script.
+- [x] **S3-02**: The lifecycle config aborts incomplete multipart uploads.
 - [ ] **S3-03**: Timeweb S3 lifecycle support is proven empirically (put-then-get plus an observed test-object expiry) before retention is relied upon.
 
 ### CUT — Production cutover
@@ -117,8 +117,8 @@ Finalized during roadmap creation. Phase numbers continue from v1.0 (ended at Ph
 | WEB-01 | Phase 9 | Complete |
 | WEB-02 | Phase 9 | Complete |
 | WEB-03 | Phase 9 | Complete |
-| S3-01 | Phase 10 | Pending |
-| S3-02 | Phase 10 | Pending |
+| S3-01 | Phase 10 | Complete |
+| S3-02 | Phase 10 | Complete |
 | S3-03 | Phase 10 | Pending |
 | CUT-01 | Phase 11 | Pending |
 | CUT-02 | Phase 11 | Pending |
