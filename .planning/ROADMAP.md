@@ -231,7 +231,7 @@ Plans:
 **Wave 1** *(parallel — no shared files)*
 
 - [x] 10-01-PLAN.md — Lifecycle JSON (config/s3/backups-lifecycle.json) + offline validator (validate-s3-lifecycle.py) + apply script (apply-s3-lifecycle.sh) + validate-staging.py extension
-- [ ] 10-02-PLAN.md — S3-03 empirical proof Job (k8s/staging/s3-lifecycle/80-s3-lifecycle-probe-job.yaml) + operator-gated checkpoint
+- [x] 10-02-PLAN.md — S3-03 empirical proof Job (k8s/staging/s3-lifecycle/80-s3-lifecycle-probe-job.yaml) + operator-gated checkpoint
 
 **Wave 2** *(depends on Wave 1)*
 
@@ -268,5 +268,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 7. Edge Automation | v2.0 | 4/4 | Complete    | 2026-06-12 |
 | 8. Automated Restore Drill | v2.0 | 3/3 | Complete    | 2026-06-12 |
 | 9. web Runtime Wiring | v2.0 | 1/1 | Complete    | 2026-06-12 |
-| 10. S3 Lifecycle & Retention | v2.0 | 1/3 | In progress | - |
+| 10. S3 Lifecycle & Retention | v2.0 | 2/3 | In progress | - |
 | 11. Production Cutover | v2.0 | 0/TBD | Not started | - |
