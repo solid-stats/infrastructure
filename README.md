@@ -19,8 +19,10 @@ repository owns how those images are wired together in staging.
 - `k8s/staging/` - Kubernetes manifests applied to the staging k3s cluster.
 - `scripts/render-staging-secrets.py` - renders staging Kubernetes secrets from
   CI environment variables.
-- `scripts/deploy-staging.sh` - applies secrets and manifests to the server over
-  SSH.
+- `scripts/wg-tunnel-up.sh` - brings up the CI WireGuard tunnel to the k3s API
+  and gates on a successful handshake before any `kubectl`.
+- `scripts/kubeconfig-setup.sh` - builds a kubeconfig from the `ci-deployer`
+  ServiceAccount token and k3s CA for in-CI `kubectl`.
 - `scripts/backup-postgres-now.sh` - creates and waits for a one-off backup job
   from the deployed backup CronJob.
 - `docs/staging.md` - staging operations and deploy model.
@@ -34,8 +36,8 @@ observability architecture/rollout plan is at
 
 ## Deploy
 
-The GitHub Actions workflow deploys on pushes to `master` or `main`, and can be
-run manually with optional image overrides.
+The GitHub Actions workflow deploys on pushes to `master`, and can be run
+manually with `workflow_dispatch`.
 
 Required GitHub environment secrets for `staging` are documented in
 `docs/staging.md`.
@@ -51,16 +53,13 @@ deploy:
 python3 scripts/validate-staging.py
 ```
 
-Apply staging from this repository with:
-
-```bash
-./scripts/deploy-staging.sh
-```
-
-The deploy script waits for `statefulset/postgres`,
-`statefulset/rabbitmq`, `deployment/server-2`, and
-`deployment/replay-parser-2`, then lists the `postgres`, `rabbitmq`, and
-`server-2` Services plus the `replays-fetcher` and `postgres-backup` CronJobs.
+Deploy runs in CI on merge to `master`: the workflow opens a WireGuard tunnel to
+the closed k3s API, builds a kubeconfig from the `ci-deployer` ServiceAccount
+token, and applies `k8s/staging/` (excluding the operator-managed
+`01-ci-rbac.yaml`). It then waits for `statefulset/postgres`,
+`statefulset/rabbitmq`, `deployment/server-2`, and `deployment/replay-parser-2`,
+and lists the `postgres`, `rabbitmq`, and `server-2` Services plus the
+`replays-fetcher` and `postgres-backup` CronJobs.
 
 Phase 1 owns the namespace, PostgreSQL, RabbitMQ, `server-2`,
 `replay-parser-2`, suspended `replays-fetcher`, and `postgres-backup`.

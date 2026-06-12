@@ -63,10 +63,11 @@ RabbitMQ refuses to boot unless the cookie file is accessible by the owner only.
 
 The `staging` GitHub environment must define:
 
-- `CD_SSH_PRIVATE_KEY`
-- `CD_SSH_HOST`
-- `CD_SSH_PORT`
-- `CD_SSH_USER`
+- `WG_PRIVATE_KEY` — CI runner WireGuard private key
+- `WG_PEER_PUBLIC_KEY` — VPS WireGuard public key
+- `WG_ENDPOINT` — VPS WireGuard endpoint `HOST:PORT`
+- `K8S_TOKEN` — `ci-deployer` ServiceAccount token (from `01-ci-rbac.yaml`)
+- `K8S_CA_CERT` — k3s API server CA certificate (PEM)
 - `GHCR_USERNAME`
 - `GHCR_TOKEN`
 - `POSTGRES_PASSWORD`
@@ -129,23 +130,25 @@ Application repositories publish images to GHCR. To deploy one in staging:
    - `replays-fetcher`: `k8s/staging/50-replays-fetcher.yaml`
 3. Do not use `latest`.
 4. Run `python3 scripts/validate-staging.py`.
-5. Deploy through the infrastructure workflow or `./scripts/deploy-staging.sh`.
+5. Merge to `master`; the infrastructure workflow deploys over the WireGuard tunnel.
 
 ## Deploy and Verify
 
-Run local validation before applying manifests:
+Deploy is CI-native: it runs on the GitHub `staging` environment, not from a
+workstation. Pull requests run `validate` + a server-side `kubectl apply
+--dry-run`; merging to `master` runs the full deploy. The deploy job brings up a
+WireGuard tunnel to the closed k3s API (`scripts/wg-tunnel-up.sh`), builds a
+kubeconfig from the `ci-deployer` ServiceAccount token
+(`scripts/kubeconfig-setup.sh`), then applies `k8s/staging/` excluding the
+operator-managed `01-ci-rbac.yaml`.
+
+Run local validation before opening a PR:
 
 ```bash
 python3 scripts/validate-staging.py
 ```
 
-Apply staging from this repository:
-
-```bash
-./scripts/deploy-staging.sh
-```
-
-The deploy script verifies these rollout states:
+The deploy job verifies these rollout states:
 
 ```bash
 kubectl -n solid-stats-staging rollout status statefulset/postgres --timeout=300s
