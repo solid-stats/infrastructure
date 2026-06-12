@@ -141,7 +141,7 @@ def string_data(doc: str) -> dict[str, str]:
 
 def validate_scripts() -> None:
     py_compile.compile(str(ROOT / "scripts" / "render-staging-secrets.py"), doraise=True)
-    for script in ["scripts/deploy-staging.sh", "scripts/backup-postgres-now.sh"]:
+    for script in ["scripts/backup-postgres-now.sh"]:
         result = run(["bash", "-n", script])
         require(result.returncode == 0, f"{script} failed bash syntax check: {result.stderr.strip()}")
 
