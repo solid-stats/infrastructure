@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
-status: verifying
-stopped_at: Completed 10-03-PLAN.md (docs tasks)
-last_updated: "2026-06-12T20:44:12.822Z"
-last_activity: 2026-06-12 -- Phase 11 execution started
+status: executing
+stopped_at: "All 6 phases EXECUTED. Phases 06,07,08,09 complete (07 & 08 live-verified). Phases 10 & 11 human_needed — consequential live steps (apply prod S3 retention; flip prod traffic) operator-gated. Autonomous run done; awaiting operator validations."
+last_updated: "2026-06-13T02:15:00Z"
+last_activity: 2026-06-13 -- Phase 11 (production cutover) executed + offline-verified; live flip operator-gated. All 6 v2.0 phases built.
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 4
   total_plans: 21
-  completed_plans: 17
-  percent: 33
+  completed_plans: 19
+  percent: 81
 ---
 
 # Project State
@@ -21,25 +21,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 11 — production-cutover
+**Current focus:** v2.0 milestone — all phases built; operator validations pending for 10 & 11
 
 ## Current Position
 
-Phase: 11 (production-cutover) — EXECUTING
-Plan: 2 of 2
-Status: Phase complete — ready for verification
-Plans: Phase 08 = 3/3 complete (08-01, 08-02 [wave 1] → 08-03 [wave 2])
-Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
-  certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
-  (only the stats-staging vhost; relay/auth/default operator-owned, one holds a
-  secret) + add ufw 6443-on-wg0 + nginx -t-gated deploy-hook + OnFailure surfacing
+Milestone v2.0: ALL 6 PHASES EXECUTED. Status by phase:
+- Phase 06 (kubectl-native CD): COMPLETE ✓ (live CI deploy deferred — human_needed, see 06-VERIFICATION)
+- Phase 07 (Edge Automation): COMPLETE ✓ + LIVE-VERIFIED on staging VPS (all 6 UAT items; 2 live bugs fixed)
+- Phase 08 (Automated Restore Drill): COMPLETE ✓ + LIVE-VERIFIED (drill PASS on cluster; postgres-0 untouched; 26 tables/303267 rows restored to scratch)
+- Phase 09 (web Runtime Wiring): COMPLETE ✓ (0-replica stub; server-side dry-run accepted by cluster; CD applies the slot)
+- Phase 10 (S3 Lifecycle & Retention): EXECUTED, human_needed — S3-01/02 delivered + offline-verified (30d retention floor enforced in CI); S3-03 empirical proof + applying retention to prod backups is OPERATOR-GATED (consequential). See 10-UAT.md.
+- Phase 11 (Production Cutover): EXECUTED, human_needed — CUT-01..04 mechanism delivered + offline-proven (4 gates, anchored single-line switch, SELF_TEST'd rollback, smoke+auto-rollback, DRY_RUN). The live production traffic flip is OPERATOR-GATED. See 11-UAT.md.
 
-  + backup-before-overwrite reversibility. Real upstream = server-2 ClusterIP
-  10.43.94.103:3000. http2 preserved.
-Prev: Phase 06 COMPLETE ✓ (verification human_needed — live CI deploy deferred)
-Last activity: 2026-06-12 -- Phase 11 execution started
+Quality: every phase passed gsd-plan-checker (revisions applied), gsd-code-review (all critical+warning fixed), and gsd-verifier. `python3 scripts/validate-staging.py` exits 0 (10 checks). Tree clean. Commits on master (NOT pushed — awaiting operator).
 
-Progress: [███░░░░░░░] 36% (2/6 phases complete; Phase 07, 09 complete)
+Progress: [████████░░] 81% (4/6 phases complete; 10 & 11 executed, operator-gated)
 
 ## Performance Metrics
 
@@ -120,6 +116,28 @@ Recent decisions affecting current work:
   (03521f5), ufw 6443/tcp→proto tcp (cfa2485). NOTE: unscoped `certbot renew
   --dry-run` hangs on operator-owned auth.solid-stats.ru cert (relay/auth vhost,
   outside Phase 7 scope) — Phase 7 cert renews cleanly when scoped by --cert-name.
+
+- Phase 8 (RESOLVED 2026-06-13): live restore drill PASSED on the cluster
+  (DRILL_RESULT=PASS, backup 20260612T030008Z, 26 tables/303267 rows restored to
+  scratch solid_stats_drill; postgres-0 untouched; Job self-cleaned). Found+fixed
+  2 live-only bugs: apk-needs-root → root initContainer + non-root main split
+  (978e2f2); main uid 999→70 (real postgres user) for initdb getpwuid. See 08-UAT.md.
+
+- Phase 10 (human_needed, OPERATOR-GATED): S3-01/S3-02 delivered + offline-verified
+  (validate-staging.py enforces the 30-day retention floor). S3-03 empirical proof
+  (Timeweb lifecycle API support + x-amz-expiration on an isolated test prefix) AND
+  applying the retention policy to the prod `backups/postgres/` prefix are operator-run
+  — applying retention DELETES old backups (consequential), and shared-S3/cluster
+  writes are not done unattended. Turnkey: probe Job + scripts/apply-s3-lifecycle.sh.
+  See 10-UAT.md and docs/s3-lifecycle.md.
+
+- Phase 11 (human_needed, OPERATOR-GATED): the production cutover MECHANISM is
+  delivered + offline-proven (4 gates, anchored single-line nginx-upstream switch,
+  SELF_TEST'd reversible rollback, smoke check + auto-rollback, DRY_RUN that still
+  enforces gates). The actual production traffic flip is operator-run (consequential;
+  production target outside this staging env). Turnkey: scripts/cutover.sh + docs/cutover.md.
+  See 11-UAT.md. NOTE: green-diff gate is COVERAGE-only, never value-equality (new
+  parser intentionally diverges from legacy).
 
 ### Blockers/Concerns
 
