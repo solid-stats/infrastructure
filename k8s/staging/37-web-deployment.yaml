@@ -17,9 +17,13 @@ metadata:
     app.kubernetes.io/part-of: solid-stats
 spec:
   # WEB-02: stub at 0 replicas pending real image.
-  # To activate: set replicas: N and replace the image line with:
-  #   image: ghcr.io/solid-stats/web@sha256:<digest>
-  # No other manifest changes required.
+  # To activate, do BOTH in the SAME change (atomically) — never one without the other:
+  #   1. replace the image line below with: image: ghcr.io/solid-stats/web@sha256:<digest>
+  #   2. set replicas: N (> 0)
+  # WARNING: raising replicas while the image is still registry.k8s.io/pause will CrashLoop
+  # (the probes target port 3001, which pause does not serve) and the CD `rollout status
+  # deployment/web --timeout=300s` gate will block then FAIL the deploy. No other manifest
+  # changes are required beyond these two lines.
   replicas: 0
   selector:
     matchLabels:
