@@ -69,18 +69,31 @@ ln -sf "$VHOST_CONF" "$NGINX_SITES_ENABLED/stats-staging-solid-stats.conf"
 # nginx -t gate — fail closed; never reload on invalid config
 echo "Validating nginx configuration..."
 if ! nginx -t 2>&1; then
-  echo "FATAL: nginx config invalid after vhost install — restoring backup" >&2
+  echo "FATAL: nginx config invalid after vhost install" >&2
   if [[ -f "$BAK_VHOST" ]]; then
+    echo "Restoring backup from $BAK_VHOST..." >&2
     cp "$BAK_VHOST" "$VHOST_CONF"
-    # Re-validate AFTER restore before any reload — never reload an unvalidated config
-    if ! nginx -t 2>&1; then
-      echo "FATAL: restored vhost still invalid — refusing reload to avoid breaking the live edge" >&2
-      exit 1
-    fi
+  else
+    # No prior config to restore — remove the broken artifact AND its symlink so a
+    # later manual reload or a host reboot can never load this invalid config.
+    echo "No backup to restore — removing the broken repo vhost and its symlink" >&2
+    rm -f "$VHOST_CONF" "$NGINX_SITES_ENABLED/stats-staging-solid-stats.conf"
+  fi
+  # Re-validate AFTER restore/removal before any reload — never reload an unvalidated config
+  if ! nginx -t 2>&1; then
+    echo "FATAL: nginx config still invalid after restore/removal — refusing reload to avoid breaking the live edge" >&2
+    exit 1
   fi
   exit 1
 fi
-systemctl reload nginx || systemctl start nginx
+# Reload must succeed — do NOT fall back to a no-op 'start' on an already-running
+# nginx, which returns 0 and would mask a failed reload, falsely reporting the
+# new vhost as live when it is not.
+if ! systemctl reload nginx; then
+  echo "FATAL: nginx reload failed despite passing nginx -t — the new vhost is NOT live; investigate manually" >&2
+  systemctl status nginx --no-pager >&2 || true
+  exit 1
+fi
 echo "nginx vhost installed and reloaded"
 
 # ---------------------------------------------------------------------------
