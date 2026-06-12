@@ -40,7 +40,9 @@ ufw --version 2>&1 || true
 echo "=== 2. Webroot directory ==="
 
 mkdir -p "$WEBROOT_PATH/.well-known/acme-challenge"
-chmod -R 755 "$WEBROOT_PATH"
+# Scope chmod to the dirs the ACME webroot flow needs — do NOT recurse over the
+# whole webroot, which on a shared host may hold unrelated site content.
+chmod 755 "$WEBROOT_PATH" "$WEBROOT_PATH/.well-known" "$WEBROOT_PATH/.well-known/acme-challenge"
 echo "Webroot ready at $WEBROOT_PATH"
 
 # ---------------------------------------------------------------------------
