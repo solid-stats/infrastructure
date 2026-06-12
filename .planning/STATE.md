@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: "Completed 08-03: automated restore drill runbook; live-drill checkpoint awaiting operator"
-last_updated: "2026-06-12T19:12:05.797Z"
-last_activity: 2026-06-12
+stopped_at: "Phase 08 COMPLETE + live-verified (restore drill PASS on cluster; postgres-0 untouched). Autonomous run continuing to Phase 09."
+last_updated: "2026-06-13T01:20:00Z"
+last_activity: 2026-06-13 -- Phase 08 complete; live restore drill PASSED (26 tables / 303267 rows to scratch, live DB untouched)
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 12
   completed_plans: 11
-  percent: 33
+  percent: 50
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 08 — automated-restore-drill
+**Current focus:** Phase 09 — web-runtime-wiring (next)
 
 ## Current Position
 
-Phase: 9
+Phase: 9 (web-runtime-wiring) — NOT STARTED (next)
 Plan: Not started
-Status: Executing Phase 08
-Plans: 4/4 complete (07-01, 07-02 [wave 1] → 07-03 [wave 2] → 07-04 [wave 3])
+Status: Phase 08 COMPLETE ✓ + live-verified (restore drill PASS on staging cluster; postgres-0 untouched, 26 tables/303267 rows restored to scratch). Phases 06, 07, 08 done. Autonomous run continuing.
+Plans: Phase 08 = 3/3 complete (08-01, 08-02 [wave 1] → 08-03 [wave 2])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
   (only the stats-staging vhost; relay/auth/default operator-owned, one holds a
