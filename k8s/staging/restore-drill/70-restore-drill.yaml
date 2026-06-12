@@ -1,0 +1,176 @@
+# Restore drill Job — on-demand only.
+# DRILL-04: stored in k8s/staging/restore-drill/ subdirectory so the CD apply glob
+# (find k8s/staging -maxdepth 1 -name '*.yaml') never matches this file.
+# Trigger via: scripts/restore-drill.sh
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: restore-drill
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: restore-drill
+    app.kubernetes.io/part-of: solid-stats
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: restore-drill
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: restore-drill
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: restore-drill
+        app.kubernetes.io/part-of: solid-stats
+    spec:
+      restartPolicy: Never
+      serviceAccountName: restore-drill
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: restore-drill
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: scratch
+              mountPath: /scratch
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              apk add --no-cache aws-cli
+
+              # Step 1 — set local postgres env (NEVER accept these from pod env)
+              PGHOST=localhost
+              PGPORT=5432
+              PGUSER=postgres
+              export AWS_CONFIG_FILE=/scratch/aws-config
+              aws configure set default.s3.addressing_style path
+
+              # Step 2 — DRILL-01 safety barrier — refuse if any injected host points off-localhost.
+              _injected_host="${POSTGRES_HOST:-${PGHOST:-localhost}}"
+              if [ "$_injected_host" != "localhost" ] && [ "$_injected_host" != "127.0.0.1" ]; then
+                echo "FATAL: injected DB host '$_injected_host' is not localhost (live Service name is 'postgres') — refusing drill to protect live data (DRILL-01)" >&2
+                exit 1
+              fi
+              # Force every libpq client in this script to localhost regardless of inherited env.
+              export PGHOST=localhost PGPORT=5432 PGUSER=postgres
+
+              # Step 3 — initialize and start scratch postgres
+              initdb_dir=/scratch/pgdata
+              printf '%s' "$PGPASSWORD" > /scratch/pgpwfile
+              pg_ctl initdb -D "$initdb_dir" -A md5 --pwfile=/scratch/pgpwfile
+              rm /scratch/pgpwfile
+              pg_ctl -D "$initdb_dir" -l /scratch/postgres.log start
+              i=0; while [ $i -lt 30 ]; do
+                if pg_isready -h localhost -p 5432 -U postgres >/dev/null 2>&1; then
+                  echo "scratch postgres ready"; break; fi
+                i=$((i+1)); sleep 1
+              done
+              if ! pg_isready -h localhost -p 5432 -U postgres >/dev/null 2>&1; then
+                echo "ERROR: scratch postgres did not start"; exit 1; fi
+
+              # Step 4 — discover latest backup (lexicographic max)
+              backup_id=$(aws --endpoint-url="$S3_ENDPOINT" \
+                s3 ls "s3://${S3_BUCKET}/${BACKUP_PREFIX}/" \
+                | awk '{print $NF}' | sed 's|/$||' | sort -r | head -1)
+              if [ -z "$backup_id" ]; then echo "ERROR: no backups found"; exit 1; fi
+              if ! aws --endpoint-url="$S3_ENDPOINT" s3 ls \
+                  "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/manifest.json" >/dev/null 2>&1; then
+                echo "ERROR: manifest.json missing for backup_id=${backup_id}"; exit 1; fi
+              echo "backup_id=${backup_id}"
+
+              # Step 5 — download dump and list files
+              aws --endpoint-url="$S3_ENDPOINT" \
+                s3 cp "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/solid_stats.dump" \
+                /scratch/solid_stats.dump --only-show-errors
+              aws --endpoint-url="$S3_ENDPOINT" \
+                s3 cp "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/solid_stats.dump.list" \
+                /scratch/solid_stats.dump.list --only-show-errors
+
+              # Step 6 — create guarded scratch database and restore
+              createdb -h localhost -U postgres solid_stats_drill
+              pg_restore --host=localhost --username=postgres \
+                --dbname=solid_stats_drill --no-owner --no-privileges \
+                /scratch/solid_stats.dump || true
+
+              # Step 7 — sanity assertions with captured result code
+              drill_result=0
+              drill_start=$(date +%s)
+
+              table_count=$(psql -h localhost -U postgres -d solid_stats_drill -t -A \
+                -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';")
+              if [ "$table_count" -lt 5 ]; then
+                echo "FAIL: table_count=${table_count} (expected >= 5)"; drill_result=1; fi
+
+              row_count=$(psql -h localhost -U postgres -d solid_stats_drill -t -A \
+                -c "SELECT SUM(n_live_tup) FROM pg_stat_user_tables;")
+              if [ "${row_count:-0}" -lt 1 ]; then
+                echo "FAIL: total_rows=${row_count} (expected > 0)"; drill_result=1; fi
+
+              list_lines=$(wc -l < /scratch/solid_stats.dump.list)
+              if [ "$list_lines" -lt 1 ]; then
+                echo "FAIL: dump list is empty"; drill_result=1; fi
+
+              drill_end=$(date +%s)
+              drill_duration=$((drill_end - drill_start))
+              if [ $drill_result -eq 0 ]; then
+                echo "DRILL_RESULT=PASS backup_id=${backup_id} table_count=${table_count} total_rows=${row_count} duration_s=${drill_duration}"
+              else
+                echo "DRILL_RESULT=FAIL backup_id=${backup_id} table_count=${table_count} total_rows=${row_count} duration_s=${drill_duration}"
+              fi
+
+              # Step 8 — teardown (always runs, never masks result)
+              dropdb -h localhost -U postgres solid_stats_drill || true
+              pg_ctl -D "$initdb_dir" stop || true
+              rm -rf /scratch/pgdata /scratch/solid_stats.dump /scratch/solid_stats.dump.list
+
+              # Step 9 — exit with captured result
+              exit $drill_result
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-auth
+                  key: POSTGRES_PASSWORD
+            - name: S3_ENDPOINT
+              value: https://s3.twcstorage.ru
+            - name: S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: server-2-runtime
+                  key: S3_BUCKET
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: server-2-runtime
+                  key: S3_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: server-2-runtime
+                  key: S3_SECRET_ACCESS_KEY
+            - name: AWS_DEFAULT_REGION
+              value: ru-1
+            - name: AWS_EC2_METADATA_DISABLED
+              value: "true"
+            - name: BACKUP_PREFIX
+              value: backups/postgres
+      volumes:
+        - name: scratch
+          emptyDir: {}
