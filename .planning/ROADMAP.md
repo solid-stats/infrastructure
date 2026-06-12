@@ -160,8 +160,20 @@ Plans:
   3. A certificate-renewal failure surfaces as an alert or log entry rather than failing silently.
   4. The host firewall allows 80/443 inbound and keeps `6443` reachable only through the WireGuard tunnel.
 
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 4 plans
+Plans:
+**Wave 1** *(parallel — no shared files)*
+
+- [ ] 07-01-PLAN.md — Offline validator (scripts/validate-edge.py) + nginx vhost config (config/nginx/sites-available/)
+- [ ] 07-02-PLAN.md — systemd renewal units (certbot-renew.{service,timer,failure.target,failure.service}) + deploy-hook script
+
+**Wave 2** *(depends on Wave 1)*
+
+- [ ] 07-03-PLAN.md — Idempotent bootstrap script (scripts/bootstrap-edge.sh) + teardown script (scripts/teardown-edge.sh)
+
+**Wave 3** *(depends on Wave 2)*
+
+- [ ] 07-04-PLAN.md — Operator runbook (docs/edge-bootstrap.md)
 
 #### Phase 8: Automated Restore Drill
 
@@ -232,7 +244,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 4. Controlled Full Run | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 5. Diff and Cutover Readiness | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 6. kubectl-native CD | v2.0 | 4/4 | Complete   | 2026-06-12 |
-| 7. Edge Automation | v2.0 | 0/TBD | Not started | - |
+| 7. Edge Automation | v2.0 | 0/4 | Not started | - |
 | 8. Automated Restore Drill | v2.0 | 0/TBD | Not started | - |
 | 9. web Runtime Wiring | v2.0 | 0/TBD | Not started | - |
 | 10. S3 Lifecycle & Retention | v2.0 | 0/TBD | Not started | - |
