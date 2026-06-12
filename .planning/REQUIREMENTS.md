@@ -12,10 +12,10 @@ Committed scope for v2.0 (Production-Ready Infra & kubectl-native CD). Each maps
 ### CD — kubectl-native CD
 
 - [ ] **CD-01**: Operator can deploy staging via `kubectl` run on the CI runner over a WireGuard tunnel, with no SSH/scp to the VPS.
-- [ ] **CD-02**: CI authenticates to the k3s API as a namespace-scoped ServiceAccount using a long-lived token Secret (not the admin kubeconfig, not an SSH key).
+- [x] **CD-02**: CI authenticates to the k3s API as a namespace-scoped ServiceAccount using a long-lived token Secret (not the admin kubeconfig, not an SSH key).
 - [ ] **CD-03**: The deploy job gates on a verified WireGuard handshake before running any `kubectl`.
-- [ ] **CD-04**: ServiceAccount RBAC is restricted to the `solid-stats-staging` namespace and covers apply plus `rollout status` for every staging workload kind.
-- [ ] **CD-05**: Namespace and CI RBAC are bootstrapped once by the operator via a documented runbook; CI never creates the namespace.
+- [x] **CD-04**: ServiceAccount RBAC is restricted to the `solid-stats-staging` namespace and covers apply plus `rollout status` for every staging workload kind.
+- [x] **CD-05**: Namespace and CI RBAC are bootstrapped once by the operator via a documented runbook; CI never creates the namespace.
 - [ ] **CD-06**: Push to `master` deploys staging automatically; PRs run validate plus a server-side dry-run without deploying.
 - [ ] **CD-07**: All `CD_SSH_*` secrets and SSH code paths are removed after the migration.
 - [ ] **CD-08**: Only one deploy runs at a time (workflow concurrency lock).
@@ -97,10 +97,10 @@ Finalized during roadmap creation. Phase numbers continue from v1.0 (ended at Ph
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | CD-01 | Phase 6 | Pending |
-| CD-02 | Phase 6 | Pending |
+| CD-02 | Phase 6 | Complete |
 | CD-03 | Phase 6 | Pending |
-| CD-04 | Phase 6 | Pending |
-| CD-05 | Phase 6 | Pending |
+| CD-04 | Phase 6 | Complete |
+| CD-05 | Phase 6 | Complete |
 | CD-06 | Phase 6 | Pending |
 | CD-07 | Phase 6 | Pending |
 | CD-08 | Phase 6 | Pending |
@@ -126,6 +126,7 @@ Finalized during roadmap creation. Phase numbers continue from v1.0 (ended at Ph
 | CUT-04 | Phase 11 | Pending |
 
 **Coverage:**
+
 - v2.0 requirements: 28 total
 - Mapped to phases: 28
 - Unmapped: 0 ✓

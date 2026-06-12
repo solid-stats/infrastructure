@@ -4,13 +4,13 @@ milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
 stopped_at: ROADMAP.md created for v2.0 (Phases 6-11); STATE.md and REQUIREMENTS.md traceability updated.
-last_updated: "2026-06-12T07:26:11.408Z"
-last_activity: 2026-06-11 — Roadmap created for v2.0 (Phases 6-11)
+last_updated: "2026-06-12T07:34:53.981Z"
+last_activity: 2026-06-12 -- Phase 6 execution started
 progress:
   total_phases: 6
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 4
+  completed_plans: 1
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 6: kubectl-native CD
+**Current focus:** Phase 6 — kubectl-native CD
 
 ## Current Position
 
-Phase: 6 of 11 (kubectl-native CD) — first phase of milestone v2.0
-Plan: — (not yet planned)
+Phase: 6 (kubectl-native CD) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-06-11 — Roadmap created for v2.0 (Phases 6-11)
+Last activity: 2026-06-12 -- Phase 6 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: N/A
 
 *Updated after each plan completion*
+| Phase 06-kubectl-native-cd P06-01 | 10m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,8 @@ Recent decisions affecting current work:
 - kubectl-native CD replaces SSH/scp: WireGuard-in-CI → namespace-scoped ServiceAccount with a long-lived token Secret → `kubectl apply` against the closed k3s API.
 - Namespace + CI RBAC are operator-bootstrapped once (a namespaced Role cannot create the cluster-scoped Namespace); CI never creates the namespace.
 - Anti-features confirmed out of scope: ArgoCD/Flux, service mesh / canary, cert-manager/ingress, `mc`, full-tunnel WireGuard, PITR/WAL, `--insecure-skip-tls-verify`.
+- [Phase ?]: Long-lived kubernetes.io/service-account-token Secret used for ci-deployer (not TokenRequest)
+- [Phase ?]: 01-ci-rbac.yaml is operator-applied once; CI deploy glob (Plan 04) must exclude it
 
 ### Pending Todos
 
@@ -97,6 +100,6 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-11 12:30
+Last session: 2026-06-12T07:34:47.587Z
 Stopped at: ROADMAP.md created for v2.0 (Phases 6-11); STATE.md and REQUIREMENTS.md traceability updated.
 Resume file: None
