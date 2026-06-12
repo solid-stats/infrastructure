@@ -79,19 +79,23 @@ spec:
               # Force every libpq client in this script to localhost regardless of inherited env.
               export PGHOST=localhost PGPORT=5432 PGUSER=postgres
 
-              # Step 3 — initialize and start scratch postgres
+              # Step 3 — initialize and start scratch postgres.
+              # Trust auth: this is a throwaway scratch instance on a localhost-only
+              # emptyDir, never exposed and never holding the live credential. No
+              # password is set or needed; clients connect over localhost with -A trust.
               initdb_dir=/scratch/pgdata
-              printf '%s' "$PGPASSWORD" > /scratch/pgpwfile
-              pg_ctl initdb -D "$initdb_dir" -A md5 --pwfile=/scratch/pgpwfile
-              rm /scratch/pgpwfile
+              pg_ctl initdb -D "$initdb_dir" -o "-A trust"
               pg_ctl -D "$initdb_dir" -l /scratch/postgres.log start
-              i=0; while [ $i -lt 30 ]; do
+              # WR-03 — cold initdb + first start on a constrained pod can exceed 30s.
+              # Wait up to 60s and dump the postgres log on timeout so the operator can
+              # tell a slow/failed startup apart from a real backup defect.
+              i=0; while [ $i -lt 60 ]; do
                 if pg_isready -h localhost -p 5432 -U postgres >/dev/null 2>&1; then
                   echo "scratch postgres ready"; break; fi
                 i=$((i+1)); sleep 1
               done
               if ! pg_isready -h localhost -p 5432 -U postgres >/dev/null 2>&1; then
-                echo "ERROR: scratch postgres did not start"; exit 1; fi
+                echo "ERROR: scratch postgres did not start"; cat /scratch/postgres.log >&2 || true; exit 1; fi
 
               # Step 4 — discover latest backup (lexicographic max)
               backup_id=$(aws --endpoint-url="$S3_ENDPOINT" \
@@ -111,29 +115,62 @@ spec:
                 s3 cp "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/solid_stats.dump.list" \
                 /scratch/solid_stats.dump.list --only-show-errors
 
+              # WR-01 — teardown in an EXIT trap so it ALWAYS runs (even if an
+              # assertion command exits non-zero under `sh -e` and aborts the script).
+              # The trap never masks the result: Step 9 exits with $drill_result.
+              cleanup() {
+                dropdb -h localhost -U postgres solid_stats_drill 2>/dev/null || true
+                pg_ctl -D "$initdb_dir" stop 2>/dev/null || true
+                rm -rf /scratch/pgdata /scratch/solid_stats.dump /scratch/solid_stats.dump.list 2>/dev/null || true
+              }
+              trap cleanup EXIT
+
               # Step 6 — create guarded scratch database and restore
               createdb -h localhost -U postgres solid_stats_drill
-              pg_restore --host=localhost --username=postgres \
-                --dbname=solid_stats_drill --no-owner --no-privileges \
-                /scratch/solid_stats.dump || true
+              # WR-02 — capture pg_restore rc instead of discarding it. Custom-format
+              # dumps can emit non-fatal warnings, so do not hard-fail on rc alone;
+              # the downstream numeric assertions are the authoritative gate.
+              if ! pg_restore --host=localhost --username=postgres \
+                   --dbname=solid_stats_drill --no-owner --no-privileges \
+                   /scratch/solid_stats.dump; then
+                echo "WARN: pg_restore exited non-zero (continuing to assertions)"; fi
 
-              # Step 7 — sanity assertions with captured result code
+              # Step 7 — sanity assertions with captured result code.
+              # CR-03 — every numeric value is validated as a real integer BEFORE the
+              # `-lt` comparison. An empty/non-numeric value (psql error, connection
+              # loss) is a FAILED assertion, never a silently-skipped one — a query
+              # error must never yield a false PASS.
               drill_result=0
               drill_start=$(date +%s)
 
               table_count=$(psql -h localhost -U postgres -d solid_stats_drill -t -A \
                 -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';")
-              if [ "$table_count" -lt 5 ]; then
-                echo "FAIL: table_count=${table_count} (expected >= 5)"; drill_result=1; fi
+              case "$table_count" in
+                ''|*[!0-9]*)
+                  echo "FAIL: table_count query returned non-numeric '${table_count}'"; drill_result=1; table_count=0;;
+                *)
+                  if [ "$table_count" -lt 5 ]; then
+                    echo "FAIL: table_count=${table_count} (expected >= 5)"; drill_result=1; fi;;
+              esac
 
               row_count=$(psql -h localhost -U postgres -d solid_stats_drill -t -A \
-                -c "SELECT SUM(n_live_tup) FROM pg_stat_user_tables;")
-              if [ "${row_count:-0}" -lt 1 ]; then
-                echo "FAIL: total_rows=${row_count} (expected > 0)"; drill_result=1; fi
+                -c "SELECT COALESCE(SUM(n_live_tup), 0) FROM pg_stat_user_tables;")
+              case "$row_count" in
+                ''|*[!0-9]*)
+                  echo "FAIL: total_rows query returned non-numeric '${row_count}'"; drill_result=1; row_count=0;;
+                *)
+                  if [ "$row_count" -lt 1 ]; then
+                    echo "FAIL: total_rows=${row_count} (expected > 0)"; drill_result=1; fi;;
+              esac
 
-              list_lines=$(wc -l < /scratch/solid_stats.dump.list)
-              if [ "$list_lines" -lt 1 ]; then
-                echo "FAIL: dump list is empty"; drill_result=1; fi
+              list_lines=$(wc -l < /scratch/solid_stats.dump.list | tr -d ' ')
+              case "$list_lines" in
+                ''|*[!0-9]*)
+                  echo "FAIL: dump list line count non-numeric '${list_lines}'"; drill_result=1; list_lines=0;;
+                *)
+                  if [ "$list_lines" -lt 1 ]; then
+                    echo "FAIL: dump list is empty"; drill_result=1; fi;;
+              esac
 
               drill_end=$(date +%s)
               drill_duration=$((drill_end - drill_start))
@@ -143,19 +180,13 @@ spec:
                 echo "DRILL_RESULT=FAIL backup_id=${backup_id} table_count=${table_count} total_rows=${row_count} duration_s=${drill_duration}"
               fi
 
-              # Step 8 — teardown (always runs, never masks result)
-              dropdb -h localhost -U postgres solid_stats_drill || true
-              pg_ctl -D "$initdb_dir" stop || true
-              rm -rf /scratch/pgdata /scratch/solid_stats.dump /scratch/solid_stats.dump.list
-
+              # Step 8 — teardown runs via the EXIT trap (WR-01); see cleanup() above.
               # Step 9 — exit with captured result
               exit $drill_result
           env:
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-auth
-                  key: POSTGRES_PASSWORD
+            # No POSTGRES_PASSWORD here by design: the scratch DB uses trust auth
+            # (Step 3) and never touches the live postgres-auth secret. Only the
+            # read-only S3 credentials the drill genuinely needs are mounted.
             - name: S3_ENDPOINT
               value: https://s3.twcstorage.ru
             - name: S3_BUCKET
