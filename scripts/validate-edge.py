@@ -79,11 +79,16 @@ def validate_nginx_vhost() -> None:  # OFFLINE CHECK
         "# CUTOVER:" in content,
         "vhost missing '# CUTOVER:' comment marker on upstream server line (Phase 11 lever, D-2)",
     )
-    # l. http2 on 443 listen directives (FIX 5 — must mirror live vhost exactly)
-    has_http2 = bool(re.search(r"listen.*443.*http2", content))
+    # l. http2 on EVERY 443 listen directive (FIX 5 — must mirror live vhost exactly).
+    # Match per-listen-line so a drift on one of the two 443 listeners (IPv4 vs IPv6)
+    # cannot pass because the other still has http2.
+    listen_443 = [
+        line for line in content.splitlines() if re.search(r"^\s*listen\b.*\b443\b", line)
+    ]
+    require(listen_443, "vhost has no 443 listen directive")
     require(
-        has_http2,
-        "vhost 443 listen missing http2 — repo copy must mirror live vhost exactly (live: 'listen 443 ssl http2;')",
+        all("http2" in line for line in listen_443),
+        "every 443 listen must include http2 to mirror live vhost exactly (live: 'listen 443 ssl http2;')",
     )
     print("warn: full nginx -t requires live host — operator must run after bootstrap")
     print("ok: nginx vhost structure")
