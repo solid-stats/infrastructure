@@ -131,10 +131,11 @@ jobs:
           kubectl -n "$K8S_NAMESPACE" rollout status statefulset/rabbitmq --timeout=300s
           kubectl -n "$K8S_NAMESPACE" rollout status deployment/server-2 --timeout=300s
           kubectl -n "$K8S_NAMESPACE" rollout status deployment/replay-parser-2 --timeout=300s
+          kubectl -n "$K8S_NAMESPACE" rollout status deployment/web --timeout=300s
           echo "All workloads rolled out successfully"
 
       - name: Verify services and CronJobs
         run: |
           set -euo pipefail
-          kubectl -n "$K8S_NAMESPACE" get service postgres rabbitmq server-2 -o wide
+          kubectl -n "$K8S_NAMESPACE" get service postgres rabbitmq server-2 web -o wide
           kubectl -n "$K8S_NAMESPACE" get cronjob replays-fetcher postgres-backup -o wide
