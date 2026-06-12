@@ -395,6 +395,15 @@ def validate_s3_lifecycle_config() -> None:
     require(has_abort, "missing AbortIncompleteMultipartUpload rule")
 
 
+def validate_s3_lifecycle_docs() -> None:
+    docs_path = ROOT / "docs" / "s3-lifecycle.md"
+    require(docs_path.is_file(), "docs/s3-lifecycle.md missing")
+    content = docs_path.read_text()
+    require("apply-s3-lifecycle.sh" in content, "s3-lifecycle.md missing apply script reference")
+    require("S3-03" in content, "s3-lifecycle.md missing S3-03 evidence section reference")
+    require("AbortIncompleteMultipartUpload" in content, "s3-lifecycle.md missing AbortIncompleteMultipartUpload documentation (S3-02)")
+
+
 def validate_rendered_secrets() -> None:
     env = os.environ.copy()
     env.update(
@@ -461,6 +470,7 @@ def main() -> int:
         ("app image pins", validate_app_image_pins),
         ("rendered secret structure", validate_rendered_secrets),
         ("s3 lifecycle config", validate_s3_lifecycle_config),
+        ("s3 lifecycle runbook", validate_s3_lifecycle_docs),
     ]
     try:
         for label, check in checks:
