@@ -7,9 +7,10 @@
 Description=Log Certbot Renewal Failure to journald
 After=certbot.service
 
+# No [Install] section: this unit is purely OnFailure=-activated by
+# certbot.service.d/onfailure.conf and is never enabled at boot. systemd starts a
+# Type=oneshot OnFailure handler on demand, so an [Install]/WantedBy= here would be
+# misleading dead config that invites enabling a boot-time logger for no reason.
 [Service]
 Type=oneshot
 ExecStart=/bin/bash -c 'logger -t certbot-alert -p user.crit "Certbot renewal FAILED. Inspect: journalctl -u certbot.service -n 20"'
-
-[Install]
-WantedBy=multi-user.target
