@@ -66,8 +66,20 @@ if [[ "${SELF_TEST:-}" == "1" ]]; then
 
   TMP_VHOST=$(mktemp /tmp/cutover-selftest-XXXXXX.conf)
 
-  # Copy the real vhost to a temp file so rollback() has something to restore
-  cp "${VHOST_CONF}" "${TMP_VHOST}"
+  # Pick a readable source vhost so SELF_TEST runs OFFLINE / in CI without the live
+  # nginx file: prefer the live VHOST_CONF if it exists, else fall back to the
+  # repo-managed copy (the rollback logic under test is identical either way).
+  SELFTEST_SRC="${VHOST_CONF}"
+  if [[ ! -f "${SELFTEST_SRC}" ]]; then
+    SELFTEST_SRC="config/nginx/sites-available/stats-staging-solid-stats.conf"
+  fi
+  if [[ ! -f "${SELFTEST_SRC}" ]]; then
+    echo "FATAL: SELF_TEST found no readable source vhost (tried ${VHOST_CONF} and the repo copy)" >&2
+    exit 1
+  fi
+
+  # Copy the source vhost to a temp file so rollback() has something to restore
+  cp "${SELFTEST_SRC}" "${TMP_VHOST}"
 
   # Simulate the backup that rollback() expects
   cp "${TMP_VHOST}" "${TMP_VHOST}.cutover.bak"
