@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: web
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: solid-stats
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  # WEB-02: stub at 0 replicas pending real image.
+  # To activate: set replicas: N and replace the image line with:
+  #   image: ghcr.io/solid-stats/web@sha256:<digest>
+  # No other manifest changes required.
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: web
+        app.kubernetes.io/part-of: solid-stats
+    spec:
+      serviceAccountName: web
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: web
+          # PLACEHOLDER — swap for ghcr.io/solid-stats/web@sha256:<digest> and set replicas > 0
+          # when the web image is published. This inert image is never pulled (replicas: 0).
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: web-config
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

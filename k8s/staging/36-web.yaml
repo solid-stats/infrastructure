@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-config
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: solid-stats
+# Minimal starting-point config — extend as the web app evolves. No secrets here.
+data:
+  NODE_ENV: production
+  PORT: "3001"
+  API_BASE_URL: http://server-2:3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: web
