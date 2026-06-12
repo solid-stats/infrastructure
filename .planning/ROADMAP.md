@@ -173,7 +173,7 @@ Plans:
 
 **Wave 3** *(depends on Wave 2)*
 
-- [ ] 07-04-PLAN.md — Operator runbook (docs/edge-bootstrap.md: adopt flow, OPERATOR-ONLY labels, Phase 11 lever, reversibility proof)
+- [x] 07-04-PLAN.md — Operator runbook (docs/edge-bootstrap.md: adopt flow, OPERATOR-ONLY labels, Phase 11 lever, reversibility proof)
 
 #### Phase 8: Automated Restore Drill
 
@@ -244,7 +244,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 4. Controlled Full Run | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 5. Diff and Cutover Readiness | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 6. kubectl-native CD | v2.0 | 4/4 | Complete   | 2026-06-12 |
-| 7. Edge Automation | v2.0 | 3/4 | In Progress|  |
+| 7. Edge Automation | v2.0 | 4/4 | Complete   | 2026-06-13 |
 | 8. Automated Restore Drill | v2.0 | 0/TBD | Not started | - |
 | 9. web Runtime Wiring | v2.0 | 0/TBD | Not started | - |
 | 10. S3 Lifecycle & Retention | v2.0 | 0/TBD | Not started | - |
