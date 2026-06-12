@@ -1,0 +1,2 @@
+# GSD agent tooling is vendored, not project code — keep it out of language stats
+.agents/** linguist-vendored
