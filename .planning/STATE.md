@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: "Completed 06-02: SA token and WireGuard key rotation runbook (CD-09)"
+stopped_at: "Phase 06 complete & verified (human_needed: live CI deploy deferred); starting Phase 07"
 last_updated: "2026-06-12T08:22:21.903Z"
-last_activity: 2026-06-12 -- Phase 06 execution started
+last_activity: 2026-06-12 -- Phase 06 complete, advancing to Phase 07
 progress:
   total_phases: 6
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 4
-  completed_plans: 3
-  percent: 0
+  completed_plans: 4
+  percent: 17
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 06 — kubectl-native-cd
+**Current focus:** Phase 07 — Edge Automation
 
 ## Current Position
 
-Phase: 06 (kubectl-native-cd) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 06
-Last activity: 2026-06-12 -- Phase 06 execution started
+Phase: 06 (kubectl-native-cd) — COMPLETE ✓ (verification: human_needed — live CI deploy deferred)
+Next: Phase 07 (Edge Automation)
+Status: Phase 06 closed; advancing to Phase 07
+Last activity: 2026-06-12 -- Phase 06 complete, advancing to Phase 07
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 17%
 
 ## Performance Metrics
 
@@ -74,7 +74,10 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- Phase 6 (human_needed, DEFERRED): live WireGuard handshake from a real GitHub
+  runner + SA-token auth + actual `kubectl apply`/`rollout` can only be confirmed
+  by a real CI run on `master` — this environment is VPN-isolated from the cluster.
+  Confirm on the first real master deploy. See `06-VERIFICATION.md`.
 
 ### Blockers/Concerns
 
