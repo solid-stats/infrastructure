@@ -101,7 +101,13 @@ spec:
               cpu: 200m
               memory: 256Mi
           securityContext:
+            # WR-03: the apply Job has WRITE access to bucket lifecycle config, so
+            # it warrants at least the probe Job's hardening. Runs as root because
+            # apk add needs to write the package DB (matches 60-postgres-backup.yaml
+            # and the restore-drill initContainer), but drops all capabilities.
             allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command:
             - sh
             - -ec
