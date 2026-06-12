@@ -67,8 +67,17 @@ spec:
               head_output=$(aws --endpoint-url="$S3_ENDPOINT" s3api head-object \
                 --bucket "$S3_BUCKET" --key "$TEST_KEY" 2>&1)
               echo "$head_output"
-              if echo "$head_output" | grep -qi "expir"; then
-                echo "RESULT: x-amz-expiration PRESENT — lifecycle rule is recognized by endpoint"
+              # WR-05: do NOT grep the whole head-object output for "expir" — that
+              # broad match false-positives on unrelated fields/errors (e.g.
+              # "expired credentials", "ServerSideEncryption") and would record bogus
+              # S3-03 evidence that gates the destructive apply. Instead read the
+              # x-amz-expiration header specifically: aws s3api surfaces it as the
+              # top-level "Expiration" JSON field, which --query extracts directly.
+              # An absent header yields literal "None"/"null" or empty.
+              expiration_field=$(aws --endpoint-url="$S3_ENDPOINT" s3api head-object \
+                --bucket "$S3_BUCKET" --key "$TEST_KEY" --query 'Expiration' --output text 2>/dev/null || true)
+              if [ -n "$expiration_field" ] && [ "$expiration_field" != "None" ] && [ "$expiration_field" != "null" ]; then
+                echo "RESULT: x-amz-expiration PRESENT ($expiration_field) — lifecycle rule is recognized by endpoint"
               else
                 echo "RESULT: x-amz-expiration ABSENT — endpoint may not compute expiry until a rule targets this prefix"
                 echo "NOTE: Apply a lifecycle rule to s3-lifecycle-probe/ prefix and re-run to observe expiry header"
