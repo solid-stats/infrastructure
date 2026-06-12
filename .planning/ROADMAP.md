@@ -209,8 +209,11 @@ Plans:
   2. `web` deploys as a 0-replica / image-pending stub until a real image exists, without breaking the deploy.
   3. `validate-staging.py` `EXPECTED_*` and the rollout-status verification include `web`.
 
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 1 plan
+Plans:
+**Wave 1**
+
+- [ ] 09-01-PLAN.md — web manifests (ConfigMap + Service + ServiceAccount + Deployment) + validate-staging.py + deploy-staging.yml rollout gate
 
 #### Phase 10: S3 Lifecycle & Retention
 
