@@ -164,16 +164,16 @@ Plans:
 Plans:
 **Wave 1** *(parallel — no shared files)*
 
-- [ ] 07-01-PLAN.md — Offline validator (scripts/validate-edge.py) + nginx vhost config (config/nginx/sites-available/)
-- [ ] 07-02-PLAN.md — systemd renewal units (certbot-renew.{service,timer,failure.target,failure.service}) + deploy-hook script
+- [ ] 07-01-PLAN.md — Offline validator (scripts/validate-edge.py) + nginx vhost verbatim mirror (config/nginx/sites-available/stats-staging-solid-stats.conf)
+- [ ] 07-02-PLAN.md — OnFailure= drop-in (config/systemd/certbot.service.d/onfailure.conf) + failure handler unit + deploy-hook script (stock certbot.timer preserved)
 
 **Wave 2** *(depends on Wave 1)*
 
-- [ ] 07-03-PLAN.md — Idempotent bootstrap script (scripts/bootstrap-edge.sh) + teardown script (scripts/teardown-edge.sh)
+- [ ] 07-03-PLAN.md — Adopt-reconcile bootstrap (scripts/bootstrap-edge.sh: backup live vhost, install repo copy, ufw split-tunnel) + teardown (scripts/teardown-edge.sh: .bak restore)
 
 **Wave 3** *(depends on Wave 2)*
 
-- [ ] 07-04-PLAN.md — Operator runbook (docs/edge-bootstrap.md)
+- [ ] 07-04-PLAN.md — Operator runbook (docs/edge-bootstrap.md: adopt flow, OPERATOR-ONLY labels, Phase 11 lever, reversibility proof)
 
 #### Phase 8: Automated Restore Drill
 
