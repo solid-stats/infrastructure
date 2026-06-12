@@ -225,11 +225,36 @@ rollback() {
 # ==============================================================================
 
 echo "Switching upstream to ${NEW_UPSTREAM}..."
-sed -i "s|^\( *\)server [^;]*;|\1server ${NEW_UPSTREAM};|" "${VHOST_CONF}"
 
-# Verify the new upstream address appears in the file
-if ! grep -q "${NEW_UPSTREAM}" "${VHOST_CONF}"; then
-  echo "FATAL: sed did not write NEW_UPSTREAM to vhost — aborting" >&2
+# WR-01: assert the # CUTOVER: marker exists before touching anything — the switch
+# is anchored to it, so a missing marker is a fatal misconfiguration, not a silent
+# no-op or a global rewrite.
+if ! grep -q '# CUTOVER:' "${VHOST_CONF}"; then
+  echo "FATAL: '# CUTOVER:' marker not found in ${VHOST_CONF} — refusing to switch" >&2
+  exit 1
+fi
+
+# WR-02: escape the replacement so an ip:port (or a fat-fingered value) containing
+# the delimiter '|', a backslash, or sed's '&' (whole-match) metacharacter cannot
+# corrupt the config or abort sed mid-run.
+esc_upstream=$(printf '%s' "${NEW_UPSTREAM}" | sed -e 's/[&|\\]/\\&/g')
+
+# WR-01: anchor the substitution to the marker. Operate only within the range that
+# starts at the `# CUTOVER:` marker and ends at the first following `server <addr>;`
+# line, and substitute ONLY on that server line. Comment lines may sit between the
+# marker and the server directive, so a plain `n` (next-line) is not enough — the
+# range walks to the correct server line. No other `server` directive elsewhere in
+# the file is touched.
+sed -i "/# CUTOVER:/,/^[[:space:]]*server [^;]*;/{s|^\( *\)server [^;]*;|\1server ${esc_upstream};|;}" "${VHOST_CONF}"
+
+# WR-03 + WR-01: fixed-string (grep -F) count of the exact `server <NEW_UPSTREAM>;`
+# line. grep -F makes the dots in the IPv4 address literal, not wildcards, so a
+# subtly wrong address (e.g. 10X43X94X103:3000) can no longer false-pass. Asserting
+# the count is exactly 1 catches both a missed edit (0) and an accidental global
+# rewrite of multiple `server` directives (>1).
+match_count=$(grep -cF -- "server ${NEW_UPSTREAM};" "${VHOST_CONF}" || true)
+if [[ "${match_count}" -ne 1 ]]; then
+  echo "FATAL: expected exactly 1 upstream line 'server ${NEW_UPSTREAM};', got ${match_count} — aborting" >&2
   exit 1
 fi
 
