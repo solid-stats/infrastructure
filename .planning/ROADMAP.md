@@ -249,8 +249,15 @@ Plans:
   3. The cutover is gated on a fresh backup point and a green diff gate before it is allowed to proceed.
   4. A post-cutover smoke check curls the public host to confirm the new runtime responds before legacy is retired.
 
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 2 plans
+Plans:
+**Wave 1**
+
+- [ ] 11-01-PLAN.md — scripts/cutover.sh: 4-gate reversible upstream switch with auto-rollback (CUT-01..04)
+
+**Wave 2** *(depends on Wave 1)*
+
+- [ ] 11-02-PLAN.md — docs/cutover.md runbook + validate-staging.py cutover gate extension + operator checkpoint
 
 ## Progress
 
@@ -269,4 +276,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 8. Automated Restore Drill | v2.0 | 3/3 | Complete    | 2026-06-12 |
 | 9. web Runtime Wiring | v2.0 | 1/1 | Complete    | 2026-06-12 |
 | 10. S3 Lifecycle & Retention | v2.0 | 3/3 | Complete   | 2026-06-12 |
-| 11. Production Cutover | v2.0 | 0/TBD | Not started | - |
+| 11. Production Cutover | v2.0 | 0/2 | Not started | - |
