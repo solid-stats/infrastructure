@@ -235,7 +235,7 @@ Plans:
 
 **Wave 2** *(depends on Wave 1)*
 
-- [ ] 10-03-PLAN.md — Operator runbook (docs/s3-lifecycle.md) + validate-staging.py docs check + final operator confirmation checkpoint
+- [x] 10-03-PLAN.md — Operator runbook (docs/s3-lifecycle.md) + validate-staging.py docs check + final operator confirmation checkpoint
 
 #### Phase 11: Production Cutover
 
@@ -268,5 +268,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 7. Edge Automation | v2.0 | 4/4 | Complete    | 2026-06-12 |
 | 8. Automated Restore Drill | v2.0 | 3/3 | Complete    | 2026-06-12 |
 | 9. web Runtime Wiring | v2.0 | 1/1 | Complete    | 2026-06-12 |
-| 10. S3 Lifecycle & Retention | v2.0 | 2/3 | In progress | - |
+| 10. S3 Lifecycle & Retention | v2.0 | 3/3 | Complete   | 2026-06-12 |
 | 11. Production Cutover | v2.0 | 0/TBD | Not started | - |
