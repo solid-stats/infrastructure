@@ -1,9 +1,10 @@
 ---
-status: NEEDS_REVISION
+status: revised_pass
 revision_cycle: 1
 issues_found: 5
 blockers: 3
 warnings: 2
+resolved_in: revision_1
 ---
 
 # Phase 11: Production Cutover — Plan Verification
@@ -223,4 +224,50 @@ This makes the test fully self-contained and doesn't depend on the actual docs b
 Once these are fixed, the two warnings can be addressed (rollback testing, gate-logic test self-containment) or accepted with justification.
 
 **Revision Cycle:** 1 of 3 remaining.
+
+---
+
+## Revision 1 — Changes Applied
+
+**Date:** 2026-06-13
+
+### BLOCKER #1 (DRY_RUN gate bypass) — RESOLVED
+
+11-01-PLAN.md Task 1: Rewrote DRY_RUN semantics. Gate A and Gate B (SECTION 2) now
+always execute with full refusal logic regardless of DRY_RUN. Only implementation steps
+(SECTIONS 3–9: backup, sed switch, nginx -t, reload, smoke-check) are skipped in DRY_RUN.
+Added explicit early-exit pattern: gates run first; if both pass, DRY_RUN prints
+"[DRY-RUN] would: ..." for each mutation step and exits 0. Added gate-A-in-DRY_RUN
+test to verification section.
+
+### BLOCKER #2 (smoke check ambiguity) — RESOLVED
+
+11-01-PLAN.md Task 1 SECTION 8: Replaced ambiguous `curl -fsS -I ... break` loop with an
+explicit `smoke_ok` sentinel pattern. HTTP response acceptance criterion is now
+`[[ "$http_code" =~ ^[23] ]]` (2xx or 3xx = pass, anything else = fail). Flow control
+documented inline: smoke_ok=1 → break → fall through to SECTION 9 → exit 0; smoke_ok
+remains 0 after loop → rollback() → exit 1 (SECTION 9 never reached). Uses
+`curl -fsS -o /dev/null -w '%{http_code}'` for explicit code capture.
+
+### BLOCKER #3 (subprocess.run() reference) — RESOLVED
+
+11-02-PLAN.md Task 2: Removed the erroneous `import subprocess as _sp` from the
+validate_cutover_artifacts() stub. The NOTE now correctly identifies the existing `run()`
+helper defined at module level and directs the executor to use it: `result = run(["bash",
+"-n", str(script_path)])`. No new import needed.
+
+### WARNING #1 (rollback not tested) — RESOLVED
+
+11-01-PLAN.md Task 1: Added SELF_TEST=1 path after rollback() definition. Exercises
+rollback() on a temp vhost copy (mktemp), simulates a corruption, calls rollback() with
+VHOST_CONF/BAK_VHOST overridden to temp paths, asserts byte-restore via diff -q, cleans
+up. Does not touch live nginx. Added SELF_TEST to verify block and success_criteria.
+
+### WARNING #2 (gate-logic tests depend on live docs) — RESOLVED
+
+11-01-PLAN.md verification section and 11-02-PLAN.md Task 3 checkpoint: All gate-logic
+dry-run tests now use temp mock files (echo "not verified" > /tmp/test-backup-gate.md
+etc.) instead of the live docs. Tests are self-contained on a fresh checkout regardless
+of whether the real gate docs are populated. Cleanup (rm -f) included after each test
+block.
 
