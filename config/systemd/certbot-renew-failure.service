@@ -1,0 +1,15 @@
+# Source: config/systemd/certbot-renew-failure.service
+# Activated by OnFailure= in certbot.service.d/onfailure.conf.
+# Logs a user.crit entry to journald when certbot renewal fails.
+# Installed to: /etc/systemd/system/certbot-renew-failure.service
+# Applied by: scripts/bootstrap-edge.sh (operator-run)
+[Unit]
+Description=Log Certbot Renewal Failure to journald
+After=certbot.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'logger -t certbot-alert -p user.crit "Certbot renewal FAILED. Inspect: journalctl -u certbot.service -n 20"'
+
+[Install]
+WantedBy=multi-user.target
