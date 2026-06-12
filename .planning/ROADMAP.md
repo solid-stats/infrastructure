@@ -257,7 +257,7 @@ Plans:
 
 **Wave 2** *(depends on Wave 1)*
 
-- [ ] 11-02-PLAN.md — docs/cutover.md runbook + validate-staging.py cutover gate extension + operator checkpoint
+- [x] 11-02-PLAN.md — docs/cutover.md runbook + validate-staging.py cutover gate extension + operator checkpoint
 
 ## Progress
 
@@ -276,4 +276,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 8. Automated Restore Drill | v2.0 | 3/3 | Complete    | 2026-06-12 |
 | 9. web Runtime Wiring | v2.0 | 1/1 | Complete    | 2026-06-12 |
 | 10. S3 Lifecycle & Retention | v2.0 | 3/3 | Complete   | 2026-06-12 |
-| 11. Production Cutover | v2.0 | 1/2 | In Progress|  |
+| 11. Production Cutover | v2.0 | 2/2 | Complete   | 2026-06-12 |

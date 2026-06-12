@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
-status: executing
+status: verifying
 stopped_at: Completed 10-03-PLAN.md (docs tasks)
-last_updated: "2026-06-12T20:37:38.886Z"
+last_updated: "2026-06-12T20:44:12.822Z"
 last_activity: 2026-06-12 -- Phase 11 execution started
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 21
-  completed_plans: 16
+  completed_plans: 17
   percent: 33
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 Phase: 11 (production-cutover) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Plans: Phase 08 = 3/3 complete (08-01, 08-02 [wave 1] → 08-03 [wave 2])
 Note: Live SSH inspection showed the staging edge ALREADY EXISTS (nginx 1.24 +
   certbot 2.9 + stock certbot.timer). Plans rewritten to ADOPT it into the repo
@@ -77,6 +77,7 @@ Progress: [███░░░░░░░] 36% (2/6 phases complete; Phase 07, 0
 | Phase 10-s3-lifecycle-retention P10-02 | 10 | 1 tasks | 1 files |
 | Phase 10-s3-lifecycle-retention P03 | 10 | 2 tasks | 2 files |
 | Phase 11-production-cutover P01 | 20 | 1 tasks | 1 files |
+| Phase 11-production-cutover P02 | 25 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -102,6 +103,8 @@ Recent decisions affecting current work:
 - [Phase 08-02]: DRILL-04 machine-enforced in CI: depth-1 glob guard in validate_manifest_shape() blocks accidental drill manifest promotion to CD path
 - [Phase ?]: Six-section operator runbook order: overview-policy-apply-probe-evidence-caveat
 - [Phase ?]: Evidence table blank by design: operator gate for S3-03 proof before apply
+- [Phase ?]: strict_failures: 0 checks coverage; value divergence from parser rewrite is expected and allowlisted
+- [Phase ?]: checks script+runbook marker strings; file existence alone insufficient (T-11-08)
 
 ### Pending Todos
 
@@ -145,6 +148,6 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-12T20:37:38.883Z
+Last session: 2026-06-12T20:44:06.542Z
 Stopped at: Completed 10-03-PLAN.md (docs tasks)
 Resume file: None
