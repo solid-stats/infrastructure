@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import importlib.util
 import json
 import os
 import py_compile
@@ -13,6 +14,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_DIR = ROOT / "k8s" / "staging"
 DUMMY_SECRET_VALUE = "dummy-secret-value-for-structure-validation"
+
+
+def _load_s3_lifecycle_validator():
+    """Load the standalone validate-s3-lifecycle.py as a module so CI enforces
+    the SAME assertions (Days >= 30 floor, AbortIncompleteMultipartUpload) as the
+    operator-run validator. Single source of truth — no divergence (WR-01/IN-04).
+    The filename has a hyphen, so it cannot be a plain `import`; load it by path
+    with importlib (stdlib only)."""
+    module_path = ROOT / "scripts" / "validate-s3-lifecycle.py"
+    spec = importlib.util.spec_from_file_location("validate_s3_lifecycle", module_path)
+    if spec is None or spec.loader is None:
+        raise ValidationError(f"cannot load {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 EXPECTED_MANIFESTS = [
     "00-namespace.yaml",
@@ -362,37 +378,18 @@ def validate_drill_manifest() -> None:
 
 
 def validate_s3_lifecycle_config() -> None:
-    lifecycle_path = ROOT / "config" / "s3" / "backups-lifecycle.json"
-    require(lifecycle_path.exists(), "config/s3/backups-lifecycle.json missing")
-    parsed = json.loads(lifecycle_path.read_text())
-    require(isinstance(parsed, dict) and "Rules" in parsed, "Rules key missing")
-    require(isinstance(parsed["Rules"], list) and len(parsed["Rules"]) > 0, "Rules must be a non-empty list")
-
-    has_expiration = False
-    has_abort = False
-
-    for rule in parsed["Rules"]:
-        # Expiration rule for backups/postgres/
-        filter_ = rule.get("Filter")
-        if isinstance(filter_, dict) and filter_.get("Prefix") == "backups/postgres/":
-            require(rule.get("Status") == "Enabled", "Expiration rule must be Enabled")
-            expiration = rule.get("Expiration")
-            require(isinstance(expiration, dict), "Expiration must be a dict")
-            days = expiration.get("Days") if isinstance(expiration, dict) else None
-            require(isinstance(days, int) and days >= 1, "Expiration.Days must be an integer >= 1")
-            has_expiration = True
-
-        # AbortIncompleteMultipartUpload rule
-        if "AbortIncompleteMultipartUpload" in rule:
-            require(rule.get("Status") == "Enabled", "AbortIncompleteMultipartUpload rule must be Enabled")
-            abort = rule["AbortIncompleteMultipartUpload"]
-            require(isinstance(abort, dict), "AbortIncompleteMultipartUpload must be a dict")
-            days_init = abort.get("DaysAfterInitiation")
-            require(isinstance(days_init, int), "DaysAfterInitiation must be an int")
-            has_abort = True
-
-    require(has_expiration, "missing Expiration rule for backups/postgres/")
-    require(has_abort, "missing AbortIncompleteMultipartUpload rule")
+    # WR-01/IN-04: delegate to the standalone validate-s3-lifecycle.py so CI
+    # enforces the SAME assertions the operator-run validator does — including the
+    # 30-day Expiration floor and the AbortIncompleteMultipartUpload presence
+    # check. This is the single source of truth; the previous inline copy here
+    # only required Days >= 1, so a future edit dropping the retention window to
+    # 1 day would have silently passed CI.
+    module = _load_s3_lifecycle_validator()
+    try:
+        module.validate_lifecycle_json()
+    except module.ValidationError as exc:
+        # Re-raise as this module's ValidationError so main()'s handler catches it.
+        raise ValidationError(str(exc)) from exc
 
 
 def validate_s3_lifecycle_docs() -> None:
