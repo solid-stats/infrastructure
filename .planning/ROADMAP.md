@@ -187,7 +187,16 @@ Plans:
   3. The drill tears down its scratch resources and logs the result as evidence.
   4. Drill manifests live outside the staging deploy glob, so CD never schedules them.
 
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+**Wave 1** *(parallel — no shared files)*
+
+- [ ] 08-01-PLAN.md — Job manifest (k8s/staging/restore-drill/70-restore-drill.yaml) + operator script (scripts/restore-drill.sh)
+- [ ] 08-02-PLAN.md — DRILL-04 depth-1 guard + restore-drill.sh syntax check in scripts/validate-staging.py
+
+**Wave 2** *(depends on Wave 1)*
+
+- [ ] 08-03-PLAN.md — docs/backup-restore.md automated runbook + live drill human checkpoint (DRILL_RESULT=PASS evidence)
 
 #### Phase 9: web Runtime Wiring
 
