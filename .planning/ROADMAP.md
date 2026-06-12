@@ -114,7 +114,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. The deploy job aborts before any `kubectl` if the WireGuard handshake has not completed, and `6443` is reachable only through the tunnel.
   4. The ServiceAccount can apply and `rollout status` every staging workload kind within the namespace and nothing cluster-scoped; the namespace and CI RBAC are bootstrapped once by the operator via a documented runbook, and CI never creates the namespace.
   5. All `CD_SSH_*` secrets and SSH code paths are removed, only one deploy runs at a time, and an SA-token rotation runbook (owner, cadence, paired with WG key rotation) is documented.
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Operator bootstrap manifest (01-ci-rbac.yaml) + operator runbook (docs/operator-bootstrap.md)
+- [ ] 06-02-PLAN.md — SA-token and WireGuard key rotation runbook (docs/sa-token-rotation.md)
+- [ ] 06-03-PLAN.md — WireGuard handshake gate script + kubeconfig construction script
+- [ ] 06-04-PLAN.md — Workflow refactor (WireGuard + kubectl native, PR/master split, concurrency lock) + SSH script deletion
 
 #### Phase 7: Edge Automation
 **Goal**: The public staging edge — host nginx vhost, TLS renewal, and firewall — is repo-managed, idempotently re-runnable, and proven reversible in isolation before it becomes the cutover lever.
@@ -184,7 +190,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. App CD Boundary | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 4. Controlled Full Run | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 5. Diff and Cutover Readiness | v1.0 | 1/1 | Complete | 2026-05-10 |
-| 6. kubectl-native CD | v2.0 | 0/TBD | Not started | - |
+| 6. kubectl-native CD | v2.0 | 0/4 | Planned | - |
 | 7. Edge Automation | v2.0 | 0/TBD | Not started | - |
 | 8. Automated Restore Drill | v2.0 | 0/TBD | Not started | - |
 | 9. web Runtime Wiring | v2.0 | 0/TBD | Not started | - |
