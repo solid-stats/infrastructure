@@ -9,12 +9,15 @@ set -euo pipefail
 # Usage: scripts/teardown-edge.sh
 #        DOMAIN=stats-staging.solid-stats.ru scripts/teardown-edge.sh
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 # --- Optional vars with defaults -------------------------------------------
 : "${DOMAIN:=stats-staging.solid-stats.ru}"
 : "${NGINX_SITES_DIR:=/etc/nginx/sites-available}"
 : "${NGINX_SITES_ENABLED:=/etc/nginx/sites-enabled}"
 
 VHOST_CONF="$NGINX_SITES_DIR/stats-staging-solid-stats.conf"
+REPO_VHOST="$REPO_ROOT/config/nginx/sites-available/stats-staging-solid-stats.conf"
 BAK_VHOST="${VHOST_CONF}.bak"
 
 # ---------------------------------------------------------------------------
@@ -43,9 +46,18 @@ if [[ -f "$BAK_VHOST" ]]; then
   rm -f "$BAK_VHOST"
   echo "Original vhost restored; backup removed"
 else
-  echo "No backup found at $BAK_VHOST — removing repo vhost"
-  rm -f "$NGINX_SITES_ENABLED/stats-staging-solid-stats.conf"
-  rm -f "$VHOST_CONF"
+  # No .bak to restore. Only remove the live vhost if it is byte-identical to the
+  # repo copy this teardown owns — otherwise it may be a hand-authored vhost (or a
+  # post-bootstrap edit) whose removal would be irreversible config loss.
+  if [[ -f "$VHOST_CONF" ]] && cmp -s "$REPO_VHOST" "$VHOST_CONF"; then
+    echo "No backup found at $BAK_VHOST — live vhost matches repo copy, removing it"
+    rm -f "$NGINX_SITES_ENABLED/stats-staging-solid-stats.conf"
+    rm -f "$VHOST_CONF"
+  elif [[ -f "$VHOST_CONF" ]]; then
+    echo "warn: no .bak and live vhost differs from repo copy — leaving it in place (manual review)" >&2
+  else
+    echo "No backup and no live vhost at $VHOST_CONF — nothing to restore"
+  fi
 fi
 
 # Re-enable symlink if vhost still present (backup was restored)
