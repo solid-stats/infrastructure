@@ -324,9 +324,11 @@ def validate_drill_manifest() -> None:
     require(main_ctx, f"{rel} missing main container 'restore-drill'")
     require(init_ctx, f"{rel} missing initContainer 'fetch-backup'")
 
-    # Main container must be non-root (CR-01).
+    # Main container must run as the real postgres user (uid 70 in postgres:17-alpine).
+    # initdb does getpwuid() and refuses a uid with no /etc/passwd entry, so an arbitrary
+    # uid like 999 fails at runtime ("could not look up effective user ID 999"). Non-root + uid 70.
     require("runAsNonRoot: true" in main_ctx, f"{rel} main container missing runAsNonRoot: true (CR-01)")
-    require("runAsUser: 999" in main_ctx, f"{rel} main container missing runAsUser: 999 (CR-01)")
+    require("runAsUser: 70" in main_ctx, f"{rel} main container must run as uid 70 (the postgres user; 999 has no /etc/passwd entry and initdb getpwuid fails)")
 
     # initContainer is expected to run as root (apk add requires root).
     require("runAsUser: 0" in init_ctx, f"{rel} fetch-backup initContainer must declare runAsUser: 0 (apk needs root)")

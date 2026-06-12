@@ -31,20 +31,22 @@ spec:
       restartPolicy: Never
       serviceAccountName: restore-drill
       automountServiceAccountToken: false
-      # fsGroup makes the emptyDir group-writable by gid 999 so the non-root main
+      # fsGroup makes the emptyDir group-writable by gid 70 so the non-root main
       # container can read files written by the root initContainer.
       # runAsUser/runAsGroup/runAsNonRoot are intentionally absent at pod level —
       # they are set per-container so the initContainer can run as root (apk add
       # requires root) while the main container runs as non-root (pg_ctl/initdb
-      # refuse root).
+      # refuse root). uid/gid 70 is the real "postgres" user in postgres:17-alpine —
+      # initdb does getpwuid() and refuses a uid with no /etc/passwd entry, so an
+      # arbitrary uid like 999 fails ("could not look up effective user ID 999").
       securityContext:
-        fsGroup: 999
+        fsGroup: 70
       initContainers:
         - name: fetch-backup
           image: postgres:17-alpine
           imagePullPolicy: IfNotPresent
           # Root is required here: `apk add` writes to /var/lib/apk, /etc/apk, /var/log/apk
-          # which are owned by root and cannot be written by uid 999 (exitCode 99 on live run).
+          # which are owned by root and cannot be written by the non-root main uid (exitCode 99 on live run).
           securityContext:
             runAsUser: 0
             runAsNonRoot: false
@@ -117,7 +119,7 @@ spec:
                 s3 cp "s3://${S3_BUCKET}/${BACKUP_PREFIX}/${backup_id}/manifest.json" \
                 /scratch/manifest.json --only-show-errors
 
-              # Make files readable by the non-root main container (uid 999, gid 999).
+              # Make files readable by the non-root main container (uid 70, gid 70 = postgres).
               chmod 0644 /scratch/solid_stats.dump /scratch/solid_stats.dump.list /scratch/manifest.json
               echo "fetch-backup: files ready in /scratch"
 
@@ -133,8 +135,8 @@ spec:
               cpu: "1"
               memory: 2Gi
           securityContext:
-            runAsUser: 999
-            runAsGroup: 999
+            runAsUser: 70
+            runAsGroup: 70
             runAsNonRoot: true
             allowPrivilegeEscalation: false
             capabilities:
