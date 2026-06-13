@@ -19,9 +19,9 @@ a trimmed, single-replica footprint (no VPS resize).
 
 ### Metrics & Dashboards (MET)
 
-- [ ] **MET-01**: Prometheus runs from standalone rendered manifests (no operator/CRDs), with tuned scrape interval and bounded retention sized to its PVC.
-- [ ] **MET-02**: kube-state-metrics and node-exporter run and are scraped (cluster + host metrics).
-- [ ] **MET-03**: postgres-exporter (app ≥ v0.15.0, non-superuser `pg_monitor` role) exposes PostgreSQL metrics to Prometheus.
+- [x] **MET-01**: Prometheus runs from standalone rendered manifests (no operator/CRDs), with tuned scrape interval and bounded retention sized to its PVC.
+- [x] **MET-02**: kube-state-metrics and node-exporter run and are scraped (cluster + host metrics).
+- [x] **MET-03**: postgres-exporter (app ≥ v0.15.0, non-superuser `pg_monitor` role) exposes PostgreSQL metrics to Prometheus.
 - [ ] **MET-04**: RabbitMQ metrics are scraped via the native `rabbitmq_prometheus` plugin (port 15692) — no separate exporter.
 - [ ] **MET-05**: Grafana runs with Prometheus provisioned as a healthy datasource (provisioned as code).
 - [ ] **MET-06**: Standard dashboards are provisioned as code (node-exporter, kube-state/cluster, PostgreSQL, RabbitMQ) and render live data.
@@ -47,7 +47,7 @@ a trimmed, single-replica footprint (no VPS resize).
 
 ### Deploy Pipeline & Secrets (DEP)
 
-- [ ] **DEP-01**: Observability manifests are rendered with `helm template` and committed under `k8s/observability/` (git as source of truth; no in-cluster helm).
+- [x] **DEP-01**: Observability manifests are rendered with `helm template` and committed under `k8s/observability/` (git as source of truth; no in-cluster helm).
 - [ ] **DEP-02**: A separate `deploy-observability.yml` CI workflow applies them over the existing WireGuard + SA-token path, with its own concurrency group, independent of runtime CD.
 - [ ] **DEP-03**: The runtime deploy path does not depend on the observability deploy succeeding.
 - [x] **DEP-04**: All observability secrets (Grafana admin, GlitchTip secret-key/superuser/DB, exporter DSNs) are rendered from GitHub environment secrets into k8s Secrets — no secret values in git.
@@ -104,13 +104,13 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 | PREP-03 | Phase 12 | Complete |
 | PREP-04 | Phase 12 | Complete |
 | PREP-05 | Phase 12 | Complete |
-| DEP-01 | Phase 13 | Pending |
+| DEP-01 | Phase 13 | Complete |
 | DEP-02 | Phase 13 | Pending |
 | DEP-03 | Phase 13 | Pending |
 | DEP-04 | Phase 13 | Complete |
-| MET-01 | Phase 13 | Pending |
-| MET-02 | Phase 13 | Pending |
-| MET-03 | Phase 13 | Pending |
+| MET-01 | Phase 13 | Complete |
+| MET-02 | Phase 13 | Complete |
+| MET-03 | Phase 13 | Complete |
 | MET-04 | Phase 13 | Pending |
 | MET-05 | Phase 13 | Pending |
 | MET-06 | Phase 13 | Pending |
