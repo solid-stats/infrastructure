@@ -1,0 +1,190 @@
+Error: Get "https://release-assets.githubusercontent.com/github-production-release-asset/286108332/53220acd-8634-4e40-9f20-b0923aaacc42?sp=r&sv=2018-11-09&sr=b&spr=https&se=2026-06-13T19%3A56%3A03Z&rscd=attachment%3B+filename%3Dprometheus-29.11.0.tgz&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2026-06-13T18%3A55%3A53Z&ske=2026-06-13T19%3A56%3A03Z&sks=b&skv=2018-11-09&sig=ic6WfptRXr4R4gL%2F6CtAhuwGPAeCoqSdBPigwddbNJM%3D&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc4MTM3ODAyNiwibmJmIjoxNzgxMzc3NzI2LCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.EMFLNf2Vqi3rGRkHcXuIuwbRwD511iNAElERRtBtVLs&response-content-disposition=attachment%3B%20filename%3Dprometheus-29.11.0.tgz&response-content-type=application%2Foctet-stream": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+figs:
+      - targets:
+        - localhost:9090
+    - job_name: rabbitmq
+      static_configs:
+      - targets:
+        - rabbitmq.solid-stats-staging.svc:15692
+    rule_files:
+    - /etc/config/recording_rules.yml
+    - /etc/config/alerting_rules.yml
+    - /etc/config/rules
+    - /etc/config/alerts
+  recording_rules.yml: |
+    {}
+  rules: |
+    {}
+---
+# Source: prometheus/templates/pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+    app.kubernetes.io/version: v3.12.0
+    helm.sh/chart: prometheus-29.11.0
+    app.kubernetes.io/part-of: prometheus
+  name: prometheus-server
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: "8Gi"
+---
+# Source: prometheus/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+    app.kubernetes.io/version: v3.12.0
+    helm.sh/chart: prometheus-29.11.0
+    app.kubernetes.io/part-of: prometheus
+  name: prometheus-server
+  namespace: monitoring
+spec:
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 9090
+  selector:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+  sessionAffinity: None
+  type: "ClusterIP"
+---
+# Source: prometheus/templates/deploy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: prometheus
+    app.kubernetes.io/version: v3.12.0
+    helm.sh/chart: prometheus-29.11.0
+    app.kubernetes.io/part-of: prometheus
+  name: prometheus-server
+  namespace: monitoring
+spec:
+  strategy:
+    type: Recreate
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: server
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: prometheus
+  replicas: 1
+  revisionHistoryLimit: 10
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: server
+        app.kubernetes.io/name: prometheus
+        app.kubernetes.io/instance: prometheus
+        app.kubernetes.io/version: v3.12.0
+        helm.sh/chart: prometheus-29.11.0
+        app.kubernetes.io/part-of: prometheus
+    spec:
+      priorityClassName: "obs-background"
+      enableServiceLinks: true
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus-server-configmap-reload
+          image: "quay.io/prometheus-operator/prometheus-config-reloader:v0.91.0"
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --watched-dir=/etc/config
+            - --listen-address=0.0.0.0:8080
+            - --reload-url=http://127.0.0.1:9090/-/reload
+          ports:
+            - containerPort: 8080
+              name: metrics
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+              scheme: HTTP
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+              scheme: HTTP
+            periodSeconds: 10
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+              readOnly: true
+
+        - name: prometheus-server
+          image: "quay.io/prometheus/prometheus:v3.12.0"
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --storage.tsdb.retention.time=15d
+            - --storage.tsdb.retention.size=5GB
+            - --config.file=/etc/config/prometheus.yml
+            - --storage.tsdb.path=/data
+            - --web.console.libraries=/etc/prometheus/console_libraries
+            - --web.console.templates=/etc/prometheus/consoles
+            - --web.enable-lifecycle
+          ports:
+            - containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 4
+            failureThreshold: 3
+            successThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
+            successThreshold: 1
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+            - name: storage-volume
+              mountPath: /data
+              subPath: ""
+      dnsPolicy: ClusterFirst
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+      terminationGracePeriodSeconds: 300
+      volumes:
+        - name: config-volume
+          configMap:
+            name: prometheus-server
+        - name: storage-volume
+          persistentVolumeClaim:
+            claimName: prometheus-server
