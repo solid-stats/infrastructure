@@ -4,12 +4,12 @@ milestone: v3.0
 milestone_name: Staging Observability Stack
 status: executing
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-13T21:52:15.583Z"
-last_activity: 2026-06-13 -- Phase 13 marked complete
+last_updated: "2026-06-13T21:52:15.878Z"
+last_activity: 2026-06-13 -- Phase 14 execution started
 progress:
   total_phases: 7
   completed_phases: 2
-  total_plans: 11
+  total_plans: 15
   completed_plans: 11
   percent: 29
 ---
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 13 — Deploy Pipeline & Metrics Stack
+**Current focus:** Phase 14 — Public Edge & Grafana TLS
 
 ## Current Position
 
-Phase: 13 — COMPLETE
-Plan: 5 of 6
-Status: Ready to execute
-Last activity: 2026-06-13 -- Phase 13 marked complete
+Phase: 14 (Public Edge & Grafana TLS) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 14
+Last activity: 2026-06-13 -- Phase 14 execution started
 
 Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 
