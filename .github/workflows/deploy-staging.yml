@@ -66,8 +66,10 @@ jobs:
       - name: Dry-run kubectl apply (server-side)
         run: |
           set -euo pipefail
-          # Exclude 01-ci-rbac.yaml — operator-bootstrapped, not CI-managed
-          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '01-ci-rbac.yaml' | sort | sed 's/^/-f /' | \
+          # Exclude operator-bootstrapped, non-CI-managed manifests:
+          # 00-namespace.yaml (cluster-scoped Namespace) and 01-ci-rbac.yaml
+          # (the namespace-scoped ci-deployer Role cannot get/create either).
+          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '00-namespace.yaml' ! -name '01-ci-rbac.yaml' | sort | sed 's/^/-f /' | \
             xargs kubectl apply -n "$K8S_NAMESPACE" --dry-run=server
 
   deploy:
@@ -122,8 +124,10 @@ jobs:
       - name: Apply staging manifests
         run: |
           set -euo pipefail
-          # Exclude 01-ci-rbac.yaml — operator-bootstrapped, not CI-managed
-          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '01-ci-rbac.yaml' | sort | sed 's/^/-f /' | \
+          # Exclude operator-bootstrapped, non-CI-managed manifests:
+          # 00-namespace.yaml (cluster-scoped Namespace) and 01-ci-rbac.yaml
+          # (the namespace-scoped ci-deployer Role cannot get/create either).
+          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '00-namespace.yaml' ! -name '01-ci-rbac.yaml' | sort | sed 's/^/-f /' | \
             xargs kubectl apply -n "$K8S_NAMESPACE"
 
       - name: Verify rollouts
