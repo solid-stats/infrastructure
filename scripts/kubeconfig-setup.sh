@@ -46,6 +46,7 @@ printf '%s' "$K8S_CA_CERT" > "$ca_file"
 echo "Configuring cluster $K8S_CLUSTER_NAME -> $K8S_API_SERVER..."
 kubectl config set-cluster "$K8S_CLUSTER_NAME" \
   --certificate-authority="$ca_file" \
+  --embed-certs=true \
   --server="$K8S_API_SERVER" \
   --kubeconfig="$KUBECONFIG"
 
