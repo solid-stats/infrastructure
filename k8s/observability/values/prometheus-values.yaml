@@ -16,18 +16,29 @@ kube-state-metrics:
 prometheus-node-exporter:
   enabled: false
 
-pushgateway:
+# Chart v29.11.0: pushgateway subchart key is prometheus-pushgateway.
+prometheus-pushgateway:
   enabled: false
+
+# Do not create ClusterRole/ClusterRoleBinding — Prometheus runtime SA ClusterRole
+# is added to k8s/staging/01-obs-rbac.yaml (operator-applied bootstrap, Pitfall 2).
+rbac:
+  create: false
 
 # Use the pre-created prometheus SA (ClusterRole defined in 01-obs-rbac.yaml,
 # operator-applied; obs-ci-deployer cannot create ClusterRole).
-# A8: server.serviceAccount.create=false / server.serviceAccount.name=prometheus
+# A8: serviceAccounts.server.create=false / serviceAccounts.server.name=prometheus
 serviceAccounts:
   server:
     create: false
     name: prometheus
 
 server:
+  # Global scrape interval: 30s (sufficient for all 4 targets; see A9).
+  global:
+    scrape_interval: 30s
+    evaluation_interval: 30s
+
   # Retention: 15d time-based + 5GB size-based safety cap (MET-01).
   retention: "15d"
   retentionSize: "5GB"
@@ -63,45 +74,59 @@ server:
     servicePort: 80
     targetPort: 9090
 
-  # Override to produce a clean Service name: prometheus-server
-  # (matches FQDN used by Grafana datasource provisioning).
-  fullnameOverride: ""
+# Scrape job configuration — chart's scrapeConfigs map (per-job enable/disable).
+# Disable all default kubernetes_sd_configs jobs (Pitfall 6: no SA ClusterRole for SD;
+# static_configs used instead for all targets in this single-node cluster).
+scrapeConfigs:
+  # Keep prometheus self-scrape.
+  prometheus:
+    enabled: true
 
-# Global scrape interval: 30s (sufficient for all 4 targets; see A9).
-serverFiles:
-  prometheus.yml:
-    global:
-      scrape_interval: 30s
-      evaluation_interval: 30s
+  # Disable all default kubernetes_sd discovery jobs and pushgateway.
+  kubernetes-api-servers:
+    enabled: false
+  kubernetes-nodes:
+    enabled: false
+  kubernetes-nodes-cadvisor:
+    enabled: false
+  kubernetes-service-endpoints:
+    enabled: false
+  kubernetes-service-endpoints-slow:
+    enabled: false
+  kubernetes-services:
+    enabled: false
+  kubernetes-pods:
+    enabled: false
+  kubernetes-pods-slow:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
 
-    scrape_configs:
-      # Prometheus self-scrape (always keep).
-      - job_name: prometheus
-        static_configs:
-          - targets:
-              - localhost:9090
+  # kube-state-metrics — static ClusterIP (MET-02).
+  kube-state-metrics:
+    enabled: true
+    static_configs:
+      - targets:
+          - kube-state-metrics.monitoring.svc:8080
 
-      # kube-state-metrics — static ClusterIP (MET-02).
-      - job_name: kube-state-metrics
-        static_configs:
-          - targets:
-              - kube-state-metrics.monitoring.svc:8080
+  # node-exporter — static ClusterIP (MET-02).
+  node-exporter:
+    enabled: true
+    static_configs:
+      - targets:
+          - node-exporter.monitoring.svc:9100
 
-      # node-exporter — static ClusterIP (MET-02).
-      - job_name: node-exporter
-        static_configs:
-          - targets:
-              - node-exporter.monitoring.svc:9100
+  # postgres-exporter — static ClusterIP (MET-03).
+  postgres-exporter:
+    enabled: true
+    static_configs:
+      - targets:
+          - postgres-exporter.monitoring.svc:9187
 
-      # postgres-exporter — static ClusterIP (MET-03).
-      - job_name: postgres-exporter
-        static_configs:
-          - targets:
-              - postgres-exporter.monitoring.svc:9187
-
-      # RabbitMQ native prometheus plugin — cross-namespace FQDN (MET-04).
-      # Phase 17 NetworkPolicy will add the explicit allow-prometheus-scrape rule.
-      - job_name: rabbitmq
-        static_configs:
-          - targets:
-              - rabbitmq.solid-stats-staging.svc:15692
+  # RabbitMQ native prometheus plugin — cross-namespace FQDN (MET-04).
+  # Phase 17 NetworkPolicy will add the explicit allow-prometheus-scrape rule.
+  rabbitmq:
+    enabled: true
+    static_configs:
+      - targets:
+          - rabbitmq.solid-stats-staging.svc:15692
