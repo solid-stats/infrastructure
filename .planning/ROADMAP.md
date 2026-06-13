@@ -194,7 +194,7 @@ Plans:
 
 - [x] 12-01-PLAN.md — Validation harness: resource-preflight.sh + validate-phase-12.sh + validate-staging.py registration (PREP-01) [wave 1]
 - [x] 12-02-PLAN.md — Bootstrap manifests: 01-obs-rbac.yaml (ns + obs-ci-deployer RBAC) + 02-priority-classes.yaml + CI glob exclusion (PREP-03, PREP-05) [wave 1]
-- [ ] 12-03-PLAN.md — Workload patches: priorityClassName app-critical on all 6 + Guaranteed QoS on postgres/server-2 (PREP-03, PREP-04) [wave 1]
+- [x] 12-03-PLAN.md — Workload patches: priorityClassName app-critical on all 6 + Guaranteed QoS on postgres/server-2 (PREP-03, PREP-04) [wave 1]
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -302,7 +302,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 9. web Runtime Wiring | v2.0 | 1/1 | Complete | 2026-06-12 |
 | 10. S3 Lifecycle & Retention | v2.0 | 3/3 | Complete | 2026-06-12 |
 | 11. Production Cutover | v2.0 | 2/2 | Complete | 2026-06-12 |
-| 12. Resource Protection & Obs Foundation | v3.0 | 2/5 | In Progress|  |
+| 12. Resource Protection & Obs Foundation | v3.0 | 3/5 | In Progress|  |
 | 13. Deploy Pipeline & Metrics Stack | v3.0 | 0/TBD | Not started | - |
 | 14. Public Edge & Grafana TLS | v3.0 | 0/TBD | Not started | - |
 | 15. Log Stack | v3.0 | 0/TBD | Not started | - |

@@ -4,13 +4,13 @@ milestone: v3.0
 milestone_name: Staging Observability Stack
 status: executing
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-13T16:16:31.319Z"
+last_updated: "2026-06-13T16:25:43.107Z"
 last_activity: 2026-06-13 -- Phase 12 execution started
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 5
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 12 (Resource Protection & Obs Foundation) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-06-13 -- Phase 12 execution started
 
@@ -71,6 +71,7 @@ Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 | Phase 11-production-cutover P02 | 25 | 2 tasks | 2 files |
 | Phase 12 P01 | 186 | 3 tasks | 3 files |
 | Phase 12 P02 | 296 | 3 tasks | 3 files |
+| Phase 12 P03 | 273 | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -107,6 +108,7 @@ Recent decisions affecting current work:
 - [Phase ?]: obs-ci-deployer Role is namespace-scoped to monitoring and error-tracking only — no access to solid-stats-staging enforced by k8s RBAC namespace boundary
 - [Phase ?]: globalDefault:false on both PriorityClasses — prevents retroactive re-prioritisation of unclassed pods (Pitfall 6)
 - [Phase ?]: daemonsets added to obs-ci-deployer Role for Grafana Alloy (Phase 15)
+- [Phase ?]: ASSUMED Guaranteed QoS values (postgres cpu 500m/1Gi, server-2 cpu 250m/512Mi); Plan 05 must confirm vs live kubectl top P95
 
 ### Pending Todos
 
@@ -187,7 +189,7 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-13T16:16:31.316Z
+Last session: 2026-06-13T16:25:24.492Z
 Stopped at: Completed 12-02-PLAN.md
 Resume file: None
 
