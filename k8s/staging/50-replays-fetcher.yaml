@@ -30,6 +30,7 @@ spec:
             app.kubernetes.io/name: replays-fetcher
             app.kubernetes.io/part-of: solid-stats
         spec:
+          priorityClassName: app-critical  # PREP-03: evict after obs-background under node pressure
           serviceAccountName: replays-fetcher
           automountServiceAccountToken: false
           restartPolicy: Never
