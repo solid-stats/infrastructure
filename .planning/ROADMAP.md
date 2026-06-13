@@ -251,7 +251,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 14-03-PLAN.md — author validate-obs-edge.py offline validator + docs/obs-edge-bootstrap.md runbook
+- [x] 14-03-PLAN.md — author validate-obs-edge.py offline validator + docs/obs-edge-bootstrap.md runbook
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -333,7 +333,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 11. Production Cutover | v2.0 | 2/2 | Complete | 2026-06-12 |
 | 12. Resource Protection & Obs Foundation | v3.0 | 5/5 | Complete   | 2026-06-13 |
 | 13. Deploy Pipeline & Metrics Stack | v3.0 | 6/6 | Complete   | 2026-06-13 |
-| 14. Public Edge & Grafana TLS | v3.0 | 2/4 | In Progress|  |
+| 14. Public Edge & Grafana TLS | v3.0 | 3/4 | In Progress|  |
 | 15. Log Stack | v3.0 | 0/TBD | Not started | - |
 | 16. Error Tracking (GlitchTip) | v3.0 | 0/TBD | Not started | - |
 | 17. Network Isolation & Stack Validation | v3.0 | 0/TBD | Not started | - |

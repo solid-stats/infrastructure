@@ -4,13 +4,13 @@ milestone: v3.0
 milestone_name: Staging Observability Stack
 status: executing
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-13T22:07:44.435Z"
+last_updated: "2026-06-13T22:14:20.563Z"
 last_activity: 2026-06-13 -- Phase 14 execution started
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 15
-  completed_plans: 13
+  completed_plans: 14
   percent: 29
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 14 (Public Edge & Grafana TLS) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-06-13 -- Phase 14 execution started
 
@@ -78,6 +78,7 @@ Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 | Phase 13 P04 | 18 | 3 tasks | 3 files |
 | Phase 14 P01 | 3 | 3 tasks | 1 files |
 | Phase 14 P02 | 2 | 2 tasks | 2 files |
+| Phase 14-public-edge-grafana-tls P03 | 12 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -125,6 +126,7 @@ Recent decisions affecting current work:
 - [Phase 14]: HTTP-first vhost pattern (RESEARCH Pattern 2 Option A): temp HTTP vhost install, certbot certonly -d, then TLS vhost swap; branch on cert-lineage existence
 - [Phase ?]: UPSTREAM_PLACEHOLDER token in grafana vhost upstream block — sed-substituted by bootstrap-obs-edge.sh; offline validator (14-03) asserts no hardcoded ClusterIP
 - [Phase ?]: errors. vhost: return 503 only, no upstream block — avoids nginx reload failure when GlitchTip not yet deployed (RESEARCH Pitfall 7)
+- [Phase ?]: Validator 4 check groups mirror validate-edge.py structure
 
 ### Pending Todos
 
@@ -205,7 +207,7 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-13T22:07:36.406Z
+Last session: 2026-06-13T22:14:09.939Z
 Stopped at: Completed 12-02-PLAN.md
 Resume file: None
 
