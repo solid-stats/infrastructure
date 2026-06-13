@@ -50,11 +50,14 @@ if missing:
     print(f"Missing required environment variables: {', '.join(sorted(set(missing)))}", file=sys.stderr)
     sys.exit(64)
 
-# Grafana admin password Secret — consumed by Grafana chart via adminExistingSecret/adminPasswordKey.
-# Key name must match chart value: adminPasswordKey: admin-password
+# Grafana admin Secret — consumed by the Grafana chart via admin.existingSecret +
+# userKey/passwordKey. Both keys are required: the chart's env (GF_SECURITY_ADMIN_USER/
+# _PASSWORD) and the dashboard-reload sidecar (REQ_USERNAME/REQ_PASSWORD) reference
+# admin-user AND admin-password — emitting only admin-password causes the pod to fail
+# with CreateContainerConfigError.
 grafana_secret = secret(
     "grafana-secrets",
-    {"admin-password": grafana_admin_password},
+    {"admin-user": "admin", "admin-password": grafana_admin_password},
 )
 
 # postgres-exporter DSN Secret — consumed by DATA_SOURCE_NAME env var in postgres-exporter.
