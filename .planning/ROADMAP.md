@@ -276,7 +276,7 @@ Plans:
 Plans:
 **Wave 1** *(authoring — autonomous)*
 
-- [ ] 15-01-PLAN.md — Render Loki (SingleBinary/filesystem/168h compactor retention) + validate-phase-15.sh harness with corrected metric names (LOG-01, LOG-03) [wave 1]
+- [x] 15-01-PLAN.md — Render Loki (SingleBinary/filesystem/168h compactor retention) + validate-phase-15.sh harness with corrected metric names (LOG-01, LOG-03) [wave 1]
 - [ ] 15-02-PLAN.md — Render Alloy DaemonSet (conservative 5-label River pipeline) + 03-alloy-rbac.yaml operator bootstrap + validate-obs-manifests.py ClusterRole guard (LOG-02) [wave 1]
 - [ ] 15-03-PLAN.md — Add loki+alloy Prometheus scrape targets + Loki as 2nd Grafana datasource, re-render 10-prometheus.yaml + 50-grafana.yaml (LOG-01, LOG-03) [wave 1]
 
@@ -347,7 +347,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 12. Resource Protection & Obs Foundation | v3.0 | 5/5 | Complete   | 2026-06-13 |
 | 13. Deploy Pipeline & Metrics Stack | v3.0 | 6/6 | Complete   | 2026-06-13 |
 | 14. Public Edge & Grafana TLS | v3.0 | 3/4 | In Progress|  |
-| 15. Log Stack | v3.0 | 0/4 | Not started | - |
+| 15. Log Stack | v3.0 | 1/4 | In Progress|  |
 | 16. Error Tracking (GlitchTip) | v3.0 | 0/TBD | Not started | - |
 | 17. Network Isolation & Stack Validation | v3.0 | 0/TBD | Not started | - |
 | 18. App-side Error SDK | v3.0 | 0/TBD | Not started | - |

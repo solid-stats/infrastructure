@@ -29,9 +29,9 @@ a trimmed, single-replica footprint (no VPS resize).
 
 ### Logs (LOG)
 
-- [ ] **LOG-01**: Loki runs in monolithic/filesystem mode with compactor-driven ~7-day retention on a right-sized PVC.
-- [ ] **LOG-02**: A Grafana Alloy DaemonSet collects cluster logs conservatively (labels limited to namespace/pod/container/app/job; no request bodies, no secrets).
-- [ ] **LOG-03**: Loki is a healthy Grafana datasource and a LogQL query returns recent `server-2` log lines.
+- [x] **LOG-01**: Loki runs in monolithic/filesystem mode with compactor-driven ~7-day retention on a right-sized PVC.
+- [x] **LOG-02**: A Grafana Alloy DaemonSet collects cluster logs conservatively (labels limited to namespace/pod/container/app/job; no request bodies, no secrets).
+- [x] **LOG-03**: Loki is a healthy Grafana datasource and a LogQL query returns recent `server-2` log lines.
 
 ### Error Tracking (ERR)
 
@@ -118,9 +118,9 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 | EDGE-02 | Phase 14 | Complete |
 | EDGE-03 | Phase 14 | Complete |
 | MET-07 | Phase 14 | Complete |
-| LOG-01 | Phase 15 | Pending |
-| LOG-02 | Phase 15 | Pending |
-| LOG-03 | Phase 15 | Pending |
+| LOG-01 | Phase 15 | Complete |
+| LOG-02 | Phase 15 | Complete |
+| LOG-03 | Phase 15 | Complete |
 | ERR-01 | Phase 16 | Pending |
 | ERR-02 | Phase 16 | Pending |
 | ERR-03 | Phase 16 | Pending |

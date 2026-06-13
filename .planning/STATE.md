@@ -4,13 +4,13 @@ milestone: v3.0
 milestone_name: Staging Observability Stack
 status: executing
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-13T22:53:43.212Z"
+last_updated: "2026-06-13T23:08:45.476Z"
 last_activity: 2026-06-13 -- Phase 15 execution started
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 19
-  completed_plans: 14
+  completed_plans: 15
   percent: 29
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 15 (Log Stack) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 15
+Plan: 2 of 4
+Status: Ready to execute
 Last activity: 2026-06-13 -- Phase 15 execution started
 
 Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
@@ -79,6 +79,7 @@ Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 | Phase 14 P01 | 3 | 3 tasks | 1 files |
 | Phase 14 P02 | 2 | 2 tasks | 2 files |
 | Phase 14-public-edge-grafana-tls P03 | 12 | 2 tasks | 2 files |
+| Phase 15-log-stack P01 | 35 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -127,6 +128,9 @@ Recent decisions affecting current work:
 - [Phase ?]: UPSTREAM_PLACEHOLDER token in grafana vhost upstream block — sed-substituted by bootstrap-obs-edge.sh; offline validator (14-03) asserts no hardcoded ClusterIP
 - [Phase ?]: errors. vhost: return 503 only, no upstream block — avoids nginx reload failure when GlitchTip not yet deployed (RESEARCH Pitfall 7)
 - [Phase ?]: Validator 4 check groups mirror validate-edge.py structure
+- [Phase ?]: Loki SingleBinary: replication_factor 1 + chunksCache/resultsCache disabled to prevent OOM
+- [Phase ?]: Corrected metric names: loki_boltdb_shipper_compactor_running + loki_write_sent_entries_total
+- [Phase ?]: ClusterRole stripped from 70-loki.yaml via Python YAML doc-split (obs-ci-deployer namespace-scoped, same as Phase 13 Prometheus)
 
 ### Pending Todos
 
@@ -207,7 +211,7 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-13T22:14:09.939Z
+Last session: 2026-06-13T23:07:46.582Z
 Stopped at: Completed 12-02-PLAN.md
 Resume file: None
 
