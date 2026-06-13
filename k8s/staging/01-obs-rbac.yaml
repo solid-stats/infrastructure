@@ -218,3 +218,170 @@ subjects:
   - kind: ServiceAccount
     name: prometheus
     namespace: monitoring
+---
+# ---------------------------------------------------------------------------
+# kube-state-metrics runtime RBAC — operator-applied, NOT from CI.
+# Extracted from 20-kube-state-metrics.yaml (Phase 13 helm render) because
+# obs-ci-deployer is namespace-scoped and cannot create ClusterRole.
+# Applied once by operator alongside the rest of this file.
+# ---------------------------------------------------------------------------
+# Source: kube-state-metrics/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    helm.sh/chart: kube-state-metrics-7.4.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: kube-state-metrics
+    app.kubernetes.io/version: "2.19.1"
+  name: kube-state-metrics
+rules:
+- apiGroups: ["certificates.k8s.io"]
+  resources: ["certificatesigningrequests"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["list", "watch"]
+- apiGroups: ["batch"]
+  resources: ["cronjobs"]
+  verbs: ["list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["daemonsets"]
+  verbs: ["list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["list", "watch"]
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["list", "watch"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
+  verbs: ["list", "watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["list", "watch"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["list", "watch"]
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["limitranges"]
+  verbs: ["list", "watch"]
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["mutatingwebhookconfigurations"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["list", "watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["persistentvolumes"]
+  verbs: ["list", "watch"]
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["replicasets"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["replicationcontrollers"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["resourcequotas"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets"]
+  verbs: ["list", "watch"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["list", "watch"]
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["validatingwebhookconfigurations"]
+  verbs: ["list", "watch"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["volumeattachments"]
+  verbs: ["list", "watch"]
+---
+# Source: kube-state-metrics/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    helm.sh/chart: kube-state-metrics-7.4.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: kube-state-metrics
+    app.kubernetes.io/version: "2.19.1"
+  name: kube-state-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-state-metrics
+subjects:
+- kind: ServiceAccount
+  name: kube-state-metrics
+  namespace: monitoring
+---
+# ---------------------------------------------------------------------------
+# Grafana runtime RBAC — operator-applied, NOT from CI.
+# Extracted from 50-grafana.yaml (Phase 13 helm render) because
+# obs-ci-deployer is namespace-scoped and cannot create ClusterRole.
+# Applied once by operator alongside the rest of this file.
+# ---------------------------------------------------------------------------
+# Source: grafana/templates/clusterrole.yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "12.3.1"
+  name: grafana-clusterrole
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "watch", "list"]
+---
+# Source: grafana/templates/clusterrolebinding.yaml
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: grafana-clusterrolebinding
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "12.3.1"
+subjects:
+  - kind: ServiceAccount
+    name: grafana
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: grafana-clusterrole
+  apiGroup: rbac.authorization.k8s.io
