@@ -270,7 +270,20 @@ Plans:
   2. A Grafana Alloy DaemonSet collects cluster logs with a conservative label set (namespace/pod/container/app/job only — no request bodies, no secrets) and reports `alloy_logs_entries_total > 0`.
   3. Loki is a healthy Grafana datasource and a LogQL query in Grafana Explore returns recent `server-2` log lines.
 
-**Plans**: TBD
+> **Metric-name correction (15-RESEARCH):** success criteria 1 & 2 above cite `loki_compactor_runs_total` / `alloy_logs_entries_total`, which do NOT exist in Loki/Alloy source. The real proofs are `loki_boltdb_shipper_compactor_running == 1` and `loki_write_sent_entries_total > 0`. Validation uses the corrected names.
+
+**Plans**: 4 plans
+Plans:
+**Wave 1** *(authoring — autonomous)*
+
+- [ ] 15-01-PLAN.md — Render Loki (SingleBinary/filesystem/168h compactor retention) + validate-phase-15.sh harness with corrected metric names (LOG-01, LOG-03) [wave 1]
+- [ ] 15-02-PLAN.md — Render Alloy DaemonSet (conservative 5-label River pipeline) + 03-alloy-rbac.yaml operator bootstrap + validate-obs-manifests.py ClusterRole guard (LOG-02) [wave 1]
+- [ ] 15-03-PLAN.md — Add loki+alloy Prometheus scrape targets + Loki as 2nd Grafana datasource, re-render 10-prometheus.yaml + 50-grafana.yaml (LOG-01, LOG-03) [wave 1]
+
+**Wave 2** *(live apply + validation — operator-gated, autonomous:false)*
+
+- [ ] 15-04-PLAN.md — Operator-apply alloy ClusterRole + live-apply obs stack + validate-phase-15.sh + right-size from kubectl top (LOG-01, LOG-02, LOG-03) [wave 2]
+
 **UI hint**: yes
 
 #### Phase 16: Error Tracking (GlitchTip)
@@ -334,7 +347,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 12. Resource Protection & Obs Foundation | v3.0 | 5/5 | Complete   | 2026-06-13 |
 | 13. Deploy Pipeline & Metrics Stack | v3.0 | 6/6 | Complete   | 2026-06-13 |
 | 14. Public Edge & Grafana TLS | v3.0 | 3/4 | In Progress|  |
-| 15. Log Stack | v3.0 | 0/TBD | Not started | - |
+| 15. Log Stack | v3.0 | 0/4 | Not started | - |
 | 16. Error Tracking (GlitchTip) | v3.0 | 0/TBD | Not started | - |
 | 17. Network Isolation & Stack Validation | v3.0 | 0/TBD | Not started | - |
 | 18. App-side Error SDK | v3.0 | 0/TBD | Not started | - |
