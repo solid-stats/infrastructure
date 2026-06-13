@@ -1,0 +1,96 @@
+name: Deploy observability stack
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+# Independent concurrency group — separate from infrastructure-staging-deploy.
+# An obs deploy failure does NOT block or cancel the runtime CD (DEP-03).
+concurrency:
+  group: infrastructure-obs-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  K8S_NAMESPACE: monitoring
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate obs manifests
+        run: |
+          set -euo pipefail
+          test -d k8s/observability
+          find k8s/observability -name '*.yaml' | sort
+          python3 scripts/validate-obs-manifests.py
+
+  deploy:
+    name: Deploy to k3s (obs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [validate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install WireGuard tools
+        run: sudo apt-get update && sudo apt-get install -y wireguard-tools
+
+      - name: Bring up WireGuard tunnel
+        env:
+          WG_PRIVATE_KEY: ${{ secrets.WG_PRIVATE_KEY }}
+          WG_PEER_PUBLIC_KEY: ${{ secrets.WG_PEER_PUBLIC_KEY }}
+          WG_ENDPOINT: ${{ secrets.WG_ENDPOINT }}
+          WG_LOCAL_IP: 10.8.0.3/32
+        run: bash scripts/wg-tunnel-up.sh
+
+      - name: Setup kubeconfig (obs-ci-deployer)
+        env:
+          K8S_TOKEN: ${{ secrets.K8S_OBS_TOKEN }}
+          K8S_CA_CERT: ${{ secrets.K8S_CA_CERT }}
+          K8S_NAMESPACE: monitoring
+          K8S_USER_NAME: obs-ci-deployer
+          K8S_CONTEXT_NAME: obs-k3s-staging
+        run: bash scripts/kubeconfig-setup.sh
+
+      - name: Render and apply obs secrets
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          PG_MONITOR_PASSWORD: ${{ secrets.PG_MONITOR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp)
+          trap 'rm -f "$tmp"' EXIT
+          python3 scripts/render-obs-secrets.py > "$tmp"
+          kubectl apply -n monitoring -f "$tmp"
+
+      - name: Apply obs manifests
+        run: |
+          set -euo pipefail
+          # Apply top-level k8s/observability/*.yaml only.
+          # values/ and dashboards/ are inputs to helm template; they are not applied directly.
+          # 60-grafana-dashboards.yaml ships dashboard ConfigMaps (vendored JSONs).
+          find k8s/observability -maxdepth 1 -name '*.yaml' | sort \
+            | sed 's/^/-f /' | xargs kubectl apply -n monitoring
+
+      - name: Verify rollouts
+        run: |
+          set -euo pipefail
+          kubectl -n monitoring rollout status deployment/prometheus-server --timeout=300s
+          kubectl -n monitoring rollout status deployment/grafana --timeout=300s
+          kubectl -n monitoring rollout status deployment/kube-state-metrics --timeout=120s
+          kubectl -n monitoring rollout status daemonset/node-exporter --timeout=120s
+          kubectl -n monitoring rollout status deployment/postgres-exporter --timeout=120s
+          echo "All obs workloads rolled out successfully"
