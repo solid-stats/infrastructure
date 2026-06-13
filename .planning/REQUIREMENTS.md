@@ -50,7 +50,7 @@ a trimmed, single-replica footprint (no VPS resize).
 - [ ] **DEP-01**: Observability manifests are rendered with `helm template` and committed under `k8s/observability/` (git as source of truth; no in-cluster helm).
 - [ ] **DEP-02**: A separate `deploy-observability.yml` CI workflow applies them over the existing WireGuard + SA-token path, with its own concurrency group, independent of runtime CD.
 - [ ] **DEP-03**: The runtime deploy path does not depend on the observability deploy succeeding.
-- [ ] **DEP-04**: All observability secrets (Grafana admin, GlitchTip secret-key/superuser/DB, exporter DSNs) are rendered from GitHub environment secrets into k8s Secrets — no secret values in git.
+- [x] **DEP-04**: All observability secrets (Grafana admin, GlitchTip secret-key/superuser/DB, exporter DSNs) are rendered from GitHub environment secrets into k8s Secrets — no secret values in git.
 
 ### Network Isolation (NET)
 
@@ -107,7 +107,7 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 | DEP-01 | Phase 13 | Pending |
 | DEP-02 | Phase 13 | Pending |
 | DEP-03 | Phase 13 | Pending |
-| DEP-04 | Phase 13 | Pending |
+| DEP-04 | Phase 13 | Complete |
 | MET-01 | Phase 13 | Pending |
 | MET-02 | Phase 13 | Pending |
 | MET-03 | Phase 13 | Pending |
