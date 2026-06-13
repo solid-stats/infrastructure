@@ -34,6 +34,7 @@ spec:
         app.kubernetes.io/name: web
         app.kubernetes.io/part-of: solid-stats
     spec:
+      priorityClassName: app-critical  # PREP-03: runtime workload — must outrank obs-background under node pressure
       serviceAccountName: web
       automountServiceAccountToken: false
       imagePullSecrets:

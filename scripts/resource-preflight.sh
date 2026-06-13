@@ -25,7 +25,9 @@ out_file="${OUTPUT_DIR}/resource-preflight-${snapshot_ts}.txt"
   echo "namespace=${NAMESPACE}"
   echo ""
   echo "--- Node allocatable vs allocated ---"
-  kubectl describe node
+  # Each probe is independently fault-tolerant: a single failing query must not abort
+  # the whole snapshot under `set -e` (the snapshot is the deliverable).
+  kubectl describe node || echo "(kubectl describe node failed)"
   echo ""
   echo "--- Node resource usage (live) ---"
   kubectl top nodes || echo "(metrics-server not available)"
@@ -35,12 +37,16 @@ out_file="${OUTPUT_DIR}/resource-preflight-${snapshot_ts}.txt"
   echo ""
   echo "--- Pod resource requests/limits (namespace) ---"
   kubectl -n "${NAMESPACE}" get pods \
-    -o custom-columns='NAME:.metadata.name,QOS:.status.qosClass,CPU_REQ:.spec.containers[*].resources.requests.cpu,CPU_LIM:.spec.containers[*].resources.limits.cpu,MEM_REQ:.spec.containers[*].resources.requests.memory,MEM_LIM:.spec.containers[*].resources.limits.memory'
+    -o custom-columns='NAME:.metadata.name,QOS:.status.qosClass,CPU_REQ:.spec.containers[*].resources.requests.cpu,CPU_LIM:.spec.containers[*].resources.limits.cpu,MEM_REQ:.spec.containers[*].resources.requests.memory,MEM_LIM:.spec.containers[*].resources.limits.memory' \
+    || echo "(pod query failed)"
   echo ""
-  echo "--- Node disk usage ---"
+  # NOTE: df -h / free -h report the host *where this script runs*. Run it ON the
+  # k3s node (e.g. over SSH) for the node's real disk/memory; run from a WireGuard
+  # operator workstation and these reflect the workstation, not the node.
+  echo "--- Disk usage (host running this script) ---"
   df -h
   echo ""
-  echo "--- Host memory and swap ---"
+  echo "--- Memory and swap (host running this script) ---"
   free -h
 } | tee "${out_file}"
 

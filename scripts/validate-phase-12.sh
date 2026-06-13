@@ -66,6 +66,14 @@ for workload in postgres server-2 replay-parser-2 rabbitmq; do
   assert "${workload} priorityClassName" "$pc" "app-critical"
 done
 
+# web runs as a Deployment that may be scaled to 0 (no pod to inspect), so assert
+# the controller's pod template carries the priorityClassName. A runtime workload
+# without it would default to priority 0 — BELOW obs-background (100) — and be
+# evicted before observability pods, inverting the protection (CR-01).
+web_pc="$(kubectl -n "${namespace}" get deployment web \
+  -o jsonpath='{.spec.template.spec.priorityClassName}' 2>/dev/null || true)"
+assert "web priorityClassName (deployment template)" "$web_pc" "app-critical"
+
 # ---------------------------------------------------------------------------
 # PREP-04: postgres pod QoS == Guaranteed
 # ---------------------------------------------------------------------------
