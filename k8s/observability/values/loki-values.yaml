@@ -110,5 +110,16 @@ monitoring:
   lokiCanary:
     enabled: false
 
+# Disable lokiCanary at top-level (chart v7.0.0 requires this key too)
+lokiCanary:
+  enabled: false
+
+# Disable memcached caches (unnecessary on single-node staging; adds ~10Gi RAM pressure)
+chunksCache:
+  enabled: false
+
+resultsCache:
+  enabled: false
+
 test:
   enabled: false
