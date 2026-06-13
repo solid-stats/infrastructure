@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: "All 6 phases EXECUTED. Phases 06,07,08,09 complete (07 & 08 live-verified). Phases 10 & 11 human_needed — consequential live steps (apply prod S3 retention; flip prod traffic) operator-gated. Autonomous run done; awaiting operator validations."
-last_updated: "2026-06-13T02:15:00Z"
-last_activity: 2026-06-13 -- Phase 11 (production cutover) executed + offline-verified; live flip operator-gated. All 6 v2.0 phases built.
+stopped_at: "All 6 phases EXECUTED. Phases 06,07,08,09 complete — 06,07,08 now LIVE-VERIFIED (06 CD proven end-to-end on staging 2026-06-13: PR dry-run + master deploy green from real runners; 6 latent bugs fixed). Phases 10 & 11 human_needed — consequential live steps (apply prod S3 retention; flip prod traffic) operator-gated."
+last_updated: "2026-06-13T04:15:00Z"
+last_activity: 2026-06-13 -- Phase 06 (kubectl-native CD) LIVE-VERIFIED on staging cluster; CI WireGuard peer provisioned + persisted; 6 latent CD bugs fixed and merged to master.
 progress:
   total_phases: 6
   completed_phases: 4
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Milestone v2.0: ALL 6 PHASES EXECUTED. Status by phase:
-- Phase 06 (kubectl-native CD): COMPLETE ✓ (live CI deploy deferred — human_needed, see 06-VERIFICATION)
+- Phase 06 (kubectl-native CD): COMPLETE ✓ + LIVE-VERIFIED on staging (2026-06-13) — PR #1 dry-run + master-push deploy green from real GitHub runners (WG handshake, ci-deployer SA auth, server-side dry-run, rollout of 5 workloads); 6 latent script/workflow bugs found & fixed. See 06-VERIFICATION
 - Phase 07 (Edge Automation): COMPLETE ✓ + LIVE-VERIFIED on staging VPS (all 6 UAT items; 2 live bugs fixed)
 - Phase 08 (Automated Restore Drill): COMPLETE ✓ + LIVE-VERIFIED (drill PASS on cluster; postgres-0 untouched; 26 tables/303267 rows restored to scratch)
 - Phase 09 (web Runtime Wiring): COMPLETE ✓ (0-replica stub; server-side dry-run accepted by cluster; CD applies the slot)
@@ -104,10 +104,16 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- Phase 6 (human_needed, DEFERRED): live WireGuard handshake from a real GitHub
-  runner + SA-token auth + actual `kubectl apply`/`rollout` can only be confirmed
-  by a real CI run on `master` — this environment is VPN-isolated from the cluster.
-  Confirm on the first real master deploy. See `06-VERIFICATION.md`.
+- Phase 6 (RESOLVED 2026-06-13): live WireGuard handshake from a real GitHub runner
+  + ci-deployer SA-token auth + real `kubectl apply`/`rollout` CONFIRMED. Cluster
+  became reachable; operator bootstrapped `01-ci-rbac.yaml` + a dedicated CI WG peer
+  (10.8.0.3, persisted in wg0.conf) + set staging-env secrets (WG_*/K8S_*/GHCR_*).
+  PR #1 dry-run green; master deploy green (5 workloads rolled out). Found+fixed 6
+  latent CD bugs: WG key via /dev/stdin not process-sub (sudo FD), handshake
+  init (keepalive+prime), kernel route to tunnel IP, per-file `-f` for apply,
+  kubeconfig `--embed-certs`, exclude `00-namespace.yaml` from CD glob. See
+  `06-VERIFICATION.md` (Live CI Verification). Follow-up: doc-drift cleanup in
+  docs/staging.md, README.md, AGENTS.md (CD_SSH_* / deploy-staging.sh references).
 
 - Phase 7 (RESOLVED 2026-06-13): all 6 live-VPS UAT checks PASSED on
   root@89.223.124.200 (nginx -t, scoped certbot --dry-run, OnFailure drop-in, ufw
@@ -141,6 +147,7 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
+- Phase 6 (CD) — ✓ ALL RESOLVED 2026-06-13 (live CI): 51820/udp egress from a real runner works (handshake completed), the explicit SA token Secret + namespace-scoped RBAC authenticate and cover `rollout status`, and TLS to `10.8.0.1:6443` succeeds (serving-cert SAN OK — no TLS error on apply/rollout). Original concerns kept for history:
 - Phase 6 (CD): WireGuard handshake from the ephemeral runner must be gated before any `kubectl`; 51820/udp outbound from GitHub-hosted runners is assumed and must be validated early.
 - Phase 6 (CD): k8s ≥1.24 SA has no auto-token Secret — the `kubernetes.io/service-account-token` Secret must be created explicitly; serving cert must carry `10.8.0.1` in its SANs.
 - Phase 6 (CD): RBAC must be namespace-scoped yet still cover `rollout status`; verify with `auth can-i --list` and an SA-impersonated dry-run.

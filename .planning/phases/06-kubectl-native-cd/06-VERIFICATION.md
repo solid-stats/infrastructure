@@ -1,13 +1,15 @@
 ---
 phase: 06-kubectl-native-cd
 verified: 2026-06-12T00:00:00Z
-status: human_needed
+live_verified: 2026-06-13T04:08:00Z
+status: verified
 score: 6/6 must-have groups verified
 overrides_applied: 0
 human_verification:
   - test: "Trigger the deploy workflow from a real GitHub Actions runner (PR for validate+dry-run, or a master push / workflow_dispatch for full deploy)."
     expected: "wg-tunnel-up.sh completes the WireGuard handshake within the timeout, kubeconfig-setup.sh reports a non-anonymous ci-deployer identity (not system:anonymous), dry-run apply succeeds, and on master the four workloads reach rolled-out status."
     why_human: "The WireGuard handshake against the live VPS, 6443 reachability through the tunnel, SA-token authentication, and the real kubectl apply / rollout can only be exercised by an actual CI run against the unreachable staging cluster. This environment is VPN-isolated from the cluster and must not contact it."
+    resolved: "2026-06-13 — RESOLVED. Cluster became reachable from the operator workstation; operator bootstrapped ci-deployer RBAC + a dedicated CI WireGuard peer (10.8.0.3) and set the staging-env secrets. PR #1 dry-run job went green (WG handshake from a real runner + ci-deployer SA-token auth + server-side apply of every manifest); the master-push deploy job went green (render+apply secrets, apply manifests, rollout of postgres/rabbitmq/server-2/replay-parser-2/web, services + CronJobs verified). Six latent script/workflow bugs — never caught because the path had only been offline-verified — were found and fixed during the run (see Live CI Verification section)."
 warnings:
   - file: "docs/staging.md"
     issue: "Operator-facing doc still lists CD_SSH_PRIVATE_KEY/HOST/PORT/USER as required GitHub secrets (lines 66-69) and instructs deploy via the deleted ./scripts/deploy-staging.sh (lines 132, 145). It does not list the new WG_PRIVATE_KEY / WG_PEER_PUBLIC_KEY / WG_ENDPOINT / K8S_TOKEN / K8S_CA_CERT secrets. Documentation drift only — CI does not read this file, so it does not break the CD path. Outside the declared must-haves of all four plans (none scope docs/staging.md). README.md and AGENTS.md also still mention scripts/deploy-staging.sh."
@@ -18,9 +20,9 @@ warnings:
 # Phase 06: kubectl-native CD Verification Report
 
 **Phase Goal:** CI deploys staging by running `kubectl` on the runner over a WireGuard tunnel as a namespace-scoped ServiceAccount, with all SSH transport removed and the operator-bootstrap boundary documented.
-**Verified:** 2026-06-12
-**Status:** human_needed
-**Re-verification:** No — initial verification
+**Verified:** 2026-06-12 (code) · 2026-06-13 (live CI)
+**Status:** verified — live CD run confirmed end-to-end on the staging cluster
+**Re-verification:** 2026-06-13 — the human-verification item was executed and passed; 6 latent bugs fixed
 
 ## Goal Achievement
 
@@ -88,7 +90,7 @@ warnings:
 | Helper scripts are syntactically valid bash | `bash -n scripts/wg-tunnel-up.sh && bash -n scripts/kubeconfig-setup.sh` | both OK | ✓ PASS |
 | No `CD_SSH_*` / ssh / scp transport in workflow | grep | only app `REPLAYS_FETCHER_REPLAY_SOURCE_SSH_*` (excluded) | ✓ PASS |
 | `scripts/deploy-staging.sh` removed | `ls`, git diff-filter=D | absent, deleted in 5379709 | ✓ PASS |
-| Live WG handshake + SA auth + real deploy | (cannot run — VPN-isolated cluster) | n/a | ? SKIP → human |
+| Live WG handshake + SA auth + real deploy | PR #1 dry-run job + master-push deploy job on real GitHub runners | dry-run green (handshake + SA auth + server-side apply); master deploy green (5 workloads rolled out) | ✓ PASS (2026-06-13) |
 
 ### Requirements Coverage
 
@@ -109,13 +111,33 @@ warnings:
 | docs/staging.md | 132, 145 | Points to deleted `./scripts/deploy-staging.sh` | ⚠️ Warning | Doc drift; broken instruction. CI unaffected. |
 | README.md / AGENTS.md | 22/57, 114 | Mention deleted `scripts/deploy-staging.sh` | ℹ️ Info | Doc drift, non-load-bearing. |
 
-### Human Verification Required
+### Live CI Verification (2026-06-13) — RESOLVED
 
-#### 1. Live WireGuard handshake + SA auth + deploy (CI run)
+The deferred human-verification item was executed end-to-end. The staging cluster became reachable from the operator workstation, so the operator could bootstrap the one-time prerequisites and drive the pipeline from real GitHub runners.
 
-**Test:** Trigger the deploy workflow from a real GitHub Actions runner — open a PR (validate + dry-run path) and/or push to `master` / `workflow_dispatch` (full deploy path).
-**Expected:** `wg-tunnel-up.sh` completes the handshake within the timeout and confirms `6443` reachability; `kubeconfig-setup.sh` reports the `ci-deployer` identity (not `system:anonymous`); server-side dry-run apply succeeds; on `master`, the four workloads (postgres, rabbitmq, server-2, replay-parser-2) reach rolled-out status with no `Unauthorized`/`Forbidden`.
-**Why human:** The WireGuard handshake against the live VPS, tunnel-only 6443 reachability, SA-token authentication, and the real `kubectl apply`/`rollout status` can only be exercised by an actual CI run. This environment is VPN-isolated from the cluster and must not contact it.
+**Operator prerequisites (out-of-band, one-time):**
+- Applied `k8s/staging/01-ci-rbac.yaml` → `ci-deployer` SA + token Secret + namespace Role/RoleBinding (impersonated `auth can-i` → yes for deployments/secrets/pods).
+- Added a **dedicated** CI WireGuard peer at `10.8.0.3/32` on the staging VPS (distinct from the operator laptop's `10.8.0.2`), now persisted in `/etc/wireguard/wg0.conf` so it survives reboot.
+- Set the `staging` environment secrets: `WG_PRIVATE_KEY`, `WG_PEER_PUBLIC_KEY`, `WG_ENDPOINT` (`89.223.124.200:51820`), `K8S_TOKEN`, `K8S_CA_CERT`, `GHCR_USERNAME`, `GHCR_TOKEN`.
+
+**Result:**
+- **PR #1** dry-run job → green: WireGuard handshake from a real runner, `ci-deployer` SA-token auth (non-anonymous), `kubectl apply --dry-run=server` of every `k8s/staging/*.yaml` (excl. `00-namespace.yaml` + `01-ci-rbac.yaml`). Deploy job correctly skipped on PR.
+- **master push** deploy job → green: render + apply staging secrets, apply manifests, `rollout status` for **postgres, rabbitmq, server-2, replay-parser-2, web** (web is the Phase 9 0-replica slot, created), services + CronJobs verified.
+
+**Six latent bugs found and fixed during the run** (the path had only ever been offline-verified, never run against a live cluster):
+
+| # | Bug | Fix | Commit |
+| - | --- | --- | ------ |
+| 1 | `wg set ... private-key <(printf …)` → `fopen: No such file` — `sudo` closes inherited FDs (`closefrom=3`), so the process-substitution `/dev/fd/NN` path vanishes | feed the key via `/dev/stdin` (FD 0 survives sudo; key still off-disk) | `f7c44e8` |
+| 2 | Handshake never initiated (WireGuard is lazy — no traffic, no init) → 10s timeout | `persistent-keepalive 25` on the peer + prime a packet to `10.8.0.1:6443` inside the wait loop | `3841680` |
+| 3 | No kernel route to the tunnel IP — raw `wg set` adds no route, and the `/32` local addr adds no subnet route (handshake still succeeds endpoint-to-endpoint) | `ip route replace <allowed-ip> dev wg0` after link-up | `bf155d3` |
+| 4 | `xargs kubectl apply … -f` appended all filenames after one `-f` → "Unexpected args" | prefix each path with `-f ` via `sed` so every manifest gets its own flag (both jobs) | `091bcce` |
+| 5 | kubeconfig stored the CA **path**, but the temp CA file is rm'd by the script's EXIT trap → later steps `no such file` (in-script `auth whoami` passed only because the trap had not fired) | `--embed-certs=true` so the CA is inlined into the kubeconfig | `d701f6d` |
+| 6 | `00-namespace.yaml` Forbidden — the namespace-scoped `ci-deployer` Role cannot get/create the cluster-scoped Namespace (by design) | exclude `00-namespace.yaml` from both apply globs, alongside `01-ci-rbac.yaml` | `c95daf4` |
+
+Setup commit `44aed3d` pins the CI runner to the dedicated `WG_LOCAL_IP=10.8.0.3/32`. All seven commits were verified on master (PR #1 → rebase-merge); the master deploy run re-ran the full pipeline green.
+
+**Remaining follow-up (non-blocking, unchanged):** the doc-drift warning below (`docs/staging.md` / `README.md` / `AGENTS.md` still cite removed `CD_SSH_*` secrets and the deleted `scripts/deploy-staging.sh`) is still open.
 
 ### Gaps Summary
 
@@ -123,9 +145,9 @@ No blocking gaps. All 17 plan must-haves and all 5 ROADMAP success criteria are 
 
 One non-blocking **warning**: `docs/staging.md` still documents the removed `CD_SSH_*` secrets and the deleted `./scripts/deploy-staging.sh`, and omits the new `WG_*` / `K8S_TOKEN` / `K8S_CA_CERT` secrets — operator-facing documentation drift that no plan's must-haves scoped. It does not affect the CD path (CI does not read it) but should be cleaned up as follow-up. `README.md` and `AGENTS.md` carry the same stale script reference.
 
-Status is **human_needed** because the live WireGuard handshake and real deploy can only be confirmed by an actual CI run against the staging cluster.
+Status is **verified**: as of 2026-06-13 the live WireGuard handshake, SA-token auth, server-side dry-run, and a real master-push deploy (with rollouts) were all confirmed by actual CI runs against the staging cluster. The previously-deferred human-verification item is resolved; six latent bugs surfaced by the first live runs were fixed (see Live CI Verification). Only the documentation-drift warning remains as non-blocking follow-up.
 
 ---
 
-_Verified: 2026-06-12_
-_Verifier: Claude (gsd-verifier)_
+_Verified: 2026-06-12 (code) · 2026-06-13 (live CI)_
+_Verifier: Claude (gsd-verifier); live run driven by operator + Claude_
