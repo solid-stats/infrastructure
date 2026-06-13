@@ -7,6 +7,24 @@ metadata:
     app.kubernetes.io/name: rabbitmq
     app.kubernetes.io/part-of: solid-stats
 ---
+# ConfigMap: rabbitmq enabled_plugins
+# Value must be an Erlang term list ending with a period (Pitfall 5).
+# Enables management (pre-existing) + native prometheus plugin (MET-04).
+# Mounted into the rabbitmq container at /etc/rabbitmq/enabled_plugins via subPath.
+# NOTE: applying this manifest triggers a rolling restart of rabbitmq-0 (~30s AMQP
+# downtime, acceptable for staging). Apply is operator-gated in plan 13-06.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-enabled-plugins
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: rabbitmq
+    app.kubernetes.io/part-of: solid-stats
+data:
+  enabled_plugins: |
+    [rabbitmq_management,rabbitmq_prometheus].
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -16,6 +34,7 @@ metadata:
     app.kubernetes.io/name: rabbitmq
     app.kubernetes.io/part-of: solid-stats
 spec:
+  # ClusterIP only — port 15692 not exposed externally (T-13-13).
   ports:
     - name: amqp
       port: 5672
@@ -23,6 +42,9 @@ spec:
     - name: management
       port: 15672
       targetPort: management
+    - name: prometheus
+      port: 15692
+      targetPort: prometheus
   selector:
     app.kubernetes.io/name: rabbitmq
 ---
@@ -80,6 +102,8 @@ spec:
               containerPort: 5672
             - name: management
               containerPort: 15672
+            - name: prometheus
+              containerPort: 15692
           env:
             - name: RABBITMQ_DEFAULT_USER
               value: solid
@@ -110,6 +134,13 @@ spec:
           volumeMounts:
             - name: rabbitmq-data
               mountPath: /var/lib/rabbitmq
+            - name: enabled-plugins
+              mountPath: /etc/rabbitmq/enabled_plugins
+              subPath: enabled_plugins
+      volumes:
+        - name: enabled-plugins
+          configMap:
+            name: rabbitmq-enabled-plugins
   volumeClaimTemplates:
     - metadata:
         name: rabbitmq-data
