@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
-status: complete
-stopped_at: "v2 IN-SCOPE WORK COMPLETE (6/6 phases). 06,07,08 LIVE-VERIFIED; 09 web slot wired; 10 retention APPLIED on staging 2026-06-13; 11 cutover MECHANISM LIVE-VERIFIED (option B: SELF_TEST rollback, DRY_RUN gates both ways + preview, live edge marker + nginx -t) — the live PRODUCTION traffic flip is deferred by scope (AGENTS.md: v2 = staging only). Close-out remaining: push .planning commits; 2 follow-ups → v2.x; optional /gsd-complete-milestone."
-last_updated: "2026-06-13T06:30:00Z"
-last_activity: 2026-06-13 -- Phase 11 cutover MECHANISM live-verified without flipping prod (rollback + gates + preview + live edge readiness). All 6 v2 phases' in-scope work complete.
+status: Awaiting next milestone
+stopped_at: "v2.0 SHIPPED 2026-06-13 — 6/6 phases complete (06/07/08 live-verified; 09 web slot; 10 retention applied live; 11 cutover mechanism live-verified, prod flip deferred by scope). Archived to .planning/milestones/v2.0-*."
+last_updated: "2026-06-13T06:57:37.672Z"
+last_activity: 2026-06-13 — Milestone v2.0 completed and archived
 progress:
   total_phases: 6
   completed_phases: 6
@@ -25,17 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 ## Current Position
 
-Milestone v2.0: ALL 6 PHASES EXECUTED. Status by phase:
-- Phase 06 (kubectl-native CD): COMPLETE ✓ + LIVE-VERIFIED on staging (2026-06-13) — PR #1 dry-run + master-push deploy green from real GitHub runners (WG handshake, ci-deployer SA auth, server-side dry-run, rollout of 5 workloads); 6 latent script/workflow bugs found & fixed. See 06-VERIFICATION
-- Phase 07 (Edge Automation): COMPLETE ✓ + LIVE-VERIFIED on staging VPS (all 6 UAT items; 2 live bugs fixed)
-- Phase 08 (Automated Restore Drill): COMPLETE ✓ + LIVE-VERIFIED (drill PASS on cluster; postgres-0 untouched; 26 tables/303267 rows restored to scratch)
-- Phase 09 (web Runtime Wiring): COMPLETE ✓ (0-replica stub; server-side dry-run accepted by cluster; CD applies the slot)
-- Phase 10 (S3 Lifecycle & Retention): COMPLETE ✓ + LIVE (2026-06-13) — S3-03 empirically proven (Timeweb GET/PUT/x-amz-expiration via reversible round-trip; `delete-bucket-lifecycle` is a NO-OP — replace-only). 30-day retention APPLIED to backups/postgres/ after inventory (37 backups; 6 oldest >30d async-expiring; 31 retained) + operator confirmation. See 10-UAT.md, docs/s3-lifecycle.md §7. Latent follow-up (v2.x): apply guard crashes on a CLEAN bucket (aws-cli NoneType bug) — non-blocking on this non-clean bucket.
-- Phase 11 (Production Cutover): mechanism COMPLETE + **LIVE-VERIFIED** (2026-06-13, option B) — SELF_TEST exercised the real rollback() live; DRY_RUN enforced both gates (fail-closed on missing green-diff; correct preview when satisfied); the live edge vhost is cutover-ready (`# CUTOVER:` marker + current upstream server 10.43.94.103:3000; `nginx -t` successful). The live production traffic flip itself is DEFERRED BY SCOPE (AGENTS.md: v2 targets staging only; production cutover intentionally deferred) — a future production decision, not a v2 item. See 11-UAT.md.
-
-Quality: every phase passed gsd-plan-checker (revisions applied), gsd-code-review (all critical+warning fixed), and gsd-verifier. `python3 scripts/validate-staging.py` exits 0 (10 checks). Phase 06 fixes merged to master; .planning docs committed locally ([skip ci], pending operator push).
-
-Progress: [██████████] 100% in-scope (6/6 phases complete; only the Phase 11 live production flip is deferred by scope per AGENTS.md)
+Phase: Milestone v2.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-13 — Milestone v2.0 completed and archived
 
 ## Performance Metrics
 
@@ -184,3 +177,7 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 Last session: 2026-06-12T20:44:06.542Z
 Stopped at: Completed 10-03-PLAN.md (docs tasks)
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

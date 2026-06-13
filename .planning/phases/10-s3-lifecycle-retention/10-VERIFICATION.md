@@ -1,8 +1,10 @@
 ---
 phase: 10-s3-lifecycle-retention
 verified: 2026-06-13T12:00:00Z
-status: human_needed
+live_verified: 2026-06-13T06:05:00Z
+status: verified
 score: 7/7 must-haves verified
+resolution: "2026-06-13 — operator validations DONE: S3-03 empirically proven on live Timeweb S3 (GET 404 NoSuchLifecycleConfiguration; reversible PUT→GET round-trip + computed x-amz-expiration; delete-bucket-lifecycle is a NO-OP). 30-day retention APPLIED to backups/postgres/ after inventory review + confirmation. Evidence in docs/s3-lifecycle.md §5/§7, 10-UAT.md. NEW finding logged: lifecycle config is replace-only on Timeweb."
 overrides_applied: 0
 human_verification:
   - test: "Operator runs empirical S3 lifecycle API probe"

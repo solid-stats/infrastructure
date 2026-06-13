@@ -1,9 +1,11 @@
 ---
 phase: 11-production-cutover
 verified: 2026-06-13T00:00:00Z
-status: human_needed
+live_verified: 2026-06-13T06:30:00Z
+status: verified
 score: 8/8 must-haves verified
 re_verification: false
+resolution: "2026-06-13 — cutover MECHANISM live-verified (option B) without flipping production: SELF_TEST ran the real rollback() (byte-restore asserted); DRY_RUN enforced both gates (fail-closed on missing green-diff; correct preview when satisfied); live edge vhost confirmed cutover-ready (# CUTOVER marker + upstream server 10.43.94.103:3000; nginx -t successful). The live PRODUCTION traffic flip remains DEFERRED BY SCOPE (AGENTS.md: v2 = staging only) — a future production decision, not a v2 item. See 11-UAT.md."
 ---
 
 # Phase 11: Production Cutover Verification Report
