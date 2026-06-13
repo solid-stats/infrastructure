@@ -199,16 +199,44 @@ A blank evidence table means the policy has NOT been proven.
 
 | Field | Value |
 |-------|-------|
-| Date of probe run | |
+| Date of probe run | 2026-06-13 |
 | Cluster endpoint | solid-stats-staging |
-| API support result | (API implemented / NOT implemented) |
-| Existing lifecycle config at probe time | (none / found — describe) |
-| x-amz-expiration present | (yes / no) |
-| Expiry date observed | |
-| Cleanup confirmed | (yes) |
-| Operator | |
+| API support result | **SUPPORTED** (confirmed 2026-06-13 via raw HTTP `--debug`). `get-bucket-lifecycle-configuration` on bucket `sg-replays` returns the AWS-standard **HTTP 404 `<Code>NoSuchLifecycleConfiguration</Code>`**. The `argument of type 'NoneType' is not iterable` seen via the high-level CLI is a **client-side aws-cli v2.32.7 bug** parsing the empty `<Message></Message>` of that 404 — NOT an unsupported API. `head-bucket` OK (creds valid). |
+| Existing lifecycle config at probe time | None — clean bucket (404 `NoSuchLifecycleConfiguration`). |
+| x-amz-expiration present | **Yes** — with a PUT rule on `s3-lifecycle-probe/`, a probe object's `head-object` returned `Expiration: expiry-date="Mon, 15 Jun 2026 00:00:00 GMT", rule-id="probe-roundtrip"`. Rule recognized, expiry computed. |
+| Expiry date observed | Mon, 15 Jun 2026 00:00:00 GMT (probe object under a 1-day rule). |
+| Cleanup confirmed | yes (probe test object created + deleted under `s3-lifecycle-probe/`; `backups/postgres/` untouched; diagnostic was read-only) |
+| Operator | Pavlov Alexandr |
 
-Record the raw Job log output below this table after the probe run.
+**S3-03 PROVEN (2026-06-13).** A reversible PUT→GET round-trip on the isolated
+`s3-lifecycle-probe/` prefix confirmed the full lifecycle API:
+`put-bucket-lifecycle-configuration` → 200; `get-bucket-lifecycle-configuration`
+→ 200 with the rule round-tripped; a probe object's `head-object` returned a
+computed `x-amz-expiration`. Timeweb implements GET + PUT correctly.
+
+**CRITICAL caveat — `delete-bucket-lifecycle` is a NO-OP on Timeweb.** It returns
+success (204) but the config persists (verified: 2 deletes + 50 s wait, rule
+still present). **A lifecycle config can only be REPLACED via PUT, never
+removed** — you cannot return the bucket to "no lifecycle". This is the rollback
+story: to change/undo the policy, PUT a new config. See Section 7.
+
+Consequence for the apply: the bucket currently holds a leftover harmless
+`probe-roundtrip` rule (targets only the empty `s3-lifecycle-probe/` prefix) that
+`delete` could not remove. The real apply's PUT will **replace** it — but because
+a config is present, `apply-s3-lifecycle.sh` requires `FORCE_OVERWRITE=1`. The
+destructive apply to `backups/postgres/` is still gated on a backup-inventory
+review + operator confirmation (it expires objects older than 30 days).
+
+Follow-up (non-blocking on this bucket): the apply guard + probe heuristic rely
+on the high-level GET, which CRASHES (`NoneType is not iterable`) only on a CLEAN
+bucket (empty-`<Message>` 404). This bucket is no longer clean, so the apply
+works with `FORCE_OVERWRITE`; but a fresh bucket's FIRST apply would fail — fix
+the guard to classify from the raw `<Code>` / HTTP status.
+
+Raw diagnostic (2026-06-13): `GET /sg-replays?lifecycle` with no config → **HTTP
+404** `<Error><Code>NoSuchLifecycleConfiguration</Code><Message></Message>...`
+(the empty `<Message>` triggers the aws-cli `NoneType` crash); with a config →
+**HTTP 200** + the `<LifecycleConfiguration>` rule. `head-bucket` OK.
 
 ---
 
@@ -251,3 +279,19 @@ should decrease in multiples of three as backup IDs age past 30 days.
   bucket lifecycle configuration. If the bucket already has a config, the Job dumps it to the log
   and exits non-zero. To intentionally replace it after reviewing the dumped config, re-run with
   `FORCE_OVERWRITE=1` set in the environment.
+
+- **`delete-bucket-lifecycle` is a NO-OP on Timeweb (proven 2026-06-13).** The endpoint accepts
+  the call (returns success) but does NOT remove the configuration — verified with two deletes and
+  a 50 s wait. **A lifecycle config can only be replaced (PUT), never deleted.** Implication for
+  rollback: there is no "remove the policy" path — to change or undo retention you must PUT a
+  different config. Plan policy changes as replacements, and treat the first apply as effectively
+  permanent (modulo future PUTs).
+
+- **High-level GET crashes on a clean bucket (aws-cli v2.32.7).** When the bucket has NO lifecycle
+  config, Timeweb returns a 404 `NoSuchLifecycleConfiguration` with an empty `<Message></Message>`,
+  and aws-cli's `get-bucket-lifecycle-configuration` raises `argument of type 'NoneType' is not
+  iterable` (a client-side parse bug) instead of surfacing the error code. The apply guard then
+  falls through to "unexpected error" and aborts (fail-safe). On a bucket that already has a config
+  the GET returns 200 and works normally. The lifecycle API itself is fine — only the empty-message
+  404 path is affected. Fix for a fresh-bucket first apply: classify from the raw `<Code>` / HTTP
+  status (a `--debug` fallback) rather than the high-level call's exit/stdout.
