@@ -243,7 +243,11 @@ Plans:
   2. An independent host nginx obs-edge bootstrap (v2.0 Phase 07 adopt-reconcile pattern, a dedicated `bootstrap-obs-edge.sh`) serves an HTTP-only vhost first, then a certbot-issued TLS certificate, proxying Grafana over a valid certificate — established as the reusable bootstrap the GlitchTip phase later extends for the `errors.` vhost.
   3. Operator can reach Grafana at `https://grafana.stats-staging.solid-stats.ru` behind local-user auth with healthy dashboards rendering live data.
 
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 14-01-PLAN.md — author bootstrap-obs-edge.sh (env-parameterized adopt-reconcile, ClusterIP discovery, per-domain certbot)
+- [ ] 14-02-PLAN.md — author the grafana. (WebSocket TLS proxy) and errors. (503 placeholder) nginx vhosts
+- [ ] 14-03-PLAN.md — author validate-obs-edge.py offline validator + docs/obs-edge-bootstrap.md runbook
+- [ ] 14-04-PLAN.md — operator-gated: create DNS A records, run live bootstrap + per-domain certbot, verify Grafana over HTTPS
 **UI hint**: yes
 
 #### Phase 15: Log Stack
