@@ -70,6 +70,17 @@ printf '%s' "$WG_PRIVATE_KEY" | sudo wg set "$WG_INTERFACE" \
 echo "Bringing up $WG_INTERFACE..."
 sudo ip link set up dev "$WG_INTERFACE"
 
+# --- 4b. Route allowed-ips through the tunnel -------------------------------
+# `wg set ... allowed-ips` only configures WireGuard's cryptokey routing — it
+# does NOT add a kernel route (that is wg-quick's job, and we don't use it).
+# With a /32 local address there is no subnet route either, so the API server
+# IP would be unreachable at the IP layer even though the endpoint-to-endpoint
+# handshake succeeds. Add an explicit route for each allowed IP.
+for cidr in ${WG_ALLOWED_IPS//,/ }; do
+  echo "Routing $cidr via $WG_INTERFACE..."
+  sudo ip route replace "$cidr" dev "$WG_INTERFACE"
+done
+
 # --- 5. Handshake polling loop (fail-closed) --------------------------------
 # latest-handshakes output: "<peer_pubkey>\t<timestamp_epoch>"
 # Handshake is complete when timestamp_epoch is non-zero (> 0).
