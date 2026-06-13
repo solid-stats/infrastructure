@@ -60,6 +60,31 @@ def _split_documents(text: str) -> list[str]:
     return docs
 
 
+# Signatures of a CLI/render error that leaked into a manifest file. `helm template`
+# writes errors to stderr, but a careless `> file 2>&1` (or a transient chart-download
+# timeout) can splice an error message into the rendered YAML, corrupting it without a
+# parse-time failure that the stdlib (no PyYAML) splitter would notice. Catch them by signature.
+_RENDER_ERROR_PATTERNS = [
+    re.compile(r"^\s*Error:\s", re.MULTILINE),
+    re.compile(r"context deadline exceeded"),
+    re.compile(r"Client\.Timeout"),
+    re.compile(r"^\s*panic:\s", re.MULTILINE),
+    re.compile(r"failed to (download|pull|fetch|render)"),
+]
+
+
+def _check_render_errors(text: str, path: Path) -> list[str]:
+    """Fail if a manifest file contains CLI/render error text spliced into the YAML."""
+    errors = []
+    for pat in _RENDER_ERROR_PATTERNS:
+        m = pat.search(text)
+        if m:
+            snippet = text[m.start():m.start() + 80].replace("\n", " ")
+            errors.append(f"{path}: render-error signature in manifest ({snippet!r}) — re-render needed")
+            break
+    return errors
+
+
 def _top_value(doc: str, key: str) -> str | None:
     prefix = f"{key}:"
     for line in doc.splitlines():
@@ -183,6 +208,7 @@ def validate() -> int:
 
     for yaml_path in yaml_files:
         text = yaml_path.read_text()
+        all_errors.extend(_check_render_errors(text, yaml_path))
         docs = _split_documents(text)
         for doc in docs:
             all_errors.extend(_check_no_secret_values(doc, yaml_path))
