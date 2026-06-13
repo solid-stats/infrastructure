@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
-status: executing
-stopped_at: "Phases 06,07,08,09,10 COMPLETE — 06,07,08 LIVE-VERIFIED; 10 retention APPLIED on staging 2026-06-13 (S3-03 proven: Timeweb GET/PUT/x-amz-expiration; 30d retention live on backups/postgres/, 6 oldest backups async-expiring). Only remaining v2 item: Phase 11 live production traffic flip — deferred by scope (AGENTS.md: production out of v2; mechanism built + offline-proven). v2 in-scope work effectively done."
-last_updated: "2026-06-13T06:10:00Z"
-last_activity: 2026-06-13 -- Phase 10 CLOSED: Timeweb lifecycle API empirically proven (GET/PUT/x-amz-expiration; delete is a NO-OP), 30-day retention applied to backups/postgres/ after inventory review + operator confirmation.
+status: complete
+stopped_at: "v2 IN-SCOPE WORK COMPLETE (6/6 phases). 06,07,08 LIVE-VERIFIED; 09 web slot wired; 10 retention APPLIED on staging 2026-06-13; 11 cutover MECHANISM LIVE-VERIFIED (option B: SELF_TEST rollback, DRY_RUN gates both ways + preview, live edge marker + nginx -t) — the live PRODUCTION traffic flip is deferred by scope (AGENTS.md: v2 = staging only). Close-out remaining: push .planning commits; 2 follow-ups → v2.x; optional /gsd-complete-milestone."
+last_updated: "2026-06-13T06:30:00Z"
+last_activity: 2026-06-13 -- Phase 11 cutover MECHANISM live-verified without flipping prod (rollback + gates + preview + live edge readiness). All 6 v2 phases' in-scope work complete.
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 21
   completed_plans: 21
-  percent: 92
+  percent: 100
 ---
 
 # Project State
@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** v2.0 milestone — all phases built; operator validations pending for 10 & 11
+**Current focus:** v2.0 milestone — IN-SCOPE COMPLETE (6/6 phases; 10 applied live, 11 mechanism live-verified). Only the Phase 11 live production flip is deferred by scope. Close-out: push .planning commits, file 2 v2.x follow-ups, optional /gsd-complete-milestone.
 
 ## Current Position
 
@@ -31,11 +31,11 @@ Milestone v2.0: ALL 6 PHASES EXECUTED. Status by phase:
 - Phase 08 (Automated Restore Drill): COMPLETE ✓ + LIVE-VERIFIED (drill PASS on cluster; postgres-0 untouched; 26 tables/303267 rows restored to scratch)
 - Phase 09 (web Runtime Wiring): COMPLETE ✓ (0-replica stub; server-side dry-run accepted by cluster; CD applies the slot)
 - Phase 10 (S3 Lifecycle & Retention): COMPLETE ✓ + LIVE (2026-06-13) — S3-03 empirically proven (Timeweb GET/PUT/x-amz-expiration via reversible round-trip; `delete-bucket-lifecycle` is a NO-OP — replace-only). 30-day retention APPLIED to backups/postgres/ after inventory (37 backups; 6 oldest >30d async-expiring; 31 retained) + operator confirmation. See 10-UAT.md, docs/s3-lifecycle.md §7. Latent follow-up (v2.x): apply guard crashes on a CLEAN bucket (aws-cli NoneType bug) — non-blocking on this non-clean bucket.
-- Phase 11 (Production Cutover): mechanism COMPLETE + offline-proven (4 gates, anchored single-line switch, SELF_TEST'd rollback, smoke+auto-rollback, DRY_RUN). Live production traffic flip is DEFERRED BY SCOPE (AGENTS.md: v2 targets staging only; production cutover intentionally deferred) — not a v2 execution item. See 11-UAT.md.
+- Phase 11 (Production Cutover): mechanism COMPLETE + **LIVE-VERIFIED** (2026-06-13, option B) — SELF_TEST exercised the real rollback() live; DRY_RUN enforced both gates (fail-closed on missing green-diff; correct preview when satisfied); the live edge vhost is cutover-ready (`# CUTOVER:` marker + current upstream server 10.43.94.103:3000; `nginx -t` successful). The live production traffic flip itself is DEFERRED BY SCOPE (AGENTS.md: v2 targets staging only; production cutover intentionally deferred) — a future production decision, not a v2 item. See 11-UAT.md.
 
 Quality: every phase passed gsd-plan-checker (revisions applied), gsd-code-review (all critical+warning fixed), and gsd-verifier. `python3 scripts/validate-staging.py` exits 0 (10 checks). Phase 06 fixes merged to master; .planning docs committed locally ([skip ci], pending operator push).
 
-Progress: [█████████░] 92% (5/6 phases complete; Phase 11 live flip deferred by scope — v2 in-scope work done)
+Progress: [██████████] 100% in-scope (6/6 phases complete; only the Phase 11 live production flip is deferred by scope per AGENTS.md)
 
 ## Performance Metrics
 
@@ -140,13 +140,16 @@ Recent decisions affecting current work:
   CLEAN bucket (this bucket now always has a config, so non-blocking). See 10-UAT.md,
   docs/s3-lifecycle.md §5/§7.
 
-- Phase 11 (human_needed, OPERATOR-GATED): the production cutover MECHANISM is
-  delivered + offline-proven (4 gates, anchored single-line nginx-upstream switch,
-  SELF_TEST'd reversible rollback, smoke check + auto-rollback, DRY_RUN that still
-  enforces gates). The actual production traffic flip is operator-run (consequential;
-  production target outside this staging env). Turnkey: scripts/cutover.sh + docs/cutover.md.
-  See 11-UAT.md. NOTE: green-diff gate is COVERAGE-only, never value-equality (new
-  parser intentionally diverges from legacy).
+- Phase 11 (mechanism LIVE-VERIFIED 2026-06-13; live flip DEFERRED BY SCOPE): the
+  cutover MECHANISM was verified live without flipping prod (option B) — SELF_TEST ran
+  the real rollback() (byte-restore asserted); DRY_RUN enforced both gates (fail-closed
+  on missing green-diff, correct preview when satisfied via a /tmp gate); the live edge
+  vhost is cutover-ready (`# CUTOVER:` marker + upstream server 10.43.94.103:3000;
+  `nginx -t` successful). The actual production traffic flip (switch+reload+smoke +
+  ~24h monitoring) is DEFERRED BY SCOPE (AGENTS.md: v2 = staging only; production
+  cutover intentionally deferred) — a future production decision, not a v2 item.
+  Turnkey: scripts/cutover.sh + docs/cutover.md. NOTE: green-diff gate is COVERAGE-only,
+  never value-equality (new parser intentionally diverges from legacy).
 
 ### Blockers/Concerns
 
@@ -173,6 +176,8 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 | CD | PR dry-run diff comment (CD-10) | Deferred to v2.x | v2.0 scoping |
 | DRILL | Scheduled restore-drill CronJob + alerting (DRILL-05) | Deferred to v2.x | v2.0 scoping |
 | CUT | Weighted / blue-green nginx cutover (CUT-05) | Deferred to v2.x | v2.0 scoping |
+| Docs | Phase 6 doc-drift: drop `CD_SSH_*` + `scripts/deploy-staging.sh` refs from docs/staging.md, README.md, AGENTS.md; document the new WG_*/K8S_* secrets | Deferred to v2.x | v2.0 close (2026-06-13) |
+| S3 | `apply-s3-lifecycle.sh` GET-before-PUT guard + probe-Job heuristic crash on a CLEAN bucket (aws-cli v2.32.7 `NoneType` bug on the empty-`<Message>` 404) — classify from the raw `<Code>`/HTTP status so a fresh-bucket first apply works | Deferred to v2.x | v2.0 close (2026-06-13) |
 
 ## Session Continuity
 
