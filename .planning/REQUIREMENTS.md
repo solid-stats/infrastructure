@@ -11,7 +11,7 @@ a trimmed, single-replica footprint (no VPS resize).
 
 ### Preflight & Resource Protection (PREP)
 
-- [ ] **PREP-01**: Operator can re-run a resource preflight that snapshots node CPU/memory/disk and existing allocations before any observability workload is applied.
+- [x] **PREP-01**: Operator can re-run a resource preflight that snapshots node CPU/memory/disk and existing allocations before any observability workload is applied.
 - [ ] **PREP-02**: Host swap (persistent) is configured on the staging node for host-process relief, documented as NOT a substitute for pod memory limits.
 - [ ] **PREP-03**: PriorityClasses (`app-critical` ≫ `obs-background`) exist so the scheduler evicts observability pods before postgres/server-2 under memory pressure.
 - [ ] **PREP-04**: The app workloads (postgres, server-2) run at Guaranteed QoS (requests == limits) so they are last to be evicted.
@@ -99,7 +99,7 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PREP-01 | Phase 12 | Pending |
+| PREP-01 | Phase 12 | Complete |
 | PREP-02 | Phase 12 | Pending |
 | PREP-03 | Phase 12 | Pending |
 | PREP-04 | Phase 12 | Pending |
@@ -130,6 +130,7 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 | SDK-01 | Phase 18 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 28 total
 - Mapped to phases: 28 (Phases 12-18)
 - Unmapped: 0 ✓
