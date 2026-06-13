@@ -1,0 +1,76 @@
+# Grafana helm values — grafana/grafana chart v10.5.15
+# Rendered via: helm template grafana grafana/grafana --version 10.5.15 \
+#   --namespace monitoring --values k8s/observability/values/grafana-values.yaml \
+#   > k8s/observability/50-grafana.yaml
+#
+# Key constraints (Phase 13):
+#   - Admin password from grafana-secrets (never inline — Pitfall 9, T-13-08)
+#   - Prometheus datasource provisioned (http://prometheus-server.monitoring.svc:80)
+#   - Dashboard sidecar enabled — discovers ConfigMaps labelled grafana_dashboard=1
+#   - priorityClassName obs-background (evictable under app pressure)
+#   - fsGroup 472 — required for SQLite write perms (Pitfall 4)
+#   - Tight resources: 128Mi/256Mi mem, 50m/200m cpu
+#   - fullnameOverride: grafana — Service named 'grafana' for port-forward in 13-06
+
+fullnameOverride: grafana
+
+# Admin user credentials — sourced from pre-rendered grafana-secrets Secret (13-01).
+# helm chart generates a random admin-password Secret if existingSecret is not set —
+# pinning here prevents session invalidation on redeploy (Pitfall 9 / T-13-09).
+admin:
+  existingSecret: grafana-secrets
+  userKey: admin-user
+  passwordKey: admin-password
+
+adminUser: admin
+
+# Grafana pod security context (T-13-04 / Pitfall 4).
+# fsGroup 472 ensures PVC mounts are writable by the grafana process (UID 472).
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 472
+  runAsGroup: 472
+  fsGroup: 472
+
+priorityClassName: obs-background
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+persistence:
+  enabled: true
+  size: 2Gi
+  storageClassName: ""  # k3s local-path default
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+# Sidecar — auto-discovers dashboard ConfigMaps labelled grafana_dashboard=1 (MET-06).
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    folder: /tmp/dashboards
+    searchNamespace: null
+
+# Prometheus datasource provisioned at deploy time — zero UI action needed (MET-05).
+# URL: prometheus-server Service rendered by helm template in 13-02.
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-server.monitoring.svc:80
+        access: proxy
+        isDefault: true
+        jsonData:
+          timeInterval: "30s"
