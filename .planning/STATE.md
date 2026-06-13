@@ -4,13 +4,13 @@ milestone: v3.0
 milestone_name: Staging Observability Stack
 status: executing
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-13T21:52:15.878Z"
+last_updated: "2026-06-13T21:59:37.478Z"
 last_activity: 2026-06-13 -- Phase 14 execution started
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 15
-  completed_plans: 11
+  completed_plans: 12
   percent: 29
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 14 (Public Edge & Grafana TLS) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 14
+Plan: 2 of 4
+Status: Ready to execute
 Last activity: 2026-06-13 -- Phase 14 execution started
 
 Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
@@ -76,6 +76,7 @@ Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 | Phase 13-deploy-pipeline-metrics-stack P02 | 35 | 2 tasks | 8 files |
 | Phase 13-deploy-pipeline-metrics-stack P03 | 20 | 2 tasks | 7 files |
 | Phase 13 P04 | 18 | 3 tasks | 3 files |
+| Phase 14 P01 | 3 | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -119,6 +120,8 @@ Recent decisions affecting current work:
 - [Phase ?]: admin.existingSecret key correction (chart v10.5.15 nested key, not top-level adminExistingSecret)
 - [Phase ?]: fullnameOverride: grafana — stable Service name for port-forward in 13-06 validation
 - [Phase ?]: 4 dashboard ConfigMaps as separate YAML documents (Pitfall 8: one-per-JSON avoids 1 MiB k8s object limit)
+- [Phase 14]: SKIP_UFW defaults to 1 for obs-edge — ports 80/443 already open from Phase 07; no duplicate ufw rules
+- [Phase 14]: HTTP-first vhost pattern (RESEARCH Pattern 2 Option A): temp HTTP vhost install, certbot certonly -d, then TLS vhost swap; branch on cert-lineage existence
 
 ### Pending Todos
 
@@ -199,7 +202,7 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-13T19:48:53.779Z
+Last session: 2026-06-13T21:58:47.302Z
 Stopped at: Completed 12-02-PLAN.md
 Resume file: None
 
