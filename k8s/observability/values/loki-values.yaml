@@ -123,3 +123,10 @@ resultsCache:
 
 test:
   enabled: false
+
+# Disable the rules-watching sidecar (loki-sc-rules): it lists Secrets via the k8s API
+# and 403s (the loki SA has no secrets permission, by design), crash-looping the pod.
+# We do not use the Loki ruler / alerting, so the sidecar is unnecessary.
+sidecar:
+  rules:
+    enabled: false

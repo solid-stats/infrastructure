@@ -32,6 +32,13 @@ securityContext:
   runAsGroup: 472
   fsGroup: 472
 
+# Disable the init-chown-data init container: it runs under the non-root pod
+# securityContext (UID 472) and can't chown pre-existing /var/lib/grafana subdirs
+# (png/csv/pdf) created by the running Grafana, failing with Permission denied.
+# fsGroup 472 already makes the PVC writable, so the chown init is redundant.
+initChownData:
+  enabled: false
+
 priorityClassName: obs-background
 
 resources:
