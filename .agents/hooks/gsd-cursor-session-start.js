@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gsd-hook-version: 1.5.0-rc.1
+// gsd-hook-version: 1.5.0-rc.2
 // gsd-cursor-session-start.js — Cursor sessionStart hook (issue #777)
 //
 // Cursor invokes this script at the start of each agent session.
@@ -15,7 +15,7 @@
 //
 // Behaviour:
 //   - If .planning/STATE.md is present, injects a brief state reminder.
-//   - If absent, nudges the user toward /gsd-new-project.
+//   - If absent, nudges the user toward /gsd:new-project.
 //   - Fails open: any error silently exits 0 so a hook bug never wedges Cursor.
 //
 // Cursor docs: https://cursor.com/docs/hooks
@@ -26,9 +26,9 @@ const fs = require('fs');
 const path = require('path');
 
 const MSG_PRESENT =
-  'gsd- .planning/STATE.md is present — review the current phase and any blockers before acting.';
+  'GSD: .planning/STATE.md is present — review the current phase and any blockers before acting.';
 const MSG_ABSENT =
-  'gsd- no .planning/ workflow found — run /gsd-new-project to start a tracked workflow.';
+  'GSD: no .planning/ workflow found — run /gsd:new-project to start a tracked workflow.';
 
 let raw = '';
 const stdinTimeout = setTimeout(() => {

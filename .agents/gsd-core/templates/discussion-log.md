@@ -39,9 +39,9 @@ Template for `.planning/phases/XX-name/{phase_num}-DISCUSSION-LOG.md` — audit 
 
 ---
 
-## Claude's Discretion
+## the agent's Discretion
 
-[Areas delegated to Claude's judgment — list what was deferred and why]
+[Areas delegated to the agent's judgment — list what was deferred and why]
 
 ## Deferred Ideas
 

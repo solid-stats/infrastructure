@@ -12,7 +12,7 @@ type their choice number. Free-text input maps to the "Other" branch of
 the equivalent AskUserQuestion call.
 
 This is required for Claude Code remote sessions (`/rc` mode) where the
-Claude App cannot forward TUI menu selections back to the host.
+the agent App cannot forward TUI menu selections back to the host.
 
 ## Activation
 

@@ -32,6 +32,9 @@ const stateMod = require("./state.cjs");
 const shell_command_projection_cjs_1 = require("./shell-command-projection.cjs");
 const runtime_slash_cjs_1 = require("./runtime-slash.cjs");
 const phase_lifecycle_cjs_1 = require("./phase-lifecycle.cjs");
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- uat-predicate.cjs is an export= CommonJS module
+const uatPredicate = require("./uat-predicate.cjs");
+const { evaluateUatPassed } = uatPredicate;
 const { escapeRegex, loadConfig, normalizePhaseName, phaseMarkdownRegexSource, comparePhaseNum, findPhaseInternal, getArchivedPhaseDirs, generateSlugInternal, getMilestonePhaseFilter, stripShippedMilestones, extractCurrentMilestone, replaceInCurrentMilestone, toPosixPath, output, error, readSubdirectories, phaseTokenMatches, ERROR_REASON, } = core;
 const { planningDir, withPlanningLock } = planningWorkspace;
 const { extractFrontmatter } = frontmatterMod;
@@ -1292,6 +1295,19 @@ function cmdPhaseComplete(cwd, phaseNum, raw) {
     };
     output(result, raw);
 }
+function cmdPhaseUatPassed(cwd, phaseNum, raw, opts = {}) {
+    if (!phaseNum) {
+        error('phase number required for phase uat-passed');
+    }
+    const phaseInfoRaw = findPhaseInternal(cwd, phaseNum);
+    if (!phaseInfoRaw) {
+        error(`Phase ${phaseNum} not found`);
+    }
+    const phaseInfo = phaseInfoRaw;
+    const phaseFullDir = node_path_1.default.join(cwd, phaseInfo['directory']);
+    const report = evaluateUatPassed(phaseFullDir, { policy: opts.policy });
+    output({ phase: phaseNum, ...report }, raw);
+}
 module.exports = {
     cmdPhasesList,
     cmdPhaseNextDecimal,
@@ -1303,5 +1319,6 @@ module.exports = {
     cmdPhaseInsert,
     cmdPhaseRemove,
     cmdPhaseComplete,
+    cmdPhaseUatPassed,
     computeDependencyLevels,
 };

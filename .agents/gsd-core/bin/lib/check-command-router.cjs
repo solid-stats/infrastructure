@@ -16,6 +16,10 @@ const node_child_process_1 = require("node:child_process");
 const core = require("./core.cjs");
 const { output, error, ERROR_REASON } = core;
 const decisions_cjs_1 = require("./decisions.cjs");
+const ui_safety_gate_cjs_1 = require("./ui-safety-gate.cjs");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const roadmapModule = require("./roadmap.cjs");
+const { getRoadmapPhaseWithFallback } = roadmapModule;
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function normalizePhrase(text) {
     // eslint-disable-next-line @typescript-eslint/no-base-to-string
@@ -180,7 +184,7 @@ function buildPlanMessage(uncovered) {
         ...uncovered.map((item) => `- **${item.id}** (${item.category || 'uncategorized'}): ${item.text}`),
         '',
         'Resolve by citing `D-NN:` in a relevant plan\'s `must_haves`/`truths` (or body),',
-        'OR move the decision to `### Claude\'s Discretion` / tag it `[informational]` if it should not be tracked.',
+        'OR move the decision to `### the agent\'s Discretion` / tag it `[informational]` if it should not be tracked.',
     ].join('\n');
 }
 function buildVerifyMessage(notHonored) {
@@ -320,8 +324,130 @@ function cmdDecisionCoverageVerify(projectDir, args, raw) {
         message: buildVerifyMessage(notHonored),
     }, raw, undefined);
 }
+// ─── ui-plan-gate ─────────────────────────────────────────────────────────────
+/**
+ * ui-plan-gate: given a phase number, checks whether the phase has frontend
+ * indicators and whether a *-UI-SPEC.md already exists in the phase directory.
+ *
+ * Returns JSON: { frontend: boolean, hasUiSpec: boolean, block: boolean }
+ *   block = frontend && !hasUiSpec (gate fires when UI work is detected but no spec exists)
+ *
+ * Invocable as: gsd_run check ui-plan-gate <phase>
+ *
+ * Uses checkUiPresence from ui-safety-gate.cjs — does NOT reimplement frontend detection.
+ * Uses getRoadmapPhaseInternal + findPhaseInternal from core.cjs for phase data.
+ */
+function findUiSpecInDir(phaseDir) {
+    if (!phaseDir || !node_fs_1.default.existsSync(phaseDir))
+        return '';
+    try {
+        const files = node_fs_1.default.readdirSync(phaseDir);
+        const found = files.find((f) => /-UI-SPEC\.md$/.test(f));
+        return found ? node_path_1.default.join(phaseDir, found) : '';
+    }
+    catch {
+        return '';
+    }
+}
+/**
+ * Pure logic for ui-plan-gate — exposed for direct behavioral testing.
+ *
+ * Given a projectDir and phase number:
+ *   (a) Reads the phase section from ROADMAP.md via getRoadmapPhaseWithFallback —
+ *       same two-pass lookup (current milestone → full roadmap) as `roadmap.get-phase`
+ *       (cmdRoadmapGetPhase). Cross-milestone / older frontend phases resolve correctly.
+ *       If ROADMAP.md is missing, phaseSection is '' (ROADMAP.md not present = project
+ *       has no roadmap = cannot be frontend). If the phase truly can't be found after
+ *       both passes, phaseSection is '' and phaseLookupFailed is set so callers can
+ *       surface the miss — we do NOT silently degrade to frontend:false if the roadmap
+ *       exists but the phase header is absent.
+ *   (b) Runs checkUiPresence (frontend detection) — no reimplementation.
+ *   (c) Resolves the phase directory via core.findPhaseInternal; checks for *-UI-SPEC.md.
+ *
+ * Returns: { frontend, hasUiSpec, block, uiSpecPath, phaseLookupFailed }
+ *   block = frontend && !hasUiSpec
+ *   phaseLookupFailed = ROADMAP.md present but phase header not found (surfaced for
+ *                       onError:halt gates so a missing phase doesn't silently bypass)
+ */
+function computeUiPlanGate(projectDir, phase) {
+    // (a) Read the phase section text using the same two-pass lookup as roadmap.get-phase.
+    // getRoadmapPhaseWithFallback: current-milestone first, then stripShippedMilestones
+    // fallback — mirrors cmdRoadmapGetPhase exactly.
+    let phaseSection = '';
+    let phaseLookupFailed;
+    try {
+        const section = getRoadmapPhaseWithFallback(projectDir, phase);
+        if (section === null) {
+            // Distinguish: ROADMAP.md missing (no-roadmap project) vs phase not found in ROADMAP.
+            // core.planningDir(cwd) resolves the .planning/ root for workstream-aware paths.
+            const planDir = typeof core['planningDir'] === 'function'
+                ? core['planningDir'](projectDir)
+                : node_path_1.default.join(projectDir, '.planning');
+            const roadmapPath = node_path_1.default.join(planDir, 'ROADMAP.md');
+            if (node_fs_1.default.existsSync(roadmapPath)) {
+                // ROADMAP.md exists but phase was not found → surface the miss
+                phaseLookupFailed = true;
+            }
+            // phaseSection stays ''
+        }
+        else {
+            phaseSection = section;
+        }
+    }
+    catch { /* roadmap read failure → treat as empty (non-frontend) */ }
+    // (b) Run checkUiPresence (frontend detection) — reuse existing helper; no reimplementation
+    const presenceResult = (0, ui_safety_gate_cjs_1.checkUiPresence)(phaseSection);
+    const frontend = presenceResult.hasUI;
+    // (c) Resolve phase directory via findPhaseInternal and check for *-UI-SPEC.md
+    const coreModule = core;
+    let phaseDir = '';
+    try {
+        const findPhase = coreModule['findPhaseInternal'];
+        if (typeof findPhase === 'function') {
+            const result = findPhase(projectDir, phase);
+            if (result && typeof result === 'object') {
+                // findPhaseInternal returns { directory: '<relative-posix-path>', ... }
+                // directory is relative to cwd — resolve it to absolute.
+                const relDir = typeof result['directory'] === 'string' ? result['directory'] : '';
+                if (relDir) {
+                    phaseDir = node_path_1.default.resolve(projectDir, relDir);
+                }
+            }
+            else if (typeof result === 'string') {
+                phaseDir = result;
+            }
+        }
+    }
+    catch { /* phase dir lookup failure → hasUiSpec=false */ }
+    const uiSpecPath = findUiSpecInDir(phaseDir);
+    const hasUiSpec = uiSpecPath !== '';
+    // block = frontend phase with no UI-SPEC
+    const block = frontend && !hasUiSpec;
+    const result = {
+        frontend, hasUiSpec, block, uiSpecPath: hasUiSpec ? uiSpecPath : null,
+    };
+    if (phaseLookupFailed)
+        result.phaseLookupFailed = true;
+    return result;
+}
+function cmdUiPlanGate(projectDir, args, raw) {
+    // args[0] = 'check', args[1] = 'ui-plan-gate', args[2] = phase
+    const phase = args[2] || '';
+    if (!phase) {
+        error('ui-plan-gate requires a phase argument: check ui-plan-gate <phase>', ERROR_REASON.SDK_MISSING_ARG);
+        return;
+    }
+    output(computeUiPlanGate(projectDir, phase), raw, undefined);
+}
 function routeCheckCommand({ args, cwd, raw }) {
-    const subcommand = args[1];
+    // Normalize dots to hyphens in the subcommand so both forms are accepted.
+    // This makes `check.query = "ui.plan-gate"` (dotted form in capability.json gates)
+    // directly runnable as `gsd_run check ui.plan-gate` — the dot is normalized to
+    // `ui-plan-gate` before routing. The generic gate-dispatch in §5.6 reads
+    // `check.query` from the active gate hook and runs `gsd_run check ${hook.check.query}`,
+    // so the declared query must be dispatchable exactly as declared.
+    const rawSubcommand = args[1];
+    const subcommand = typeof rawSubcommand === 'string' ? rawSubcommand.replace(/\./g, '-') : rawSubcommand;
     if (subcommand === 'auto-mode') {
         cmdAutoMode(cwd, raw);
         return;
@@ -334,10 +460,15 @@ function routeCheckCommand({ args, cwd, raw }) {
         cmdDecisionCoverageVerify(cwd, args, raw);
         return;
     }
-    error('Unknown check subcommand. Available: auto-mode, decision-coverage-plan, decision-coverage-verify', ERROR_REASON.SDK_UNKNOWN_COMMAND);
+    if (subcommand === 'ui-plan-gate') {
+        cmdUiPlanGate(cwd, args, raw);
+        return;
+    }
+    error('Unknown check subcommand. Available: auto-mode, decision-coverage-plan, decision-coverage-verify, ui-plan-gate', ERROR_REASON.SDK_UNKNOWN_COMMAND);
 }
 module.exports = {
     routeCheckCommand,
     decisionMentioned,
     extractPlanDesignatedSections,
+    computeUiPlanGate,
 };

@@ -1,16 +1,10 @@
 ---
 name: gsd-codebase-mapper
-description: Explores codebase and writes structured analysis documents. Spawned by map-codebase with a focus area (tech, arch, quality, concerns). Writes documents directly to reduce orchestrator context load.
-tools: Read, Bash, Grep, Glob, Write
+description: "Explores codebase and writes structured analysis documents. Spawned by map-codebase with a focus area (tech, arch, quality, concerns). Writes documents directly to reduce orchestrator context load."
+tools: read_file, run_shell_command, search_file_content, glob, write_file
 color: cyan
-# hooks:
-#   PostToolUse:
-#     - matcher: "Write|Edit"
-#       hooks:
-#         - type: command
-#           command: "npx eslint --fix $FILE 2>/dev/null || true"
-effort: low
 ---
+
 
 <role>
 You are a GSD codebase mapper. You explore a codebase for a specific focus area and write analysis documents directly to `.planning/codebase/`.
@@ -29,11 +23,11 @@ If the prompt contains a `<required_reading>` block, you MUST use the `Read` too
 
 **Context budget:** Load project skills first (lightweight). Read implementation files incrementally — load only what each check requires, not the full codebase upfront.
 
-**Project skills:** Check `.claude/skills/` or `.agents/skills/` directory if either exists:
+**Project skills:** Check `.agents/skills/` or `.agents/skills/` directory if either exists:
 1. List available skills (subdirectories)
 2. Read `SKILL.md` for each skill (lightweight index ~130 lines)
 3. Load specific `rules/*.md` files as needed during implementation
-4. Do NOT load full `AGENTS.md` files (100KB+ context cost)
+4. 
 5. Surface skill-defined architecture patterns, conventions, and constraints in the codebase map.
 
 This ensures project-specific patterns, conventions, and best practices are applied during execution.
@@ -76,13 +70,13 @@ This ensures project-specific patterns, conventions, and best practices are appl
 Include enough detail to be useful as reference. A 200-line TESTING.md with real patterns is more valuable than a 74-line summary.
 
 **Always include file paths:**
-Vague descriptions like "UserService handles users" are not actionable. Always include actual file paths formatted with backticks: `src/services/user.ts`. This allows Claude to navigate directly to relevant code.
+Vague descriptions like "UserService handles users" are not actionable. Always include actual file paths formatted with backticks: `src/services/user.ts`. This allows the agent to navigate directly to relevant code.
 
 **Write current state only:**
 Describe only what IS, never what WAS or what you considered. No temporal language.
 
 **Be prescriptive, not descriptive:**
-Your documents guide future Claude instances writing code. "Use X pattern" is more useful than "X pattern is used."
+Your documents guide future the agent instances writing code. "Use X pattern" is more useful than "X pattern is used."
 </philosophy>
 
 <process>

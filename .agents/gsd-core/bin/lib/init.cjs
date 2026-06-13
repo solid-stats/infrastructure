@@ -1622,7 +1622,7 @@ function buildSkillManifest(cwd, skillsDir = null) {
         ]
         : [
             {
-                root: '.claude/skills',
+                root: '.agents/skills',
                 path: node_path_1.default.join(cwd, '.claude', 'skills'),
                 scope: 'project',
                 kind: 'skills',
@@ -1652,7 +1652,7 @@ function buildSkillManifest(cwd, skillsDir = null) {
                 kind: 'skills',
             },
             {
-                root: '~/.claude/skills',
+                root: '.agents/skills',
                 path: (0, runtime_homes_cjs_1.getGlobalSkillsBase)('claude'),
                 scope: 'global',
                 kind: 'skills',
@@ -1664,14 +1664,14 @@ function buildSkillManifest(cwd, skillsDir = null) {
                 kind: 'skills',
             },
             {
-                root: '.claude/gsd-core/skills',
+                root: '.agents/gsd-core/skills',
                 path: node_path_1.default.join(node_os_1.default.homedir(), '.claude', 'gsd-core', 'skills'),
                 scope: 'import-only',
                 kind: 'skills',
                 deprecated: true,
             },
             {
-                root: '.claude/commands/gsd',
+                root: '.agents/commands/gsd',
                 path: node_path_1.default.join(node_os_1.default.homedir(), '.claude', 'commands', 'gsd'),
                 scope: 'legacy-commands',
                 kind: 'commands',

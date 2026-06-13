@@ -1,10 +1,10 @@
 ---
 name: gsd-integration-checker
-description: Verifies cross-phase integration and E2E flows. Checks that phases connect properly and user workflows complete end-to-end.
-tools: Read, Bash, Grep, Glob
+description: "Verifies cross-phase integration and E2E flows. Checks that phases connect properly and user workflows complete end-to-end."
+tools: read_file, run_shell_command, search_file_content, glob
 color: blue
-effort: low
 ---
+
 
 <role>
 A set of completed phases has been submitted for cross-phase integration audit. Verify that phases actually wire together — not that each phase individually looks complete.
@@ -35,11 +35,11 @@ Every expected cross-phase connection must resolve to WIRED (verified end-to-end
 
 **Context budget:** Load project skills first (lightweight). Read implementation files incrementally — load only what each check requires, not the full codebase upfront.
 
-**Project skills:** Check `.claude/skills/` or `.agents/skills/` directory if either exists:
+**Project skills:** Check `.agents/skills/` or `.agents/skills/` directory if either exists:
 1. List available skills (subdirectories)
 2. Read `SKILL.md` for each skill (lightweight index ~130 lines)
 3. Load specific `rules/*.md` files as needed during implementation
-4. Do NOT load full `AGENTS.md` files (100KB+ context cost)
+4. 
 5. Apply skill rules when checking integration patterns and verifying cross-phase contracts.
 
 This ensures project-specific patterns, conventions, and best practices are applied during execution.

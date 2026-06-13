@@ -149,7 +149,7 @@ The Save button writes the updated JSON back using the File System Access API if
 
 ```
 After answering, click "Save answers" — or download the JSON and replace the original file.
-Then return to Claude and say "refresh" to process your answers.
+Then return to the agent and say "refresh" to process your answers.
 ```
 
 **Answered question styling:**
@@ -188,7 +188,7 @@ When ready, tell me:
 </step>
 
 <step name="wait_loop">
-Enter wait mode. Claude listens for user commands and handles each:
+Enter wait mode. the agent listens for user commands and handles each:
 
 ---
 

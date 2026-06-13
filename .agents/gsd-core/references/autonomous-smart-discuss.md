@@ -114,7 +114,7 @@ Phase ${PHASE_NUM}: Infrastructure phase — skipping discuss, writing minimal c
 
 Use these defaults for the CONTEXT.md:
 - `<domain>`: Phase boundary from ROADMAP goal
-- `<decisions>`: Single "### Claude's Discretion" subsection — "All implementation choices are at Claude's discretion — pure infrastructure phase"
+- `<decisions>`: Single "### the agent's Discretion" subsection — "All implementation choices are at the agent's discretion — pure infrastructure phase"
 - `<code_context>`: Whatever the codebase scout found
 - `<specifics>`: "No specific requirements — infrastructure phase"
 - `<deferred>`: "None"
@@ -164,7 +164,7 @@ Then prompt the user via **AskUserQuestion**:
 **On "Change QN":** Use AskUserQuestion with the alternatives for that specific question:
 - **header:** "{Area Name}"
 - **question:** "Q{N}: {question text}"
-- **options:** List the 1-2 alternatives plus "You decide" (maps to Claude's Discretion)
+- **options:** List the 1-2 alternatives plus "You decide" (maps to the agent's Discretion)
 
 Record the user's choice. Re-display the updated table with the change reflected. Re-present the full acceptance prompt so the user can make additional changes or accept.
 
@@ -225,8 +225,8 @@ Use **exactly** this structure (identical to discuss-phase output):
 - {Accepted/chosen answer for Q2}
 ...
 
-### Claude's Discretion
-{Any "You decide" answers collected — note Claude has flexibility here}
+### the agent's Discretion
+{Any "You decide" answers collected — note the agent has flexibility here}
 
 </decisions>
 

@@ -129,7 +129,7 @@ function validateShipPrBodySections(value) {
  * Merges (increasing priority):
  *   1. Hardcoded defaults — every key that loadConfig() resolves, plus mode/granularity
  *   2. User-level defaults from ~/.gsd/defaults.json (if present)
- *   3. userChoices — the settings the user explicitly selected during /gsd:new-project
+ *   3. userChoices — the settings the user explicitly selected during /gsd-new-project
  *
  * Uses the canonical `git` namespace for branching keys (consistent with VALID_CONFIG_KEYS
  * and the settings workflow). loadConfig() handles both flat and nested formats, so this
@@ -234,7 +234,7 @@ function buildNewProjectConfig(userChoices) {
         project_code: null,
         phase_naming: 'sequential',
         agent_skills: {},
-        claude_md_path: './CLAUDE.md',
+        claude_md_path: './GEMINI.md',
         plan_review: {
             source_grounding: true,
             source_grounding_authority: 'grep',
@@ -286,7 +286,7 @@ function buildNewProjectConfig(userChoices) {
  * Command: create a fully-materialized .planning/config.json for a new project.
  *
  * Accepts user-chosen settings as a JSON string (the keys the user explicitly
- * configured during /gsd:new-project). All remaining keys are filled from
+ * configured during /gsd-new-project). All remaining keys are filled from
  * hardcoded defaults and optional ~/.gsd/defaults.json.
  *
  * Idempotent: if config.json already exists, returns { created: false }.

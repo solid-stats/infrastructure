@@ -85,7 +85,7 @@ function shellHookOmitsBashRunner({ platform, runtime = 'generic', isShellHook =
 }
 // Builds the command string for a local-install managed `.sh` hook. Mirrors the
 // global buildHookCommand path but uses the $CLAUDE_PROJECT_DIR-anchored prefix
-// instead of an absolute configDir. On Claude/Windows the bash runner is dropped
+// instead of an absolute configDir. On the agent/Windows the bash runner is dropped
 // (see shellHookOmitsBashRunner) and the anchored script path is emitted alone —
 // matching the global path. Elsewhere the resolved bash runner is required; a
 // null runner yields null so callers skip registration instead of emitting a

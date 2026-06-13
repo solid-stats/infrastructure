@@ -5,7 +5,7 @@
  * TypeScript source of truth). Behaviour is preserved byte-for-behaviour from
  * the prior hand-written .cjs; only types are added.
  *
- * Each cluster is a named group of skill stems. Clusters are used by /gsd:surface
+ * Each cluster is a named group of skill stems. Clusters are used by /gsd-surface
  * to enable/disable a cohesive group of skills without reinstall.
  *
  * Cluster membership may overlap (a skill can live in two clusters). The union

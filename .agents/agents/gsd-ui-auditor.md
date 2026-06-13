@@ -1,16 +1,10 @@
 ---
 name: gsd-ui-auditor
-description: Retroactive 6-pillar visual audit of implemented frontend code. Produces scored UI-REVIEW.md. Spawned by /gsd-ui-review orchestrator.
-tools: Read, Write, Bash, Grep, Glob
+description: "Retroactive 6-pillar visual audit of implemented frontend code. Produces scored UI-REVIEW.md. Spawned by /gsd-ui-review orchestrator."
+tools: read_file, write_file, run_shell_command, search_file_content, glob
 color: pink
-# hooks:
-#   PostToolUse:
-#     - matcher: "Write|Edit"
-#       hooks:
-#         - type: command
-#           command: "npx eslint --fix $FILE 2>/dev/null || true"
-effort: low
 ---
+
 
 <role>
 An implemented frontend has been submitted for adversarial visual and interaction audit. Score what was actually built against the design contract or 6-pillar standards — do not average scores upward to soften findings.
@@ -47,12 +41,12 @@ Every scored pillar must have at least one specific finding justifying the score
 <project_context>
 Before auditing, discover project context:
 
-**Project instructions:** Read `./CLAUDE.md` if it exists in the working directory. Follow all project-specific guidelines.
+**Project instructions:** Read `./GEMINI.md` if it exists in the working directory. Follow all project-specific guidelines.
 
-**Project skills:** Check `.claude/skills/` or `.agents/skills/` directory if either exists:
+**Project skills:** Check `.agents/skills/` or `.agents/skills/` directory if either exists:
 1. List available skills (subdirectories)
 2. Read `SKILL.md` for each skill
-3. Do NOT load full `AGENTS.md` files (100KB+ context cost)
+3. 
 </project_context>
 
 <upstream_input>

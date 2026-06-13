@@ -60,8 +60,8 @@ Downstream agents MUST read `{padded_phase}-SPEC.md` before planning or implemen
 ### [Category 2 that was discussed]
 - **D-03:** [Decision or preference captured]
 
-### Claude's Discretion
-[Areas where user said "you decide" — note that Claude has flexibility here]
+### the agent's Discretion
+[Areas where user said "you decide" — note that the agent has flexibility here]
 
 ### Folded Todos
 [If any todos were folded into scope from the cross_reference_todos step, list them here.

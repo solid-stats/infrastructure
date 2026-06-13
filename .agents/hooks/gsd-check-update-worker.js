@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gsd-hook-version: 1.5.0-rc.1
+// gsd-hook-version: 1.5.0-rc.2
 // Background worker spawned by gsd-check-update.js (SessionStart hook).
 // Checks for GSD updates and stale hooks, writes result to cache file.
 // Receives paths via environment variables set by the parent hook.
@@ -53,7 +53,7 @@ try {
 } catch (e) {}
 
 // Check for stale hooks — compare hook version headers against installed VERSION
-// Hooks are installed at configDir/hooks/ (e.g. ~/.claude/hooks/) (#1421)
+// Hooks are installed at configDir/hooks/ (e.g. ~/.agents/hooks/) (#1421)
 // Only check hooks that GSD currently ships — orphaned files from removed features
 // (e.g., gsd-intel-*.js) must be ignored to avoid permanent stale warnings (#1750)
 // MANAGED_HOOKS is imported from ./managed-hooks-registry.cjs above.

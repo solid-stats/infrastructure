@@ -25,7 +25,7 @@ exports.CANONICAL_EXACT = new Set([
     'LEARNINGS.md',
     'THREADS.md',
     'config.json',
-    'CLAUDE.md',
+    'GEMINI.md',
     'RETROSPECTIVE.md',
 ]);
 // Pattern-match canonical file names (regex tests on the basename)

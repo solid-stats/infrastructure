@@ -22,7 +22,7 @@ Read all files referenced by the invoking prompt's execution_context before star
 Ensure config exists and resolve the workstream-aware config path (mirrors `settings.md`):
 
 ```bash
-_GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; GSD_TOOLS="${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}"; if [ -f "$GSD_TOOLS" ]; then gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${_GSD_RUNTIME_ROOT}/.claude/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${_GSD_RUNTIME_ROOT}/.claude/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif command -v gsd-tools >/dev/null 2>&1; then GSD_TOOLS="$(command -v gsd-tools)"; gsd_run() { "$GSD_TOOLS" "$@"; }; elif [ -f "/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; else echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd-tools is not on PATH. Run: npx -y @opengsd/gsd-core@latest --claude --local" >&2; exit 1; fi
+_GSD_SHIM_NAME="gsd-tools.cjs"; _GSD_RUNTIME_ROOT="${RUNTIME_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"; GSD_TOOLS="${_GSD_RUNTIME_ROOT}/gsd-core/bin/${_GSD_SHIM_NAME}"; if [ -f "$GSD_TOOLS" ]; then gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${_GSD_RUNTIME_ROOT}/.agents/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${_GSD_RUNTIME_ROOT}/.agents/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${_GSD_RUNTIME_ROOT}/.codex/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif command -v gsd-tools >/dev/null 2>&1; then GSD_TOOLS="$(command -v gsd-tools)"; gsd_run() { "$GSD_TOOLS" "$@"; }; elif [ -f ".agents/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS=".agents/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${HERMES_HOME:-$HOME/.hermes}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${CURSOR_CONFIG_DIR:-$HOME/.cursor}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${CODEX_HOME:-$HOME/.codex}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${GEMINI_CONFIG_DIR:-$HOME/.gemini}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${COPILOT_CONFIG_DIR:-$HOME/.copilot}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${WINDSURF_CONFIG_DIR:-$HOME/.codeium/windsurf}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${AUGMENT_CONFIG_DIR:-$HOME/.augment}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${TRAE_CONFIG_DIR:-$HOME/.trae}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${QWEN_CONFIG_DIR:-$HOME/.qwen}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${CODEBUDDY_CONFIG_DIR:-$HOME/.codebuddy}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${CLINE_CONFIG_DIR:-$HOME/.cline}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${GROK_AGENTS_HOME:-$HOME/.agents}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/antigravity}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/opencode}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; elif [ -f "${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}" ]; then GSD_TOOLS="${KILO_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/kilo}/gsd-core/bin/${_GSD_SHIM_NAME}"; gsd_run() { node "$GSD_TOOLS" "$@"; }; else echo "ERROR: gsd-tools.cjs not found at $GSD_TOOLS and gsd-tools is not on PATH. Run: npx -y @opengsd/gsd-core@latest --claude --local" >&2; exit 1; fi; if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "${GSD_TOOLS:-}" ]; then printf "export PATH='%s':\"\$PATH\"\n" "${GSD_TOOLS%/*}" >> "$CLAUDE_ENV_FILE" 2>/dev/null || true; fi
 gsd_run query config-ensure-section
 if [[ -z "${GSD_CONFIG_PATH:-}" ]]; then
   if [[ -f .planning/active-workstream ]]; then
@@ -84,7 +84,7 @@ Runtime Model Tiers:
 - `model_profile_overrides.<runtime>.haiku` (default: built-in for the runtime, or absent)
 
 Model Policy:
-- `model_policy.provider` (default: `null` — known values: anthropic, openai, google, qwen)
+- `model_policy.provider` (default: `null` — known values: anthropic, anthropic-fable, openai, google, qwen)
 - `model_policy.budget` (default: `null` — known values: high, medium, low)
 - `model_policy.high` (default: `null` — model ID for the high-cost tier; used by generic provider path)
 - `model_policy.medium` (default: `null` — model ID for the medium-cost tier; used by generic provider path)
@@ -304,7 +304,7 @@ AskUserQuestion([
     multiSelect: false,
     options: [
       { label: "Keep current", description: "Leave unchanged." },
-      { label: "Clear (null)", description: "Use Claude default (English)." },
+      { label: "Clear (null)", description: "Use the agent default (English)." },
       { label: "Enter language", description: "Free-text language name or code (e.g., Japanese, pt, ko). Propagates to spawned agents." }
     ]
   },
@@ -354,8 +354,8 @@ Built-in tier defaults by runtime:
 | Runtime    | `opus`                        | `sonnet`                        | `haiku`                       |
 |------------|-------------------------------|---------------------------------|-------------------------------|
 | `claude`   | `claude-opus-4-8`             | `claude-sonnet-4-6`             | `claude-haiku-4-5`            |
-| `codex`    | `gpt-5.5`                     | `gpt-5.3-codex`                 | `gpt-5.4-mini`                |
-| `gemini`   | `gemini-3-pro`                | `gemini-3-flash`                | `gemini-2.5-flash-lite`       |
+| `codex`    | `gpt-5.5`                     | `gpt-5.4`                       | `gpt-5.4-mini`                |
+| `gemini`   | `gemini-3.1-pro-preview`      | `gemini-3-flash`                | `gemini-2.5-flash-lite`       |
 | `qwen`     | `qwen3-max-2026-01-23`        | `qwen3-coder-plus`              | `qwen3-coder-next`            |
 | `opencode` | `anthropic/claude-opus-4-8`   | `anthropic/claude-sonnet-4-6`   | `anthropic/claude-haiku-4-5`  |
 | `copilot`  | `claude-opus-4-8`             | `claude-sonnet-4-6`             | `claude-haiku-4-5`            |
@@ -604,7 +604,7 @@ AskUserQuestion([
     header: "Model Policy",
     multiSelect: false,
     options: [
-      { label: "Known provider", description: "Choose a provider (Claude / OpenAI / Gemini / Qwen) and a budget level — GSD writes the canonical tier mapping automatically." },
+      { label: "Known provider", description: "Choose a provider (the agent / OpenAI / Gemini / Qwen) and a budget level — GSD writes the canonical tier mapping automatically." },
       { label: "Generic provider", description: "Enter low / medium / high model IDs manually for any provider or custom deployment." },
       { label: "Keep current", description: "Leave model_policy unchanged." }
     ]
@@ -623,16 +623,17 @@ AskUserQuestion([
     header: "Provider",
     multiSelect: false,
     options: [
-      { label: "anthropic", description: "claude-opus-4-8 / claude-sonnet-4-6 / claude-haiku-4-5 (Anthropic / Claude)" },
-      { label: "openai", description: "gpt-5.5 / gpt-5.3-codex / gpt-5.4-mini (OpenAI / Codex)" },
-      { label: "google", description: "gemini-3-pro / gemini-3-flash / gemini-2.5-flash-lite (Google Gemini)" },
-      { label: "qwen", description: "qwen3-max-2026-01-23 / qwen3-coder-plus / qwen3-coder-next (Qwen)" }
+      { label: "anthropic", description: "claude-opus-4-8 / claude-sonnet-4-6 / claude-haiku-4-5 (Anthropic / the agent)" },
+      { label: "anthropic-fable", description: "claude-fable-5 / claude-sonnet-4-6 / claude-haiku-4-5 (Anthropic / the agent Fable opt-in)" },
+      { label: "openai", description: "gpt-5.5 / gpt-5.4 / gpt-5.4-mini (OpenAI / Codex)" },
+      { label: "Other known provider", description: "Type google or qwen; both still use the canonical tier mapping." }
     ]
   }
 ])
 ```
 
-After the user picks a provider, ask:
+If the user selects "Other known provider", ask them to type `google` or `qwen`.
+Use the typed value as the provider. After the user picks or types a provider, ask:
 
 ```text
 AskUserQuestion([
@@ -653,14 +654,17 @@ Canonical tier mappings by provider and budget:
 
 | Provider  | Budget | high                       | medium                     | low                        |
 |-----------|--------|----------------------------|----------------------------|----------------------------|
-| anthropic | high   | claude-opus-4-8            | claude-opus-4-8            | claude-opus-4-8            |
+| anthropic | high   | claude-opus-4-8            | claude-opus-4-8            | claude-sonnet-4-6          |
 | anthropic | medium | claude-opus-4-8            | claude-sonnet-4-6          | claude-haiku-4-5           |
 | anthropic | low    | claude-haiku-4-5           | claude-haiku-4-5           | claude-haiku-4-5           |
+| anthropic-fable | high   | claude-fable-5             | claude-fable-5             | claude-sonnet-4-6          |
+| anthropic-fable | medium | claude-opus-4-8            | claude-sonnet-4-6          | claude-haiku-4-5           |
+| anthropic-fable | low    | claude-haiku-4-5           | claude-haiku-4-5           | claude-haiku-4-5           |
 | openai    | high   | gpt-5.5                    | gpt-5.5                    | gpt-5.5                    |
-| openai    | medium | gpt-5.5                    | gpt-5.3-codex              | gpt-5.4-mini               |
+| openai    | medium | gpt-5.5                    | gpt-5.4                    | gpt-5.4-mini               |
 | openai    | low    | gpt-5.4-mini               | gpt-5.4-mini               | gpt-5.4-mini               |
-| google    | high   | gemini-3-pro               | gemini-3-pro               | gemini-3-pro               |
-| google    | medium | gemini-3-pro               | gemini-3-flash             | gemini-2.5-flash-lite      |
+| google    | high   | gemini-3.1-pro-preview     | gemini-3.1-pro-preview     | gemini-3.1-pro-preview     |
+| google    | medium | gemini-3.1-pro-preview     | gemini-3-flash             | gemini-2.5-flash-lite      |
 | google    | low    | gemini-2.5-flash-lite      | gemini-2.5-flash-lite      | gemini-2.5-flash-lite      |
 | qwen      | high   | qwen3-max-2026-01-23       | qwen3-max-2026-01-23       | qwen3-max-2026-01-23       |
 | qwen      | medium | qwen3-max-2026-01-23       | qwen3-coder-plus           | qwen3-coder-next           |
@@ -713,7 +717,7 @@ Proceed to Step E.
 
 ```bash
 # Known-provider path — write all four keys atomically:
-gsd_run query config-set model_policy.provider "<provider>"   # e.g., anthropic / openai / google / qwen
+gsd_run query config-set model_policy.provider "<provider>"   # e.g., anthropic / anthropic-fable / openai / google / qwen
 gsd_run query config-set model_policy.budget   "<budget>"    # high / medium / low
 gsd_run query config-set model_policy.high     "<high-id>"
 gsd_run query config-set model_policy.medium   "<medium-id>"
@@ -775,7 +779,7 @@ Display:
 | fast_mode.routing_tier_defaults.standard   | {true/false} |
 | fast_mode.routing_tier_defaults.heavy      | {true/false} |
 | fast_mode.agent_overrides.<agent-id>       | {true/false} |
-| model_policy.provider                      | {anthropic/openai/google/qwen/custom/null} |
+| model_policy.provider                      | {anthropic/anthropic-fable/openai/google/qwen/custom/null} |
 | model_policy.budget                        | {high/medium/low/null} |
 | model_policy.high                          | {model-id/null} |
 | model_policy.medium                        | {model-id/null} |

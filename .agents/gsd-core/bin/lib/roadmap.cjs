@@ -135,6 +135,45 @@ function searchPhaseInContent(content, escapedPhase, phaseNum) {
         section,
     };
 }
+// ─── getRoadmapPhaseWithFallback ──────────────────────────────────────────────
+/**
+ * Two-pass phase lookup that mirrors cmdRoadmapGetPhase's resolution strategy.
+ *
+ * Pass 1: current-milestone slice (extractCurrentMilestone).
+ * Pass 2: full roadmap content (stripShippedMilestones) — covers cross-milestone
+ *         and older frontend phases that are no longer in the current milestone slice.
+ *
+ * Returns the phase section string if found, null if ROADMAP.md is missing,
+ * or throws if ROADMAP.md read fails.
+ *
+ * Used by check-command-router (computeUiPlanGate) so ui-plan-gate uses the SAME
+ * phase resolution as `roadmap.get-phase` — not a milestone-only subset.
+ */
+function getRoadmapPhaseWithFallback(cwd, phaseNum) {
+    const roadmapPath = planningPaths(cwd).roadmap;
+    if (!node_fs_1.default.existsSync(roadmapPath))
+        return null;
+    const rawContent = node_fs_1.default.readFileSync(roadmapPath, 'utf-8');
+    const milestoneContent = extractCurrentMilestone(rawContent, cwd);
+    const fullContent = stripShippedMilestones(rawContent);
+    const exactSource = phaseMarkdownRegexSourceExact(phaseNum);
+    if (exactSource) {
+        const exactMilestone = searchPhaseInContent(milestoneContent, exactSource, phaseNum);
+        if (exactMilestone && !exactMilestone.error)
+            return exactMilestone.section ?? null;
+        const exactFull = searchPhaseInContent(fullContent, exactSource, phaseNum);
+        if (exactFull && !exactFull.error)
+            return exactFull.section ?? null;
+    }
+    const escapedPhase = phaseMarkdownRegexSource(phaseNum);
+    const milestoneResult = searchPhaseInContent(milestoneContent, escapedPhase, phaseNum);
+    const result = (milestoneResult && !milestoneResult.error)
+        ? milestoneResult
+        : searchPhaseInContent(fullContent, escapedPhase, phaseNum) || milestoneResult;
+    if (!result || result.error)
+        return null;
+    return result.section ?? null;
+}
 // ─── cmdRoadmapGetPhase ───────────────────────────────────────────────────────
 function cmdRoadmapGetPhase(cwd, phaseNum, raw) {
     const roadmapPath = planningPaths(cwd).roadmap;
@@ -597,6 +636,7 @@ function cmdRoadmapAnnotateDependencies(cwd, phaseNum, raw) {
 }
 module.exports = {
     cmdRoadmapGetPhase,
+    getRoadmapPhaseWithFallback,
     cmdRoadmapAnalyze,
     cmdRoadmapUpdatePlanProgress,
     cmdRoadmapAnnotateDependencies,

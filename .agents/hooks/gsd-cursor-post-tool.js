@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gsd-hook-version: 1.5.0-rc.1
+// gsd-hook-version: 1.5.0-rc.2
 // gsd-cursor-post-tool.js — Cursor postToolUse hook (issue #777)
 //
 // Cursor invokes this script after each tool call completes.
@@ -65,7 +65,7 @@ process.stdin.on('end', () => {
     if (paths.some((p) => PLANNING_PATH_RE.test(p))) {
       process.stdout.write(JSON.stringify({
         additional_context:
-          'gsd- .planning/ artifact updated — ensure STATE.md reflects the latest phase and progress.',
+          'GSD: .planning/ artifact updated — ensure STATE.md reflects the latest phase and progress.',
       }));
       return;
     }

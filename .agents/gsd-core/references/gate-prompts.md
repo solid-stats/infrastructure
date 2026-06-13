@@ -96,5 +96,5 @@ Up to 4 suggested next actions with selection (status, resume workflows).
 Dynamic template for presenting gray area choices in discuss workflow.
 - question: "{Gray area title}"
 - header: "Decision"
-- options: {Option 1} | {Option 2} | Let Claude decide
-- Note: Options generated at runtime. Always include "Let Claude decide" as last option.
+- options: {Option 1} | {Option 2} | Let the agent decide
+- Note: Options generated at runtime. Always include "Let the agent decide" as last option.

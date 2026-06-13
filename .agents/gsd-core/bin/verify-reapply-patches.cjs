@@ -10,7 +10,7 @@
  * Usage:
  *   node scripts/verify-reapply-patches.cjs \
  *     --patches-dir <path>        \  # gsd-local-patches/
- *     --config-dir <path>         \  # ~/.claude (or runtime equivalent)
+ *     --config-dir <path>         \  # .agents (or runtime equivalent)
  *     [--pristine-dir <path>]        # gsd-pristine/; if absent, falls back to
  *                                    # treating every significant backup line as
  *                                    # required (over-broad but safe for #2969:
@@ -23,7 +23,7 @@
  *   1 — at least one missing line in at least one file (gate fails)
  *   2 — usage / structural error (e.g. patches dir missing)
  *
- * Bug #2969: the Step 5 gate previously trusted Claude's free-text "verified:
+ * Bug #2969: the Step 5 gate previously trusted the agent's free-text "verified:
  * yes/no" reporting per hunk. The LLM was filling in `yes` even when content
  * had been silently dropped. Moving the check to a deterministic script is the
  * durability fix.

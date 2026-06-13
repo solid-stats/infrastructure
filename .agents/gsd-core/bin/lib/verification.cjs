@@ -67,14 +67,14 @@ const VERIFICATION_ROUTING_TABLE = {
     missing: {
         status: 'missing',
         next_action: 'No verification report found — the verify step never completed. Re-run execute-phase.',
-        next_command: '/gsd:execute-phase',
+        next_command: '/gsd-execute-phase',
     },
     // INTERNAL SENTINEL: constructed when the file has a status value not in
     // VERIFIER_STATUSES. Never emitted by the verifier.
     unknown: {
         status: 'unknown',
         next_action: '', // filled in dynamically with the raw value
-        next_command: '/gsd:execute-phase',
+        next_command: '/gsd-execute-phase',
     },
 };
 /**
@@ -152,7 +152,7 @@ function readVerificationStatus(phaseDir, opts = {}) {
         const entry = VERIFICATION_ROUTING_TABLE[rawStatus];
         // gaps_found: build the phase-specific command here rather than in the table.
         const next_command = rawStatus === 'gaps_found'
-            ? `/gsd:plan-phase ${phaseNumber} --gaps`
+            ? `/gsd-plan-phase ${phaseNumber} --gaps`
             : entry.next_command;
         return {
             status: entry.status,

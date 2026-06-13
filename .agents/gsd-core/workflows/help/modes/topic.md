@@ -54,12 +54,12 @@ Emit a section from the full reference for the topic in `$ARGUMENTS`. Read `work
 
    5a. **Single section** (cell contains a single `` `## Heading` `` or `` `### Heading` ``):
    - *Full scope:* emit from that heading up to (but not including) the next sibling or higher-level heading.
-   - *Compact scope:* emit the heading, then the first `` **`/gsd:...`** `` bold line within the section (the signature) and the single non-blank line immediately after it (the one-line summary). If the section has no `` **`/gsd:...`** `` bold line, emit the heading and the first paragraph.
+   - *Compact scope:* emit the heading, then the first `` **`/gsd-...`** `` bold line within the section (the signature) and the single non-blank line immediately after it (the one-line summary). If the section has no `` **`/gsd-...`** `` bold line, emit the heading and the first paragraph.
 
    5b. **Multiple sections joined by "plus"**: apply rule 5a to each listed section in document order and emit them sequentially with no gap between them.
 
-   5c. **Sub-block** (cell says `the /gsd:X block under ### Heading` or `the /gsd:X ... blocks under ### Heading`): within the named heading's section, start at each `` **`/gsd:X ...`** `` bold line.
-   - *Full scope:* stop immediately before the next `` **`/gsd:...`** `` bold line or the next heading, whichever comes first.
+   5c. **Sub-block** (cell says `the /gsd-X block under ### Heading` or `the /gsd-X ... blocks under ### Heading`): within the named heading's section, start at each `` **`/gsd-X ...`** `` bold line.
+   - *Full scope:* stop immediately before the next `` **`/gsd-...`** `` bold line or the next heading, whichever comes first.
    - *Compact scope:* emit the bold line and the single non-blank line immediately after it (the one-line summary).
 
    For cells listing multiple sub-blocks, emit them sequentially.

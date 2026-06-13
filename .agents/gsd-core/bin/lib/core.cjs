@@ -159,6 +159,7 @@ function checkAgentsInstalled(runtime) {
             agents_installed: false,
             missing_agents: expectedAgents,
             installed_agents: [],
+            incomplete_agents: [],
             agents_dir: agentsDir,
             agent_runtime: resolvedRuntime,
         };
@@ -182,10 +183,59 @@ function checkAgentsInstalled(runtime) {
             missing.push(agent);
         }
     }
+    // ── Manifest-backed completeness check ──────────────────────────────────────
+    // If a gsd-file-manifest.json exists alongside the agents dir (parent dir),
+    // verify that every manifest-tracked file for each expected agent is present
+    // on disk. Missing manifest-tracked files indicate an incomplete install even
+    // when the plain presence check above passed (e.g. .md present, .toml absent).
+    // If no manifest is found the check is a no-op (graceful for claude/bundled).
+    const incomplete = [];
+    const manifestPath = node_path_1.default.join(node_path_1.default.dirname(agentsDir), 'gsd-file-manifest.json');
+    let manifestFiles = {};
+    try {
+        const raw = node_fs_1.default.readFileSync(manifestPath, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed !== null &&
+            typeof parsed === 'object' &&
+            'files' in parsed &&
+            typeof parsed['files'] === 'object' &&
+            parsed['files'] !== null) {
+            manifestFiles = parsed['files'];
+        }
+    }
+    catch {
+        // No manifest or unreadable — completeness check is skipped
+    }
+    if (Object.keys(manifestFiles).length > 0) {
+        for (const agent of expectedAgents) {
+            // Find all manifest keys that belong to this agent:
+            // key must be "agents/<agentName>.<ext>" with no further path segments.
+            const agentPrefix = `agents/${agent}.`;
+            const agentManifestKeys = Object.keys(manifestFiles).filter(key => {
+                if (!key.startsWith(agentPrefix))
+                    return false;
+                const rest = key.slice(agentPrefix.length);
+                // rest must be a bare extension (no slashes, non-empty)
+                return rest.length > 0 && !rest.includes('/');
+            });
+            if (agentManifestKeys.length === 0) {
+                // Agent not tracked in manifest — skip completeness check for this agent
+                continue;
+            }
+            const allPresent = agentManifestKeys.every(key => {
+                const basename = key.slice('agents/'.length);
+                return node_fs_1.default.existsSync(node_path_1.default.join(agentsDir, basename));
+            });
+            if (!allPresent) {
+                incomplete.push(agent);
+            }
+        }
+    }
     return {
-        agents_installed: installed.length > 0 && missing.length === 0,
+        agents_installed: installed.length > 0 && missing.length === 0 && incomplete.length === 0,
         missing_agents: missing,
         installed_agents: installed,
+        incomplete_agents: incomplete,
         agents_dir: agentsDir,
         agent_runtime: resolvedRuntime,
     };

@@ -1,16 +1,10 @@
 ---
 name: gsd-eval-planner
-description: Designs a structured evaluation strategy for an AI phase. Identifies critical failure modes, selects eval dimensions with rubrics, recommends tooling, and specifies the reference dataset. Writes the Evaluation Strategy, Guardrails, and Production Monitoring sections of AI-SPEC.md. Spawned by /gsd-ai-integration-phase orchestrator.
-tools: Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion
+description: "Designs a structured evaluation strategy for an AI phase. Identifies critical failure modes, selects eval dimensions with rubrics, recommends tooling, and specifies the reference dataset. Writes the Evaluation Strategy, Guardrails, and Production Monitoring sections of AI-SPEC.md. Spawned by /gsd-ai-integration-phase orchestrator."
+tools: read_file, write_file, replace, run_shell_command, search_file_content, glob
 color: orange
-# hooks:
-#   PostToolUse:
-#     - matcher: "Write|Edit"
-#       hooks:
-#         - type: command
-#           command: "echo 'AI-SPEC eval sections written' 2>/dev/null || true"
-effort: xhigh
 ---
+
 
 <role>
 You are a GSD eval planner. Answer: "How will we know this AI system is working correctly?"
@@ -18,7 +12,7 @@ Turn domain rubric ingredients into measurable, tooled evaluation criteria. Writ
 </role>
 
 <required_reading>
-Read `/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/references/ai-evals.md` before planning. This is your evaluation framework.
+Read `.agents/gsd-core/references/ai-evals.md` before planning. This is your evaluation framework.
 </required_reading>
 
 <input>

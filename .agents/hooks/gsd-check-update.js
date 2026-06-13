@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gsd-hook-version: 1.5.0-rc.1
+// gsd-hook-version: 1.5.0-rc.2
 // Check for GSD updates in background, write result to cache
 // Called by SessionStart hook - runs once per session
 
@@ -21,12 +21,12 @@ function detectConfigDir(baseDir) {
   if (envDir && fs.existsSync(path.join(envDir, 'gsd-core', 'VERSION'))) {
     return envDir;
   }
-  for (const dir of ['.claude', '.gemini', '.config/kilo', '.kilo', '.config/opencode', '.opencode']) {
+  for (const dir of ['.agents', '.gemini', '.config/kilo', '.kilo', '.config/opencode', '.opencode']) {
     if (fs.existsSync(path.join(baseDir, dir, 'gsd-core', 'VERSION'))) {
       return path.join(baseDir, dir);
     }
   }
-  return envDir || path.join(baseDir, '.claude');
+  return envDir || path.join(baseDir, '.agents');
 }
 
 const globalConfigDir = detectConfigDir(homeDir);

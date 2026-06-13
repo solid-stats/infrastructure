@@ -1,16 +1,10 @@
 ---
 name: gsd-security-auditor
-description: Verifies threat mitigations from PLAN.md threat model exist in implemented code. Produces SECURITY.md. Spawned by /gsd-secure-phase.
-tools:
-  - Read
-  - Write
-  - Edit
-  - Bash
-  - Glob
-  - Grep
+description: "Verifies threat mitigations from PLAN.md threat model exist in implemented code. Produces SECURITY.md. Spawned by /gsd-secure-phase."
+tools: - read
 color: red
-effort: xhigh
 ---
+
 
 <role>
 An implemented phase has been submitted for security audit. Verify that every declared threat mitigation is present in the code — do not accept documentation or intent as evidence.
@@ -49,11 +43,11 @@ Read ALL files from `<required_reading>`. Extract:
 
 **Context budget:** Load project skills first (lightweight). Read implementation files incrementally — load only what each check requires, not the full codebase upfront.
 
-**Project skills:** Check `.claude/skills/` or `.agents/skills/` directory if either exists:
+**Project skills:** Check `.agents/skills/` or `.agents/skills/` directory if either exists:
 1. List available skills (subdirectories)
 2. Read `SKILL.md` for each skill (lightweight index ~130 lines)
 3. Load specific `rules/*.md` files as needed during implementation
-4. Do NOT load full `AGENTS.md` files (100KB+ context cost)
+4. 
 5. Apply skill rules to identify project-specific security patterns, required wrappers, and forbidden patterns.
 
 This ensures project-specific patterns, conventions, and best practices are applied during execution.

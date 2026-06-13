@@ -169,7 +169,7 @@ function _warnUnknownProfileOverrides(parsed, configLabel) {
         if (!_warnedConfigKeys.has(key)) {
             _warnedConfigKeys.add(key);
             try {
-                process.stderr.write(`gsd: warning — config key "runtime" has unknown value "${runtime}". ` +
+                process.stderr.write(`gsd- warning — config key "runtime" has unknown value "${runtime}". ` +
                     `Known runtimes: ${[...(model_catalog_cjs_1.KNOWN_RUNTIMES)].sort().join(', ')}. ` +
                     `Resolution will fall back to safe defaults. (#2517)\n`);
             }
@@ -184,7 +184,7 @@ function _warnUnknownProfileOverrides(parsed, configLabel) {
                 if (!_warnedConfigKeys.has(key)) {
                     _warnedConfigKeys.add(key);
                     try {
-                        process.stderr.write(`gsd: warning — model_profile_overrides.${overrideRuntime}.* uses ` +
+                        process.stderr.write(`gsd- warning — model_profile_overrides.${overrideRuntime}.* uses ` +
                             `unknown runtime "${overrideRuntime}". Known runtimes: ` +
                             `${[...(model_catalog_cjs_1.KNOWN_RUNTIMES)].sort().join(', ')}. (#2517)\n`);
                     }
@@ -199,7 +199,7 @@ function _warnUnknownProfileOverrides(parsed, configLabel) {
                     if (!_warnedConfigKeys.has(key)) {
                         _warnedConfigKeys.add(key);
                         try {
-                            process.stderr.write(`gsd: warning — model_profile_overrides.${overrideRuntime}.${tierName} ` +
+                            process.stderr.write(`gsd- warning — model_profile_overrides.${overrideRuntime}.${tierName} ` +
                                 `uses unknown tier "${tierName}". Allowed tiers: opus, sonnet, haiku. (#2517)\n`);
                         }
                         catch { /* ok */ }
@@ -219,7 +219,7 @@ function _warnUnknownProfileOverrides(parsed, configLabel) {
             if (!_warnedConfigKeys.has(pkey)) {
                 _warnedConfigKeys.add(pkey);
                 try {
-                    process.stderr.write(`gsd: warning — model_policy.provider has unknown value "${provider}". ` +
+                    process.stderr.write(`gsd- warning — model_policy.provider has unknown value "${provider}". ` +
                         `Known providers: ${[...(model_catalog_cjs_1.KNOWN_PROVIDERS)].sort().join(', ')}. ` +
                         `For manual model IDs use provider="custom". (#49)\n`);
                 }
@@ -234,7 +234,7 @@ function _warnUnknownProfileOverrides(parsed, configLabel) {
                     if (!_warnedConfigKeys.has(key)) {
                         _warnedConfigKeys.add(key);
                         try {
-                            process.stderr.write(`gsd: warning — model_policy.runtime_tiers.${pruntime}.* uses ` +
+                            process.stderr.write(`gsd- warning — model_policy.runtime_tiers.${pruntime}.* uses ` +
                                 `unknown runtime "${pruntime}". Known runtimes: ` +
                                 `${[...(model_catalog_cjs_1.KNOWN_RUNTIMES)].sort().join(', ')}. (#49)\n`);
                         }
@@ -249,7 +249,7 @@ function _warnUnknownProfileOverrides(parsed, configLabel) {
                         if (!_warnedConfigKeys.has(key)) {
                             _warnedConfigKeys.add(key);
                             try {
-                                process.stderr.write(`gsd: warning — model_policy.runtime_tiers.${pruntime}.${tierName} ` +
+                                process.stderr.write(`gsd- warning — model_policy.runtime_tiers.${pruntime}.${tierName} ` +
                                     `uses unknown tier "${tierName}". Allowed: opus, sonnet, haiku. (#49)\n`);
                             }
                             catch { /* ok */ }

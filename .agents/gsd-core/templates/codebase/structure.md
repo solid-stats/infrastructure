@@ -186,7 +186,7 @@ gsd-core/
 
 **Documentation:**
 - `README.md` - User-facing installation and usage guide
-- `CLAUDE.md` - Instructions for Claude Code when working in this repo
+- `GEMINI.md` - Instructions for Claude Code when working in this repo
 
 ## Naming Conventions
 
@@ -216,7 +216,7 @@ gsd-core/
 
 **New Workflow:**
 - Implementation: `gsd-core/workflows/{name}.md`
-- Usage: Reference from command with `@/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/workflows/{name}.md`
+- Usage: Reference from command with `@.agents/gsd-core/workflows/{name}.md`
 
 **New Reference Document:**
 - Implementation: `gsd-core/references/{name}.md`
@@ -229,12 +229,12 @@ gsd-core/
 ## Special Directories
 
 **gsd-core/**
-- Purpose: Resources installed to /home/afgan0r/Projects/SolidGames/infrastructure/.claude/
+- Purpose: Resources installed to .agents/
 - Source: Copied by bin/install.js during installation
 - Committed: Yes (source of truth)
 
 **commands/**
-- Purpose: Slash commands installed to /home/afgan0r/Projects/SolidGames/infrastructure/.claude/commands/
+- Purpose: Slash commands installed to .agents/commands/
 - Source: Copied by bin/install.js during installation
 - Committed: Yes (source of truth)
 

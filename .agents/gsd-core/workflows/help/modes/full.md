@@ -70,7 +70,7 @@ Help articulate your vision for a phase before planning.
 - `--chain` — chained-prompt discuss flow
 - `--analyze` — deep assumption analysis pass
 - `--power` — power-user mode with extended question set
-- `--assumptions` — surface Claude's implementation assumptions about the phase without an interactive session
+- `--assumptions` — surface the agent's implementation assumptions about the phase without an interactive session
 
 - Captures how you imagine this phase working
 - Creates CONTEXT.md with your vision, essentials, and boundaries
@@ -334,9 +334,9 @@ Package spike findings into a persistent project skill.
 
 - Curates each spike one-at-a-time (include/exclude/partial/UAT)
 - Groups findings by feature area
-- Generates `./.claude/skills/spike-findings-[project]/` with references and sources
+- Generates `./.agents/skills/spike-findings-[project]/` with references and sources
 - Writes summary to `.planning/spikes/WRAP-UP-SUMMARY.md`
-- Adds auto-load routing line to project CLAUDE.md
+- Adds auto-load routing line to project GEMINI.md
 
 Usage: `/gsd-spike --wrap-up`
 
@@ -345,9 +345,9 @@ Package sketch design findings into a persistent project skill.
 
 - Curates each sketch one-at-a-time (include/exclude/partial/revisit)
 - Groups findings by design area
-- Generates `./.claude/skills/sketch-findings-[project]/` with design decisions, CSS patterns, HTML structures
+- Generates `./.agents/skills/sketch-findings-[project]/` with design decisions, CSS patterns, HTML structures
 - Writes summary to `.planning/sketches/WRAP-UP-SUMMARY.md`
-- Adds auto-load routing line to project CLAUDE.md
+- Adds auto-load routing line to project GEMINI.md
 
 Usage: `/gsd-sketch --wrap-up`
 
@@ -368,7 +368,7 @@ Usage: `/gsd-capture Add auth token refresh`
 **`/gsd-capture --note <text>`**
 Zero-friction note capture — one command, instant save, no questions.
 
-- Saves timestamped note to `.planning/notes/` (or `/home/afgan0r/Projects/SolidGames/infrastructure/.claude/notes/` globally)
+- Saves timestamped note to `.planning/notes/` (or `.agents/notes/` globally)
 - Three subcommands: append (default), list, promote
 - Promote converts a note into a structured todo
 - Works without a project (falls back to global scope)
@@ -582,7 +582,7 @@ The commands above cover the most common day-to-day flows. Every command listed 
 
 - **`/gsd-mvp-phase <phase-number>`** — Plan a phase as a vertical MVP slice (user story + SPIDR splitting) before handing off to plan-phase. Same end-state as `/gsd-plan-phase --mvp`, with a guided MVP-shaping intro.
 - **`/gsd-ultraplan-phase [phase]`** — [BETA] Offload plan phase to Claude Code's ultraplan cloud; review in browser and import back.
-- **`/gsd-plan-review-convergence <phase> [--codex] [--gemini] [--claude] [--opencode] [--ollama] [--lm-studio] [--llama-cpp] [--all] [--text] [--ws <name>] [--max-cycles N]`** — Cross-AI plan convergence loop — replan with review feedback until no HIGH concerns remain. Supports both cloud reviewers (Codex/Gemini/Claude/OpenCode) and local model runtimes (Ollama, LM Studio, llama.cpp).
+- **`/gsd-plan-review-convergence <phase> [--codex] [--gemini] [--claude] [--opencode] [--ollama] [--lm-studio] [--llama-cpp] [--all] [--text] [--ws <name>] [--max-cycles N]`** — Cross-AI plan convergence loop — replan with review feedback until no HIGH concerns remain. Supports both cloud reviewers (Codex/Gemini/the agent/OpenCode) and local model runtimes (Ollama, LM Studio, llama.cpp).
 - **`/gsd-autonomous [--from N] [--to N] [--only N] [--interactive] [--converge]`** — Run all remaining phases autonomously: discuss → plan → execute per phase. `--converge` routes planning through plan-review convergence; `--cross-ai` is an alias.
 
 ### Quality, Review & Verification

@@ -20,11 +20,21 @@
  *             with Kimi selecting the first existing generic skills directory.
  *             ~/.kimi-code/skills is brand-specific and can be selected as a
  *             GSD write target with --config-dir or KIMI_CONFIG_DIR.
+ *   trae    — Targets Trae IDE (trae.ai), the Electron-based IDE — NOT
+ *             trae-agent (github.com/bytedance/trae-agent), a Python CLI that
+ *             uses trae_config.yaml, has no ~/.trae directory, and has no
+ *             skills system. Both are ByteDance "Trae" products; they are
+ *             entirely distinct. The global ~/.trae/skills/ path is
+ *             community-soft-confirmed: docs.trae.ai/ide/skills documents the
+ *             SKILL.md format and project-level .trae/skills/, but does NOT
+ *             publish the global on-disk path; ~/.trae/skills/ rests on
+ *             community evidence incl. Trae-AI/TRAE#2253. Best-effort only.
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.resolveConfigHomeFromDescriptor = resolveConfigHomeFromDescriptor;
 exports.resolveAntigravityGlobalDir = resolveAntigravityGlobalDir;
 exports.resolveKimiGlobalDir = resolveKimiGlobalDir;
 exports.getGlobalConfigDir = getGlobalConfigDir;
@@ -45,25 +55,111 @@ function expandTilde(p) {
     return p;
 }
 /**
+ * Resolve a configHome descriptor to an absolute directory path.
+ *
+ * Implements the four descriptor kinds:
+ *   - dot-home:           env-override → path.join(home, name)
+ *   - dot-home-nested:    env-override → probed subdir of path.join(home, parent)
+ *   - xdg:                env[0] → env[1](dirname) → env[2](XDG subdir) → ~/.config/<name>
+ *   - generic-agents-root:env[0] → first probe where probeExists exists → probe[0]
+ */
+function resolveConfigHomeFromDescriptor(configHome, opts = {}) {
+    const env = opts.env ?? process.env;
+    const home = opts.home ?? node_os_1.default.homedir();
+    const existsSyncFn = opts.existsSync ?? node_fs_1.default.existsSync;
+    switch (configHome.kind) {
+        case 'dot-home': {
+            // First env var that is set wins
+            for (const varName of configHome.env) {
+                const val = env[varName];
+                if (val)
+                    return expandTilde(val);
+            }
+            return node_path_1.default.join(home, configHome.name);
+        }
+        case 'dot-home-nested': {
+            // env override
+            const nestedEnv0Val = env[configHome.env[0]];
+            if (configHome.env[0] && nestedEnv0Val) {
+                return expandTilde(nestedEnv0Val);
+            }
+            const base = node_path_1.default.join(home, configHome.parent);
+            if (configHome.probe && configHome.probe.length > 0) {
+                // probe each candidate under base; return first that exists
+                for (const candidate of configHome.probe) {
+                    const resolved = node_path_1.default.join(base, candidate);
+                    if (existsSyncFn(resolved))
+                        return resolved;
+                }
+                // fallback: first probe candidate
+                return node_path_1.default.join(base, configHome.probe[0]);
+            }
+            // no probe (e.g. windsurf): always name under parent
+            return node_path_1.default.join(base, configHome.name);
+        }
+        case 'xdg': {
+            // env[0]: direct override dir
+            const xdgEnv0Val = env[configHome.env[0]];
+            if (configHome.env[0] && xdgEnv0Val) {
+                return expandTilde(xdgEnv0Val);
+            }
+            // env[1]: FILE path → dirname
+            const xdgEnv1Val = env[configHome.env[1]];
+            if (configHome.env[1] && xdgEnv1Val) {
+                return node_path_1.default.dirname(expandTilde(xdgEnv1Val));
+            }
+            // env[2]: XDG_CONFIG_HOME → subdir
+            const xdgEnv2Val = env[configHome.env[2]];
+            if (configHome.env[2] && xdgEnv2Val) {
+                return node_path_1.default.join(expandTilde(xdgEnv2Val), configHome.name);
+            }
+            return node_path_1.default.join(home, '.config', configHome.name);
+        }
+        case 'generic-agents-root': {
+            // env override
+            const garEnv0Val = env[configHome.env[0]];
+            if (configHome.env[0] && garEnv0Val) {
+                return expandTilde(garEnv0Val);
+            }
+            // probe each candidate; return first where probeExists subpath exists
+            for (const candidate of configHome.probe) {
+                const resolved = expandTildeWithHome(candidate, home);
+                if (existsSyncFn(node_path_1.default.join(resolved, configHome.probeExists))) {
+                    return resolved;
+                }
+            }
+            // fallback: first probe candidate
+            return expandTildeWithHome(configHome.probe[0], home);
+        }
+    }
+}
+/**
+ * Expand ~ using an explicit home directory (for hermetic testing).
+ */
+function expandTildeWithHome(p, home) {
+    if (!p)
+        return p;
+    if (p.startsWith('~/') || p === '~')
+        return node_path_1.default.join(home, p.slice(1));
+    return p;
+}
+/**
  * Resolve Antigravity global config dir across 1.x and 2.x layouts.
+ *
+ * Thin wrapper delegating to resolveConfigHomeFromDescriptor with the
+ * antigravity descriptor shape. Preserved for external callers and tests.
  */
 function resolveAntigravityGlobalDir(opts = {}) {
     const env = opts.env ?? process.env;
     const home = opts.home ?? node_os_1.default.homedir();
     const existsSyncFn = opts.existsSync ?? node_fs_1.default.existsSync;
-    if (env['ANTIGRAVITY_CONFIG_DIR'])
-        return expandTilde(env['ANTIGRAVITY_CONFIG_DIR']);
-    const base = node_path_1.default.join(home, '.gemini');
-    const candidates = [
-        node_path_1.default.join(base, 'antigravity'),
-        node_path_1.default.join(base, 'antigravity-ide'),
-        node_path_1.default.join(base, 'antigravity-cli'),
-    ];
-    for (const candidate of candidates) {
-        if (existsSyncFn(candidate))
-            return candidate;
-    }
-    return node_path_1.default.join(base, 'antigravity');
+    return resolveConfigHomeFromDescriptor({
+        kind: 'dot-home-nested',
+        name: 'antigravity',
+        parent: '.gemini',
+        env: ['ANTIGRAVITY_CONFIG_DIR'],
+        probe: ['antigravity', 'antigravity-ide', 'antigravity-cli'],
+    }, { env, home, existsSync: existsSyncFn });
 }
 /**
  * Resolve Kimi's generic user root using Kimi CLI's documented first-existing
@@ -79,21 +175,21 @@ function resolveAntigravityGlobalDir(opts = {}) {
  * KIMI_CONFIG_DIR is a GSD installer write-location override. It is not Kimi's
  * upstream data-root variable, and arbitrary roots are discoverable by Kimi only
  * when the user also configures Kimi --skills-dir or extra_skill_dirs.
+ *
+ * Thin wrapper delegating to resolveConfigHomeFromDescriptor with the
+ * kimi descriptor shape. Preserved for external callers and tests.
  */
 function resolveKimiGlobalDir(opts = {}) {
     const env = opts.env ?? process.env;
     const home = opts.home ?? node_os_1.default.homedir();
     const existsSyncFn = opts.existsSync ?? node_fs_1.default.existsSync;
-    if (env['KIMI_CONFIG_DIR'])
-        return expandTilde(env['KIMI_CONFIG_DIR']);
-    const recommendedRoot = node_path_1.default.join(home, '.config', 'agents');
-    const fallbackRoot = node_path_1.default.join(home, '.agents');
-    const candidates = [recommendedRoot, fallbackRoot];
-    for (const candidate of candidates) {
-        if (existsSyncFn(node_path_1.default.join(candidate, 'skills')))
-            return candidate;
-    }
-    return recommendedRoot;
+    return resolveConfigHomeFromDescriptor({
+        kind: 'generic-agents-root',
+        name: 'agents',
+        env: ['KIMI_CONFIG_DIR'],
+        probe: ['~/.config/agents', '~/.agents'],
+        probeExists: 'skills',
+    }, { env, home, existsSync: existsSyncFn });
 }
 /**
  * Return the global config base directory for the given runtime.
@@ -107,85 +203,25 @@ function resolveKimiGlobalDir(opts = {}) {
 function getGlobalConfigDir(runtime, explicitDir) {
     if (explicitDir)
         return expandTilde(explicitDir);
-    const home = node_os_1.default.homedir();
-    const env = process.env;
-    switch (runtime) {
-        // ── Claude Code ──────────────────────────────────────────────────────────
-        case 'claude':
-            return env['CLAUDE_CONFIG_DIR'] ? expandTilde(env['CLAUDE_CONFIG_DIR']) : node_path_1.default.join(home, '.claude');
-        // ── Cursor ───────────────────────────────────────────────────────────────
-        case 'cursor':
-            return env['CURSOR_CONFIG_DIR'] ? expandTilde(env['CURSOR_CONFIG_DIR']) : node_path_1.default.join(home, '.cursor');
-        // ── Gemini CLI ───────────────────────────────────────────────────────────
-        case 'gemini':
-            return env['GEMINI_CONFIG_DIR'] ? expandTilde(env['GEMINI_CONFIG_DIR']) : node_path_1.default.join(home, '.gemini');
-        // ── Codex ────────────────────────────────────────────────────────────────
-        case 'codex':
-            return env['CODEX_HOME'] ? expandTilde(env['CODEX_HOME']) : node_path_1.default.join(home, '.codex');
-        // ── Grok Build ───────────────────────────────────────────────────────────
-        case 'grok':
-            return env['GROK_AGENTS_HOME'] ? expandTilde(env['GROK_AGENTS_HOME']) : node_path_1.default.join(home, '.agents');
-        // ── Copilot (VS Code) ────────────────────────────────────────────────────
-        case 'copilot':
-            if (env['COPILOT_CONFIG_DIR'])
-                return expandTilde(env['COPILOT_CONFIG_DIR']);
-            if (env['COPILOT_HOME'])
-                return expandTilde(env['COPILOT_HOME']);
-            return node_path_1.default.join(home, '.copilot');
-        // ── Antigravity ──────────────────────────────────────────────────────────
-        case 'antigravity':
-            return resolveAntigravityGlobalDir({ env, home });
-        // ── Windsurf ─────────────────────────────────────────────────────────────
-        case 'windsurf':
-            return env['WINDSURF_CONFIG_DIR']
-                ? expandTilde(env['WINDSURF_CONFIG_DIR'])
-                : node_path_1.default.join(home, '.codeium', 'windsurf');
-        // ── Augment ──────────────────────────────────────────────────────────────
-        case 'augment':
-            return env['AUGMENT_CONFIG_DIR'] ? expandTilde(env['AUGMENT_CONFIG_DIR']) : node_path_1.default.join(home, '.augment');
-        // ── Trae ─────────────────────────────────────────────────────────────────
-        case 'trae':
-            return env['TRAE_CONFIG_DIR'] ? expandTilde(env['TRAE_CONFIG_DIR']) : node_path_1.default.join(home, '.trae');
-        // ── Qwen Code ────────────────────────────────────────────────────────────
-        case 'qwen':
-            return env['QWEN_CONFIG_DIR'] ? expandTilde(env['QWEN_CONFIG_DIR']) : node_path_1.default.join(home, '.qwen');
-        // ── Hermes Agent ─────────────────────────────────────────────────────────
-        case 'hermes':
-            return env['HERMES_HOME'] ? expandTilde(env['HERMES_HOME']) : node_path_1.default.join(home, '.hermes');
-        // ── CodeBuddy ────────────────────────────────────────────────────────────
-        case 'codebuddy':
-            return env['CODEBUDDY_CONFIG_DIR'] ? expandTilde(env['CODEBUDDY_CONFIG_DIR']) : node_path_1.default.join(home, '.codebuddy');
-        // ── Cline ────────────────────────────────────────────────────────────────
-        case 'cline':
-            return env['CLINE_CONFIG_DIR'] ? expandTilde(env['CLINE_CONFIG_DIR']) : node_path_1.default.join(home, '.cline');
-        // ── Kimi CLI (generic agents user root) ────────────────────────────────
-        case 'kimi': {
-            return resolveKimiGlobalDir({ env, home });
-        }
-        // ── OpenCode (XDG) ───────────────────────────────────────────────────────
-        case 'opencode': {
-            if (env['OPENCODE_CONFIG_DIR'])
-                return expandTilde(env['OPENCODE_CONFIG_DIR']);
-            if (env['OPENCODE_CONFIG'])
-                return node_path_1.default.dirname(expandTilde(env['OPENCODE_CONFIG']));
-            if (env['XDG_CONFIG_HOME'])
-                return node_path_1.default.join(expandTilde(env['XDG_CONFIG_HOME']), 'opencode');
-            return node_path_1.default.join(home, '.config', 'opencode');
-        }
-        // ── Kilo (XDG) ───────────────────────────────────────────────────────────
-        case 'kilo': {
-            if (env['KILO_CONFIG_DIR'])
-                return expandTilde(env['KILO_CONFIG_DIR']);
-            if (env['KILO_CONFIG'])
-                return node_path_1.default.dirname(expandTilde(env['KILO_CONFIG']));
-            if (env['XDG_CONFIG_HOME'])
-                return node_path_1.default.join(expandTilde(env['XDG_CONFIG_HOME']), 'kilo');
-            return node_path_1.default.join(home, '.config', 'kilo');
-        }
-        // ── Default (Claude fallback) ─────────────────────────────────────────────
-        default:
-            return env['CLAUDE_CONFIG_DIR'] ? expandTilde(env['CLAUDE_CONFIG_DIR']) : node_path_1.default.join(home, '.claude');
+    // ── Grok: not in the registry — hardcoded branch ─────────────────────────
+    if (runtime === 'grok') {
+        const env = process.env;
+        return env['GROK_AGENTS_HOME'] ? expandTilde(env['GROK_AGENTS_HOME']) : node_path_1.default.join(node_os_1.default.homedir(), '.agents');
     }
+    // ── Descriptor-driven: look up in capability-registry ────────────────────
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { runtimes } = require('./capability-registry.cjs');
+    const runtimeEntry = runtimes[runtime];
+    if (runtimeEntry?.runtime?.configHome) {
+        return resolveConfigHomeFromDescriptor(runtimeEntry.runtime.configHome, {
+            env: process.env,
+            home: node_os_1.default.homedir(),
+            existsSync: node_fs_1.default.existsSync,
+        });
+    }
+    // ── Default (unknown runtime → the agent fallback) ───────────────────────────
+    const env = process.env;
+    return env['CLAUDE_CONFIG_DIR'] ? expandTilde(env['CLAUDE_CONFIG_DIR']) : node_path_1.default.join(node_os_1.default.homedir(), '.claude');
 }
 /**
  * Return the global skills base directory for the given runtime.

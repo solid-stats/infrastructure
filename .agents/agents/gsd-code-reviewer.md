@@ -1,12 +1,10 @@
 ---
 name: gsd-code-reviewer
-description: Reviews source files for bugs, security issues, and code quality problems. Produces structured REVIEW.md with severity-classified findings. Spawned by /gsd-code-review.
-tools: Read, Write, Bash, Grep, Glob
+description: "Reviews source files for bugs, security issues, and code quality problems. Produces structured REVIEW.md with severity-classified findings. Spawned by /gsd-code-review."
+tools: read_file, write_file, run_shell_command, search_file_content, glob
 color: orange
-# hooks:
-#   - before_write
-effort: high
 ---
+
 
 <role>
 Source files from a completed implementation have been submitted for adversarial review. Find every bug, security vulnerability, and quality defect — do not validate that work was done.
@@ -38,13 +36,13 @@ Findings without a classification are not valid output.
 <project_context>
 Before reviewing, discover project context:
 
-**Project instructions:** Read `./CLAUDE.md` if it exists in the working directory. Follow all project-specific guidelines, security requirements, and coding conventions during review.
+**Project instructions:** Read `./GEMINI.md` if it exists in the working directory. Follow all project-specific guidelines, security requirements, and coding conventions during review.
 
-**Project skills:** Check `.claude/skills/` or `.agents/skills/` directory if either exists:
+**Project skills:** Check `.agents/skills/` or `.agents/skills/` directory if either exists:
 1. List available skills (subdirectories)
 2. Read `SKILL.md` for each skill (lightweight index ~130 lines)
 3. Load specific `rules/*.md` files as needed during review
-4. Do NOT load full `AGENTS.md` files (100KB+ context cost)
+4. 
 5. Apply skill rules when scanning for anti-patterns and verifying quality
 
 This ensures project-specific patterns, conventions, and best practices are applied during review.
@@ -143,7 +141,7 @@ git diff --name-only ${DIFF_BASE}..HEAD -- . ':!.planning/' ':!ROADMAP.md' ':!ST
 ```
 parse JSON payload and cache it as `STRUCTURAL_FINDINGS`. When present, include these findings in the `## Structural Findings (fallow)` section of `REVIEW.md` during `write_review` (verbatim when small; concise structured summary when large). This block is optional; missing block means no structural pre-pass was provided.
 
-**5. Load project context:** Read `./CLAUDE.md` and check for `.claude/skills/` or `.agents/skills/` (as described in `<project_context>`).
+**5. Load project context:** Read `./GEMINI.md` and check for `.agents/skills/` or `.agents/skills/` (as described in `<project_context>`).
 </step>
 
 <step name="scope_files">
@@ -342,7 +340,7 @@ The `files_reviewed_list` field is REQUIRED — it preserves the exact file scop
 ---
 
 _Reviewed: {timestamp}_
-_Reviewer: Claude (gsd-code-reviewer)_
+_Reviewer: the agent (gsd-code-reviewer)_
 _Depth: {depth}_
 ```
 
@@ -367,7 +365,7 @@ _Depth: {depth}_
 
 **DO use line numbers.** Never "somewhere in the file" — always cite specific lines.
 
-**DO consider project conventions** from CLAUDE.md when evaluating code quality. What's a violation in one project may be standard in another.
+**DO consider project conventions** from GEMINI.md when evaluating code quality. What's a violation in one project may be standard in another.
 
 **Performance issues (O(n²), memory leaks) are out of v1 scope.** Do NOT flag them unless they're also correctness issues (e.g., infinite loop).
 

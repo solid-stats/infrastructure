@@ -197,8 +197,12 @@ function kimiAgentsKind(destSubpath, prefix, configDir) {
  * @param runtime        canonical runtime ID (gates Hermes/Qwen branding in converter)
  * @param configDir      runtime config dir (for .gsd-source marker resolution)
  * @param nested         if true, nest concrete skills under their ns-* routers (#69)
+ * @param scope          install scope; converted to isGlobal and passed as 5th positional
+ *                       arg so scope-aware converters (antigravity, copilot) can choose
+ *                       between global home paths and workspace-relative paths without
+ *                       colliding with the `runtime` string at position 3.
  */
-function skillsKind(destSubpath, prefix, converterName, runtime, configDir, nested = false) {
+function skillsKind(destSubpath, prefix, converterName, runtime, configDir, nested = false, scope = 'global') {
     return {
         kind: 'skills',
         destSubpath,
@@ -207,9 +211,14 @@ function skillsKind(destSubpath, prefix, converterName, runtime, configDir, nest
             const installExports = getInstallExports();
             const realConverter = installExports[converterName];
             // Compute cmdNames once per stage call for performance (#3583).
-            // Extra args are ignored by converters that don't need runtime/cmdNames.
+            // Extra trailing args are ignored by converters that don't need them. The
+            // isGlobal flag is the 5th positional (NOT the 3rd): the 3rd positional is
+            // `runtime` for the claude/kimi/cline converters, so the scope-aware
+            // converters (antigravity, copilot) read isGlobal from position 5 to avoid
+            // colliding with `runtime` and always taking the global branch.
             const cmdNames = installExports.readGsdCommandNames();
-            const wrappedConverter = (content, skillName) => realConverter(content, skillName, runtime, cmdNames);
+            const isGlobal = scope === 'global';
+            const wrappedConverter = (content, skillName) => realConverter(content, skillName, runtime, cmdNames, isGlobal);
             return stageSkillsForRuntimeAsSkills(findInstallSourceRoot(configDir), resolved, wrappedConverter, prefix, nested);
         },
     };
@@ -242,47 +251,41 @@ function convertedCommandsKind(destSubpath, prefix, converterName, configDir) {
         },
     };
 }
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// Nested skill-bundle support matrix (#69)
-// ---------------------------------------------------------------------------
-//
-// When a runtime's skill loader scans only one level deep (non-recursive), a
-// concrete skill nested at `<router>/skills/<name>/SKILL.md` drops out of the
-// eager top-level listing yet stays readable by file path — which is exactly
-// what namespace routing needs. Recursive loaders surface every nested SKILL.md
-// as a peer (zero token saving), so they stay flat. Unconfirmed loaders stay
-// flat conservatively. Verified June 2026:
-//
-//   NEST (confirmed non-recursive / one-level scan):
-//     cline      — cline/cline skills.ts scanSkillsDirectory uses flat fs.readdir
-//     qwen       — QwenLM/qwen-code skill-load.ts flat readdir ("depth 2 enough")
-//     hermes     — hermes-agent.nousresearch.com/docs/user-guide/features/skills
-//                  (single-level subdir probe of the tap path)
-//     augment    — https://docs.augmentcode.com/cli/skills (flat single-level)
-//     trae       — docs.trae.ai/ide/skills + Trae-AI/TRAE#2253 (flat; nesting errors)
-//     antigravity— discuss.ai.google.dev/t/more-antigravity-issues/145875 ("will not recursive scan")
-//
-//   FLAT (recursive loader → nesting gives no saving):
-//     cursor     — https://cursor.com/docs/skills (walks skills root recursively)
-//     opencode   — sst/opencode skill/index.ts glob "skills/**/SKILL.md"
-//     kilo       — Kilo-Org/kilocode (opencode fork, same ** glob)
-//
-//   FLAT (reverted from nested — nested skills not discoverable by Skill tool, #924):
-//     claude     — https://code.claude.com/docs/en/skills + anthropics/claude-code#28266
-//                  (one-level scan under ~/.claude/skills — but Skill-tool errors on unknown
-//                   names rather than re-routing via the router; concrete skills must be
-//                   at the top level so Skill(skill="gsd-plan-phase") succeeds)
-//
-//   FLAT (nested-scan behaviour unconfirmed → conservative):
-//     codex      — developers.openai.com/codex/skills/
-//     copilot    — docs.github.com/en/copilot/concepts/agents/about-agent-skills
-//     windsurf   — docs.devin.ai/desktop/cascade/skills
-//     codebuddy  — codebuddy.ai/docs/cli/skills
+/** Lazy registry accessor — mirrors pattern from 5b/5c (runtime-homes.cts). */
+function getRegistry() {
+    return _require('./capability-registry.cjs');
+}
+/**
+ * Map a single ArtifactKindDescriptor entry to an ArtifactKind using the
+ * matching builder function. Mirrors the hand-built calls in the old switch.
+ */
+function dispatchKindEntry(entry, runtime, configDir, scope) {
+    const { kind, destSubpath, prefix, nesting, converter } = entry;
+    const nested = nesting === 'nested';
+    switch (kind) {
+        case 'commands':
+            if (converter == null) {
+                return commandsKind(destSubpath, prefix, configDir);
+            }
+            return convertedCommandsKind(destSubpath, prefix, converter, configDir);
+        case 'agents':
+            return agentsKind(destSubpath, prefix, configDir);
+        case 'skills':
+            if (converter == null) {
+                throw new TypeError(`resolveRuntimeArtifactLayout: skills entry for '${runtime}' has converter=null (converter is required for skills)`);
+            }
+            return skillsKind(destSubpath, prefix, converter, runtime, configDir, nested, scope);
+        case 'kimi-agents':
+            return kimiAgentsKind(destSubpath, prefix, configDir);
+        default:
+            throw new TypeError(`resolveRuntimeArtifactLayout: unknown kind '${kind}' in descriptor for runtime '${runtime}'`);
+    }
+}
 /**
  * Resolve the artifact layout for a given runtime and config directory.
+ *
+ * ADR-857 phase 5d: driven by the capability-registry artifactLayout descriptor
+ * instead of a hardcoded switch statement.
  */
 function resolveRuntimeArtifactLayout(runtime, configDir, scope = 'global') {
     if (typeof configDir !== 'string' || configDir === '') {
@@ -294,106 +297,13 @@ function resolveRuntimeArtifactLayout(runtime, configDir, scope = 'global') {
     if (!ALLOWED_RUNTIMES.has(runtime)) {
         throw new TypeError(`Unknown runtime: '${runtime}' — add to runtime-artifact-layout.cjs table`);
     }
-    let kinds;
-    switch (runtime) {
-        case 'claude':
-            if (scope === 'local') {
-                kinds = [
-                    commandsKind('commands/gsd', 'gsd-', configDir),
-                    agentsKind('agents', 'gsd-', configDir),
-                ];
-            }
-            else {
-                kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToClaudeSkill', 'claude', configDir)];
-            }
-            break;
-        case 'cursor':
-            // Cursor 1.6+ supports two artifact surfaces:
-            //   1. skills/gsd-<name>/SKILL.md  — rich skills with frontmatter + adapter header
-            //   2. commands/gsd-<name>.md      — plain markdown slash commands (no frontmatter)
-            //      accessed via '/' in the Agent input (#785)
-            kinds = [
-                skillsKind('skills', 'gsd-', 'convertClaudeCommandToCursorSkill', 'cursor', configDir),
-                convertedCommandsKind('commands', 'gsd-', 'convertClaudeCommandToCursorCommand', configDir),
-            ];
-            break;
-        case 'gemini':
-            kinds = [commandsKind('commands/gsd', 'gsd-', configDir)];
-            break;
-        case 'codex':
-            kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToCodexSkill', 'codex', configDir)];
-            break;
-        case 'copilot':
-            kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToCopilotSkill', 'copilot', configDir)];
-            break;
-        case 'antigravity':
-            kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToAntigravitySkill', 'antigravity', configDir, true /* #69 nested */)];
-            break;
-        case 'windsurf':
-            kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToWindsurfSkill', 'windsurf', configDir)];
-            break;
-        case 'augment':
-            kinds = [
-                commandsKind('commands', 'gsd-', configDir),
-                skillsKind('skills', 'gsd-', 'convertClaudeCommandToAugmentSkill', 'augment', configDir, true /* #69 nested */),
-            ];
-            break;
-        case 'trae':
-            kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToTraeSkill', 'trae', configDir, true /* #69 nested */)];
-            break;
-        case 'qwen':
-            kinds = [skillsKind('skills', 'gsd-', 'convertClaudeCommandToClaudeSkill', 'qwen', configDir, true /* #69 nested */)];
-            break;
-        case 'hermes':
-            // #947: restore canonical gsd- prefix — skills land at skills/gsd/gsd-<stem>/SKILL.md
-            // and dispatch as /gsd-<stem>, consistent with every other runtime.
-            // The skills/gsd/ category bucket (introduced by #2841) is retained.
-            // Prior bare-stem layout (prefix='') used by #3664 is reversed here.
-            kinds = [skillsKind('skills/gsd', 'gsd-', 'convertClaudeCommandToClaudeSkill', 'hermes', configDir, true /* #69 nested */)];
-            break;
-        case 'codebuddy':
-            // CodeBuddy (Tencent) reads two user-level surfaces (codebuddy.ai/docs/cli):
-            //   1. commands/gsd-<name>.md      — slash commands shown in the '/' menu (#789)
-            //   2. skills/gsd-<name>/SKILL.md  — model-invocable skills, emitted with
-            //      user-invocable:false so they stay OUT of '/' (the commands surface is
-            //      the sole '/' entry point) — avoids a duplicated /gsd-* per workflow.
-            // Subagents (~/.codebuddy/agents/) are already emitted by the generic agents
-            // block in bin/install.js; MCP is excluded (gsd ships no MCP server).
-            kinds = [
-                convertedCommandsKind('commands', 'gsd-', 'convertClaudeCommandToCodebuddyCommand', configDir),
-                skillsKind('skills', 'gsd-', 'convertClaudeCommandToCodebuddySkill', 'codebuddy', configDir),
-            ];
-            break;
-        case 'cline':
-            kinds = scope === 'global' ? [skillsKind('skills', 'gsd-', 'convertClaudeCommandToClineSkill', 'cline', configDir, true /* #69 nested */)] : [];
-            break;
-        case 'kimi':
-            kinds = scope === 'global'
-                ? [
-                    skillsKind('skills', 'gsd-', 'convertClaudeCommandToKimiSkill', 'kimi', configDir),
-                    kimiAgentsKind('agents', 'gsd', configDir),
-                ]
-                : [];
-            break;
-        case 'opencode':
-            // OpenCode reads flat slash commands from command/ and on-demand skills
-            // from skills/<name>/SKILL.md (https://opencode.ai/docs/skills). Emit both.
-            kinds = [
-                commandsKind('command', 'gsd-', configDir),
-                skillsKind('skills', 'gsd-', 'convertClaudeCommandToOpencodeSkill', 'opencode', configDir),
-            ];
-            break;
-        case 'kilo':
-            // Kilo derives from OpenCode and shares the skills/<name>/SKILL.md layout
-            // (https://kilo.ai/docs/customize/skills). Emit flat commands + skills.
-            kinds = [
-                commandsKind('command', 'gsd-', configDir),
-                skillsKind('skills', 'gsd-', 'convertClaudeCommandToKiloSkill', 'kilo', configDir),
-            ];
-            break;
-        default:
-            throw new TypeError(`Unknown runtime: '${runtime}' — add to runtime-artifact-layout.cjs table`);
+    const desc = getRegistry().runtimes[runtime]?.runtime?.artifactLayout;
+    if (!desc) {
+        // Runtime is in ALLOWED_RUNTIMES but has no descriptor — reproduce old default: throw.
+        throw new TypeError(`Unknown runtime: '${runtime}' — add to runtime-artifact-layout.cjs table`);
     }
+    const entries = desc[scope] ?? [];
+    const kinds = entries.map((entry) => dispatchKindEntry(entry, runtime, configDir, scope));
     return { runtime, configDir, scope, kinds };
 }
 module.exports = { resolveRuntimeArtifactLayout, findInstallSourceRoot, getInstallExports };

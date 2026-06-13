@@ -40,9 +40,9 @@ consumed by downstream agents — those read CONTEXT.md only.
 
 [Repeat for each area]
 
-## Claude's Discretion
+## the agent's Discretion
 
-[List areas where user said "you decide" or deferred to Claude]
+[List areas where user said "you decide" or deferred to the agent]
 
 ## Deferred Ideas
 

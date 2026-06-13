@@ -77,7 +77,7 @@ function parseDecisions(content) {
         if (headingMatch) {
             flush();
             category = headingMatch[1];
-            // Strip the full unicode-quote family so any rendering of "Claude's
+            // Strip the full unicode-quote family so any rendering of "the agent's
             // Discretion" (ASCII apostrophe, curly U+2019, U+2018, U+201A, U+201B,
             // double-quote variants U+201C/D/E/F, etc.) collapses to the same key
             // (review F20).

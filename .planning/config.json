@@ -1,5 +1,5 @@
 {
-  "model_profile": "budget",
+  "model_profile": "adaptive",
   "mode": "yolo",
   "granularity": "fine",
   "commit_docs": true,
@@ -7,7 +7,7 @@
   "phase_naming": "sequential",
   "project_code": null,
   "response_language": "Russian",
-  "context_window": 200000,
+  "context_window": 1000000,
   "resolve_model_ids": false,
   "context": null,
   "review": {
@@ -50,7 +50,7 @@
     "plan_review_convergence": true
   },
   "git": {
-    "branching_strategy": "none",
+    "branching_strategy": "milestone",
     "base_branch": null,
     "phase_branch_template": "gsd/phase-{phase}-{slug}",
     "milestone_branch_template": "gsd/{milestone}-{slug}",
@@ -133,5 +133,16 @@
     "commit_docs": true,
     "search_gitignored": false,
     "sub_repos": []
+  },
+  "effort": {
+    "agent_overrides": {
+      "gsd-verifier": "max"
+    },
+    "default": "high",
+    "routing_tier_defaults": {
+      "light": "low",
+      "standard": "medium",
+      "heavy": "xhigh"
+    }
   }
 }

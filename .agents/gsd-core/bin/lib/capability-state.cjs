@@ -203,7 +203,7 @@ function _resolveCommandsGsdDir() {
  *   active runtime's config dir — the same resolver used by install.js. This
  *   correctly handles all supported runtimes (claude, codex, cursor, gemini,
  *   opencode, grok, etc.) and their env-var overrides. Defaults to claude
- *   (falls back to ~/.claude) if the resolver throws.
+ *   (falls back to .agents) if the resolver throws.
  *
  * Failure surfacing: genuine resolution failures (manifest/profile/surface
  * errors) are reported in the `warnings` array in the envelope. The output
@@ -214,7 +214,7 @@ function _resolveCommandsGsdDir() {
  *   A thrown error during profile/surface resolution IS a warning.
  *
  * @param cwd              Project root directory
- * @param runtimeConfigDir Runtime config directory (e.g. ~/.claude). May be
+ * @param runtimeConfigDir Runtime config directory (e.g. .agents). May be
  *                         empty/undefined — falls back to auto-detection.
  *                         Providing a value without a next token (e.g. the flag
  *                         is last in argv with no following value) should be
@@ -237,14 +237,14 @@ function cmdCapabilityState(cwd, runtimeConfigDir, raw, _options = {}) {
             const runtimeHomes = require('./runtime-homes.cjs');
             // Delegate runtime detection entirely to getGlobalConfigDir: calling it
             // with 'claude' causes it to check CLAUDE_CONFIG_DIR first, falling back
-            // to ~/.claude. The canonical resolver already encodes the correct env-var
+            // to .agents. The canonical resolver already encodes the correct env-var
             // precedence for each runtime — we do not re-implement that logic here.
             // For non-claude runtimes, the caller should pass --config-dir explicitly
             // (or set the runtime-specific env var, which getGlobalConfigDir honors).
             resolvedConfigDir = runtimeHomes.getGlobalConfigDir('claude');
         }
         catch {
-            // Defensive fallback: use ~/.claude if the canonical resolver throws.
+            // Defensive fallback: use .agents if the canonical resolver throws.
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             const os = require('node:os');
             resolvedConfigDir = node_path_1.default.join(os.homedir(), '.claude');

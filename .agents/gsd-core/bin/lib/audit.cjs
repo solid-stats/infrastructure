@@ -5,7 +5,7 @@
  * Scans all .planning/ artifact categories for items with open/unresolved state.
  * Returns structured JSON for workflow consumption.
  * Called by: gsd-tools.cjs audit-open
- * Used by: /gsd:complete-milestone pre-close gate
+ * Used by: /gsd-complete-milestone pre-close gate
  *
  * ADR-457 build-at-publish: the hand-written bin/lib/audit.cjs collapsed
  * to a TypeScript source of truth. Behaviour is preserved byte-for-behaviour

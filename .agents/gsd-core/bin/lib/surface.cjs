@@ -3,7 +3,7 @@
  * Runtime surface module — ADR-0011 Phase 2 (Option B).
  *
  * Manages the runtime enable/disable surface state (the `.gsd-surface.json` marker in
- * each runtime's config dir root (e.g., ~/.claude)) independently of the install-time profile marker
+ * each runtime's config dir root (e.g., .agents)) independently of the install-time profile marker
  * (`.gsd-profile`). Runtime config locations are resolved by callers.
  *
  * Effective skill set = base profile ∪ explicitAdds − disabledClusters − explicitRemoves,
@@ -265,7 +265,7 @@ function applySurface(runtimeConfigDir, layout, manifest, clusterMap, registry) 
     const resolved = resolveSurface(layout.configDir, skillManifest, clusterMap, registry);
     // Mirror installRuntimeArtifacts: skills kinds get per-runtime path rewrites
     // so SKILL.md bodies reference the install target (pathPrefix), not the
-    // converter's default ~/.claude paths (#813). Computed lazily so command-only
+    // converter's default .agents paths (#813). Computed lazily so command-only
     // runtimes do not trigger the install.js require.
     let pathPrefix = null;
     for (const kind of layout.kinds) {

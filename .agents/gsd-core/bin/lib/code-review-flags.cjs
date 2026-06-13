@@ -1,6 +1,6 @@
 "use strict";
 /**
- * Typed flag parser for the /gsd:code-review command (ADR-457 build-at-publish:
+ * Typed flag parser for the /gsd-code-review command (ADR-457 build-at-publish:
  * the hand-written bin/lib/code-review-flags.cjs collapsed to a TypeScript
  * source of truth). Behaviour is preserved byte-for-behaviour from the prior
  * hand-written .cjs; only types are added.

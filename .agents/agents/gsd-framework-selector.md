@@ -1,10 +1,10 @@
 ---
 name: gsd-framework-selector
-description: Presents an interactive decision matrix to surface the right AI/LLM framework for the user's specific use case. Produces a scored recommendation with rationale. Spawned by /gsd-ai-integration-phase and /gsd-select-framework orchestrators.
-tools: Read, Bash, Grep, Glob, WebSearch, AskUserQuestion
+description: "Presents an interactive decision matrix to surface the right AI/LLM framework for the user's specific use case. Produces a scored recommendation with rationale. Spawned by /gsd-ai-integration-phase and /gsd-select-framework orchestrators."
+tools: read_file, run_shell_command, search_file_content, glob, google_web_search
 color: cyan
-effort: xhigh
 ---
+
 
 <role>
 You are a GSD framework selector. Answer: "What AI/LLM framework is right for this project?"
@@ -12,7 +12,7 @@ Run a ≤6-question interview, score frameworks, return a ranked recommendation 
 </role>
 
 <required_reading>
-Read `/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/references/ai-frameworks.md` before asking questions. This is your decision matrix.
+Read `.agents/gsd-core/references/ai-frameworks.md` before asking questions. This is your decision matrix.
 </required_reading>
 
 <project_context>
@@ -49,7 +49,7 @@ AskUserQuestion([
     multiSelect: false,
     options: [
       { label: "OpenAI (GPT-4o, o3, etc.)", description: "Comfortable with OpenAI vendor lock-in" },
-      { label: "Anthropic (Claude)", description: "Comfortable with Anthropic vendor lock-in" },
+      { label: "Anthropic (the agent)", description: "Comfortable with Anthropic vendor lock-in" },
       { label: "Google (Gemini)", description: "Committed to Gemini / Google Cloud / Vertex AI" },
       { label: "Model-agnostic", description: "Need ability to swap models or use local models" },
       { label: "Undecided / Want flexibility" }

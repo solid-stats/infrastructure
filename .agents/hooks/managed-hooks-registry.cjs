@@ -10,7 +10,7 @@
  *     the worker source (retiring the pending-migration-to-typed-ir token
  *     on managed-hooks.test.cjs and orphaned-hooks.test.cjs, per #455).
  *
- * These are the files GSD ships into ~/.claude/hooks/ (or equivalent) and
+ * These are the files GSD ships into ~/.agents/hooks/ (or equivalent) and
  * checks for staleness after an update. Orphaned files from removed features
  * (e.g., gsd-intel-*.js) must NOT be listed here — that would cause permanent
  * stale warnings for users who haven't cleaned up manually (#1750).

@@ -20,7 +20,7 @@ full interactive control over each individual question.
 
 ## Combination rules
 
-- `--all --auto`: `--auto` wins for the discussion phase too (Claude picks
+- `--all --auto`: `--auto` wins for the discussion phase too (the agent picks
   recommended answers); `--all`'s contribution is just area auto-selection.
 - `--all --chain`: areas auto-selected, discussion interactive, then
   auto-advance to plan/execute (chain semantics).

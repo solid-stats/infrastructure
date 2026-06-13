@@ -1,8 +1,8 @@
-## Claude's Training as Hypothesis
+## the agent's Training as Hypothesis
 
 Training data is 6-18 months stale. Treat pre-existing knowledge as hypothesis, not fact.
 
-**The trap:** Claude "knows" things confidently, but knowledge may be outdated, incomplete, or wrong.
+**The trap:** the agent "knows" things confidently, but knowledge may be outdated, incomplete, or wrong.
 
 **The discipline:**
 1. **Verify before asserting** — don't state library capabilities without checking Context7 or official docs

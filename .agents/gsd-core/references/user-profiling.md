@@ -19,7 +19,7 @@ This reference document defines detection heuristics for behavioral profiling ac
 
 `dimension_id: communication_style`
 
-**What we're measuring:** How the developer phrases requests, instructions, and feedback -- the structural pattern of their messages to Claude.
+**What we're measuring:** How the developer phrases requests, instructions, and feedback -- the structural pattern of their messages to the agent.
 
 **Rating spectrum:**
 
@@ -70,7 +70,7 @@ When communication style varies systematically by project or task type, report t
 
 `dimension_id: decision_speed`
 
-**What we're measuring:** How quickly the developer makes choices when Claude presents options, alternatives, or trade-offs.
+**What we're measuring:** How quickly the developer makes choices when the agent presents options, alternatives, or trade-offs.
 
 **Rating spectrum:**
 
@@ -79,11 +79,11 @@ When communication style varies systematically by project or task type, report t
 | `fast-intuitive` | Decides immediately based on experience or gut feeling. Minimal deliberation. |
 | `deliberate-informed` | Requests comparison or summary before deciding. Wants to understand trade-offs. |
 | `research-first` | Delays decision to research independently. May leave and return with findings. |
-| `delegator` | Defers to Claude's recommendation. Trusts the suggestion. |
+| `delegator` | Defers to the agent's recommendation. Trusts the suggestion. |
 
 **Signal patterns:**
 
-1. **Response latency to options** -- How many messages between Claude presenting options and developer choosing. Immediate (same message or next) suggests fast-intuitive.
+1. **Response latency to options** -- How many messages between the agent presenting options and developer choosing. Immediate (same message or next) suggests fast-intuitive.
 2. **Comparison requests** -- Presence of "compare these", "what are the trade-offs?", "pros and cons?" suggests deliberate-informed.
 3. **External research indicators** -- Messages like "I looked into X and...", "according to the docs...", "I read that..." suggest research-first.
 4. **Delegation language** -- "just pick one", "whatever you recommend", "your call", "go with the best option" suggests delegator.
@@ -94,7 +94,7 @@ When communication style varies systematically by project or task type, report t
 1. If developer selects options within 1-2 messages of presentation AND uses decisive language ("use X", "go with A") AND rarely asks for comparisons --> `fast-intuitive`
 2. If developer requests trade-off analysis or comparison tables AND decides after receiving comparison AND asks clarifying questions --> `deliberate-informed`
 3. If developer defers decisions with "let me look into this" AND returns with external information AND cites documentation or articles --> `research-first`
-4. If developer uses delegation language (> 3 instances) AND rarely overrides Claude's choices AND says "sounds good" or "your call" --> `delegator`
+4. If developer uses delegation language (> 3 instances) AND rarely overrides the agent's choices AND says "sounds good" or "your call" --> `delegator`
 5. If no clear pattern OR evidence is split across multiple styles --> classify as the dominant style with a context-dependent note
 
 **Confidence scoring:**
@@ -171,7 +171,7 @@ Explanation depth often correlates with domain familiarity. A developer may want
 
 `dimension_id: debugging_approach`
 
-**What we're measuring:** How the developer approaches problems, errors, and unexpected behavior when working with Claude.
+**What we're measuring:** How the developer approaches problems, errors, and unexpected behavior when working with the agent.
 
 **Rating spectrum:**
 
@@ -179,8 +179,8 @@ Explanation depth often correlates with domain familiarity. A developer may want
 |--------|-------------|
 | `fix-first` | Pastes error, wants it fixed. Minimal diagnosis interest. Results-oriented. |
 | `diagnostic` | Shares error with context, wants to understand the cause before fixing. |
-| `hypothesis-driven` | Investigates independently first, brings specific theories to Claude for validation. |
-| `collaborative` | Wants to work through the problem step-by-step with Claude as a partner. |
+| `hypothesis-driven` | Investigates independently first, brings specific theories to the agent for validation. |
+| `collaborative` | Wants to work through the problem step-by-step with the agent as a partner. |
 
 **Signal patterns:**
 
@@ -194,7 +194,7 @@ Explanation depth often correlates with domain familiarity. A developer may want
 
 1. If developer pastes errors without context AND accepts fixes without root cause questions AND moves on immediately --> `fix-first`
 2. If developer provides error context AND asks "why is this happening?" AND wants explanation with the fix --> `diagnostic`
-3. If developer shares their own analysis AND proposes theories ("I think the issue is X because...") AND asks Claude to confirm or refute --> `hypothesis-driven`
+3. If developer shares their own analysis AND proposes theories ("I think the issue is X because...") AND asks the agent to confirm or refute --> `hypothesis-driven`
 4. If developer uses collaborative language ("let's", "what should we check?") AND prefers incremental diagnosis AND walks through problems together --> `collaborative`
 
 **Confidence scoring:**
@@ -277,7 +277,7 @@ UX philosophy is inherently project-dependent. A developer building a CLI tool i
 
 | Rating | Description |
 |--------|-------------|
-| `pragmatic-fast` | Uses what works, what Claude suggests, or what's fastest. Minimal evaluation. |
+| `pragmatic-fast` | Uses what works, what the agent suggests, or what's fastest. Minimal evaluation. |
 | `conservative` | Prefers well-known, battle-tested, widely-adopted options. Risk-averse. |
 | `thorough-evaluator` | Researches alternatives, reads docs, compares features and trade-offs before committing. |
 | `opinionated` | Has strong, pre-existing preferences for specific tools. Knows what they like. |
@@ -287,7 +287,7 @@ UX philosophy is inherently project-dependent. A developer building a CLI tool i
 1. **Library selection language** -- "just use whatever", "is X the standard?", "I want to compare A vs B", "we're using X, period"
 2. **Evaluation depth** -- Does the developer accept the first suggestion or ask for alternatives?
 3. **Stated preferences** -- Explicit mentions of preferred tools, past experience, or tool philosophy
-4. **Rejection patterns** -- Does the developer reject Claude's suggestions? On what basis (popularity, personal experience, docs quality)?
+4. **Rejection patterns** -- Does the developer reject the agent's suggestions? On what basis (popularity, personal experience, docs quality)?
 5. **Dependency attitude** -- "minimize dependencies", "no external deps", "add whatever we need" -- reveals philosophy about external code
 
 **Detection heuristics:**
@@ -295,7 +295,7 @@ UX philosophy is inherently project-dependent. A developer building a CLI tool i
 1. If developer accepts library suggestions without pushback AND uses phrases like "sounds good" or "go with that" AND rarely asks about alternatives --> `pragmatic-fast`
 2. If developer asks about popularity, maintenance, community AND prefers "industry standard" or "battle-tested" AND avoids new/experimental --> `conservative`
 3. If developer requests comparisons AND reads docs before deciding AND asks about edge cases, license, bundle size --> `thorough-evaluator`
-4. If developer names specific libraries unprompted AND overrides Claude's suggestions AND expresses strong preferences --> `opinionated`
+4. If developer names specific libraries unprompted AND overrides the agent's suggestions AND expresses strong preferences --> `opinionated`
 
 **Confidence scoring:**
 
@@ -321,16 +321,16 @@ Vendor philosophy may shift based on project importance or domain. Personal proj
 
 `dimension_id: frustration_triggers`
 
-**What we're measuring:** What causes visible frustration, correction, or negative emotional signals in the developer's messages to Claude.
+**What we're measuring:** What causes visible frustration, correction, or negative emotional signals in the developer's messages to the agent.
 
 **Rating spectrum:**
 
 | Rating | Description |
 |--------|-------------|
-| `scope-creep` | Frustrated when Claude does things that were not asked for. Wants bounded execution. |
-| `instruction-adherence` | Frustrated when Claude doesn't follow instructions precisely. Values exactness. |
-| `verbosity` | Frustrated when Claude over-explains or is too wordy. Wants conciseness. |
-| `regression` | Frustrated when Claude breaks working code while fixing something else. Values stability. |
+| `scope-creep` | Frustrated when the agent does things that were not asked for. Wants bounded execution. |
+| `instruction-adherence` | Frustrated when the agent doesn't follow instructions precisely. Values exactness. |
+| `verbosity` | Frustrated when the agent over-explains or is too wordy. Wants conciseness. |
+| `regression` | Frustrated when the agent breaks working code while fixing something else. Values stability. |
 
 **Signal patterns:**
 
@@ -342,9 +342,9 @@ Vendor philosophy may shift based on project importance or domain. Personal proj
 
 **Detection heuristics:**
 
-1. If developer corrects Claude for doing unrequested work AND uses language like "I only asked for X", "stop adding things", "stick to what I asked" --> `scope-creep`
+1. If developer corrects the agent for doing unrequested work AND uses language like "I only asked for X", "stop adding things", "stick to what I asked" --> `scope-creep`
 2. If developer repeats instructions AND corrects specific deviations from stated requirements AND emphasizes precision ("I specifically said...") --> `instruction-adherence`
-3. If developer asks Claude to be shorter AND skips explanations AND expresses annoyance at length ("too much", "just the answer") --> `verbosity`
+3. If developer asks the agent to be shorter AND skips explanations AND expresses annoyance at length ("too much", "just the answer") --> `verbosity`
 4. If developer expresses frustration at broken functionality AND checks for regressions AND says "you broke X while fixing Y" --> `regression`
 
 **Confidence scoring:**
@@ -377,8 +377,8 @@ Frustration triggers tend to be consistent across projects (personality-driven, 
 
 | Rating | Description |
 |--------|-------------|
-| `self-directed` | Reads code directly, figures things out independently. Asks Claude specific questions. |
-| `guided` | Asks Claude to explain relevant parts. Prefers guided understanding. |
+| `self-directed` | Reads code directly, figures things out independently. Asks the agent specific questions. |
+| `guided` | Asks the agent to explain relevant parts. Prefers guided understanding. |
 | `documentation-first` | Reads official docs and tutorials before diving in. References documentation. |
 | `example-driven` | Wants working examples to modify and learn from. Pattern-matching learner. |
 
@@ -393,7 +393,7 @@ Frustration triggers tend to be consistent across projects (personality-driven, 
 **Detection heuristics:**
 
 1. If developer references reading code directly AND asks specific targeted questions AND demonstrates independent investigation --> `self-directed`
-2. If developer asks Claude to explain concepts AND requests walkthroughs AND prefers Claude-mediated understanding --> `guided`
+2. If developer asks the agent to explain concepts AND requests walkthroughs AND prefers Claude-mediated understanding --> `guided`
 3. If developer cites documentation AND asks for doc links AND mentions reading tutorials or official guides --> `documentation-first`
 4. If developer requests examples AND modifies provided examples AND learns by pattern matching --> `example-driven`
 
@@ -566,7 +566,7 @@ The profiler agent must return JSON matching this exact schema, wrapped in `<ana
         }
       ],
       "summary": "One to two sentence description of the observed pattern",
-      "claude_instruction": "Imperative directive for Claude: 'Match structured communication style' not 'You tend to provide structured context'"
+      "claude_instruction": "Imperative directive for the agent: 'Match structured communication style' not 'You tend to provide structured context'"
     },
     "decision_speed": {
       "rating": "fast-intuitive|deliberate-informed|research-first|delegator",
@@ -644,7 +644,7 @@ The profiler agent must return JSON matching this exact schema, wrapped in `<ana
 - **`messages_analyzed`**: Total number of genuine user messages processed
 - **`message_threshold`**: Which threshold mode was triggered (`full`, `hybrid`, `insufficient`)
 - **`sensitive_excluded`**: Array of excluded sensitive content types with counts (empty array if none found)
-- **`claude_instruction`**: Must be written in imperative form directed at Claude. This field is how the profile becomes actionable.
+- **`claude_instruction`**: Must be written in imperative form directed at the agent. This field is how the profile becomes actionable.
   - Good: "Provide structured responses with headers and numbered lists to match this developer's communication style."
   - Bad: "You tend to like structured responses."
   - Good: "Ask before making changes beyond the stated request -- this developer values bounded execution."
@@ -672,7 +672,7 @@ The rating field should reflect the **dominant** pattern (most evidence). The su
 
 ### Phase 3 Resolution
 
-Context-dependent splits are resolved during Phase 3 orchestration. The orchestrator presents the split to the developer and asks which pattern represents their general preference. Until resolved, Claude uses the dominant pattern with awareness of the context-dependent variation.
+Context-dependent splits are resolved during Phase 3 orchestration. The orchestrator presents the split to the developer and asks which pattern represents their general preference. Until resolved, the agent uses the dominant pattern with awareness of the context-dependent variation.
 
 ---
 

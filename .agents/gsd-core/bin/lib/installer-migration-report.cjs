@@ -6,7 +6,7 @@
  * hand-written .cjs; only types are added.
  *
  * Resolution environment variable surface for #3541 — when the installer
- * runs without a TTY (typical /gsd:update path via Claude Code or any
+ * runs without a TTY (typical /gsd-update path via Claude Code or any
  * scripted update), prompt-user migration actions cannot be answered
  * interactively. Classification-based defaults apply; anything else falls
  * through to the hard assertion with a grouped, actionable error message.

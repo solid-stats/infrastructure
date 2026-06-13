@@ -5,7 +5,7 @@
  * truth). Behaviour is preserved byte-for-behaviour from the prior hand-written
  * .cjs; only types are added.
  *
- * Owns reviewer-selection policy projection for /gsd:review:
+ * Owns reviewer-selection policy projection for /gsd-review:
  * explicit flags > --all > review.default_reviewers > all detected.
  */
 Object.defineProperty(exports, "__esModule", { value: true });

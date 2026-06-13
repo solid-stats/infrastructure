@@ -1,7 +1,7 @@
 # Developer Profile
 
 > This profile was generated from session analysis. It contains behavioral directives
-> for Claude to follow when working with this developer. HIGH confidence dimensions
+> for the agent to follow when working with this developer. HIGH confidence dimensions
 > should be acted on directly. LOW confidence dimensions should be approached with
 > hedging ("Based on your profile, I'll try X -- let me know if that's off").
 

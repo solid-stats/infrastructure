@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gsd-hook-version: 1.5.0-rc.1
+// gsd-hook-version: 1.5.0-rc.2
 // Context Monitor - PostToolUse/AfterTool hook (Gemini uses AfterTool)
 // Reads context metrics from the statusline bridge file and injects
 // warnings when context usage is high. This makes the AGENT aware of
@@ -133,7 +133,7 @@ process.stdin.on('end', () => {
     const isGsdActive = fs.existsSync(path.join(cwd, '.planning', 'STATE.md'));
 
     // On CRITICAL with active GSD project, auto-record session state as a
-    // breadcrumb for /gsd-resume-work (#1974). Fire-and-forget subprocess —
+    // breadcrumb for /gsd:resume-work (#1974). Fire-and-forget subprocess —
     // doesn't block the hook or the agent. Fires ONCE per CRITICAL session,
     // guarded by warnData.criticalRecorded to prevent repeated overwrites
     // of the "crash moment" record on every debounce cycle.
@@ -142,7 +142,7 @@ process.stdin.on('end', () => {
         // Runtime-agnostic path: this hook lives at <runtime-config>/hooks/
         // and gsd-tools.cjs lives at <runtime-config>/gsd-core/bin/.
         // Using __dirname makes this work on Claude Code, OpenCode, Gemini,
-        // Kilo, etc. without hardcoding ~/.claude/.
+        // Kilo, etc. without hardcoding ~/.agents/.
         const gsdTools = path.join(__dirname, '..', 'gsd-core', 'bin', 'gsd-tools.cjs');
         // Coerce usedPct to a safe number in case bridge file is malformed
         const safeUsedPct = Number(usedPct) || 0;
@@ -166,7 +166,7 @@ process.stdin.on('end', () => {
         ? `CONTEXT CRITICAL: Usage at ${usedPct}%. Remaining: ${remaining}%. ` +
           'Context is nearly exhausted. Do NOT start new complex work or write handoff files — ' +
           'GSD state is already tracked in STATE.md. Inform the user so they can run ' +
-          '/gsd-pause-work at the next natural stopping point.'
+          '/gsd:pause-work at the next natural stopping point.'
         : `CONTEXT CRITICAL: Usage at ${usedPct}%. Remaining: ${remaining}%. ` +
           'Context is nearly exhausted. Inform the user that context is low and ask how they ' +
           'want to proceed. Do NOT autonomously save state or write handoff files unless the user asks.';

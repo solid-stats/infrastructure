@@ -685,7 +685,7 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
     case 'resolve-granularity': {
       // Parse optional --granularity <val> flag (space form only); positional is phase-type.
       // The =form (--granularity=<val>) is intentionally not supported: parseNamedArgs and
-      // the /gsd:plan-phase + init plan-phase paths accept only the space form, so supporting
+      // the /gsd-plan-phase + init plan-phase paths accept only the space form, so supporting
       // = here alone would create an inconsistency (#703).
       const granArgs = args.slice(1);
       let granOverride;
@@ -1743,7 +1743,7 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
 
     case 'update-context': {
       // #498: resolve the installed GSD version, scope, runtime, and config dir
-      // for /gsd:update. Replaces ~280 lines of inline bash in update.md with a
+      // for /gsd-update. Replaces ~280 lines of inline bash in update.md with a
       // tested projection. Emits the contract as JSON: { installedVersion,
       // scope, runtime, gsdDir }. Optional --config-dir / --runtime carry the
       // workflow's execution_context hints (the one thing only it can know).

@@ -14,7 +14,7 @@
 </task>
 ```
 
-**Why bad:** Vercel has a CLI. Claude should run `vercel --yes`. Never ask the user to do what Claude can automate via CLI/API.
+**Why bad:** Vercel has a CLI. the agent should run `vercel --yes`. Never ask the user to do what the agent can automate via CLI/API.
 
 ### Bad — Too many checkpoints
 
@@ -53,7 +53,7 @@ A plan should not interleave multiple checkpoint types with implementation tasks
 | "Handle errors" | "Wrap API calls in try/catch, return {error: string} on 4xx/5xx, show toast via sonner on client" |
 | "Set up the database" | "Add User and Project models to schema.prisma with UUID ids, email unique constraint, createdAt/updatedAt timestamps, run prisma db push" |
 
-**Specificity test:** Could a different Claude instance execute the task without asking clarifying questions? If not, add more detail.
+**Specificity test:** Could a different the agent instance execute the task without asking clarifying questions? If not, add more detail.
 
 ## Context Section Anti-Patterns
 
@@ -87,3 +87,44 @@ A plan should not interleave multiple checkpoint types with implementation tasks
 - "will be wired later", "dynamic in future phase", "skip for now"
 
 If a decision from CONTEXT.md says "display cost calculated from billing table in impulses", the plan must deliver exactly that. Not "static label /min" as a "v1". If the phase is too complex, recommend a phase split instead of silently reducing scope.
+
+## Comment-Text Discipline (HARD GATE)
+
+> Enforced at plan-write time by `verify.plan-structure` (the `validate_plan` step). Issue #429.
+
+When an `<acceptance_criteria>` or `<verify>` block uses a **negative grep** — `grep -c 'LITERAL' file == 0`, meaning "this literal must NOT appear in the file" — that same `LITERAL` must not appear verbatim anywhere in an `<action>` body. Verbatim code blocks, JSDoc samples, head-comment references, and "what NOT to do" illustrations get echoed into the file the executor writes, so the executor's commit-time gate fails on the *comment text*, not on a real code regression. The work is correct; the gate output is semantically wrong; the executor wastes cycles and learns to distrust the gate.
+
+**The gate:** plan creation FAILS (error, `valid: false`) when a confidently-extracted (quoted) negative-grep literal also appears in an `<action>` block. When the grep literal is unquoted and cannot be extracted unambiguously, the gate WARNS instead of failing (so you still get the plan, with the risk surfaced).
+
+### Bad — JSDoc sample echoes the forbidden literal
+
+```xml
+<task>
+  <action>
+    Add a `?from=` query param to the share link. Do NOT reintroduce the old
+    `?from=` referrer hack the JSDoc warned about.   <!-- echoes ?from= -->
+  </action>
+  <verify><automated>grep -c '?from=' src/animal-detail.tsx == 0</automated></verify>
+</task>
+```
+
+### Good — rephrase the comment by concept
+
+```xml
+<task>
+  <action>
+    Add the share-link query param. Do NOT reintroduce the legacy referrer hack.
+  </action>
+  <verify><automated>grep -c '?from=' src/animal-detail.tsx == 0</automated></verify>
+</task>
+```
+
+### Allowlist escape hatch
+
+When the literal MUST appear in the plan body verbatim — e.g. the plan documents the test file that exercises the gate itself, or the literal is part of the verification command's own grep regex — add a marker on its own line so the gate skips that literal:
+
+```
+<!-- planner-discipline-allow: ?from= -->
+```
+
+One marker per literal. The marker exempts only the exact literal it names.

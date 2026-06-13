@@ -22,13 +22,13 @@ NOTE: For comprehensive ecosystem research ("how do experts build this"), use /g
 <source_hierarchy>
 **MANDATORY: Context7 BEFORE WebSearch**
 
-Claude's training data is 6-18 months stale. Always verify.
+the agent's training data is 6-18 months stale. Always verify.
 
 1. **Context7 MCP FIRST** - Current docs, no hallucination
 2. **Official docs** - When Context7 lacks coverage
 3. **WebSearch LAST** - For comparisons and trends only
 
-See /home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/templates/discovery.md `<discovery_protocol>` for full protocol.
+See .agents/gsd-core/templates/discovery.md `<discovery_protocol>` for full protocol.
 </source_hierarchy>
 
 <process>
@@ -107,7 +107,7 @@ For: Choosing between options, new external integration.
 
 5. **Cross-verify:** Any WebSearch finding → confirm with Context7/official docs.
 
-6. **Create DISCOVERY.md** using /home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/templates/discovery.md structure:
+6. **Create DISCOVERY.md** using .agents/gsd-core/templates/discovery.md structure:
 
    - Summary with recommendation
    - Key findings per option
@@ -126,7 +126,7 @@ For: Architectural decisions, novel problems, high-risk choices.
 
 **Process:**
 
-1. **Scope the discovery** using /home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/templates/discovery.md:
+1. **Scope the discovery** using .agents/gsd-core/templates/discovery.md:
 
    - Define clear scope
    - Define include/exclude boundaries
@@ -160,7 +160,7 @@ For: Architectural decisions, novel problems, high-risk choices.
 
 6. **Create comprehensive DISCOVERY.md:**
 
-   - Full structure from /home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/templates/discovery.md
+   - Full structure from .agents/gsd-core/templates/discovery.md
    - Quality report with source attribution
    - Confidence by finding
    - If LOW confidence on any critical finding → add validation checkpoints
@@ -184,7 +184,7 @@ Ask: What do we need to learn before we can plan this phase?
   </step>
 
 <step name="create_discovery_scope">
-Use /home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/templates/discovery.md.
+Use .agents/gsd-core/templates/discovery.md.
 
 Include:
 
@@ -215,7 +215,7 @@ After creating DISCOVERY.md, check confidence level.
 
 If confidence is LOW:
 
-**Text mode (`workflow.text_mode: true` in config or `--text` flag):** Set `TEXT_MODE=true` if `--text` is present in `$ARGUMENTS` OR `text_mode` from init JSON is `true`. When TEXT_MODE is active, replace every `AskUserQuestion` call with a plain-text numbered list and ask the user to type their choice number. This is required for non-Claude runtimes (OpenAI Codex, Gemini CLI, etc.) where `AskUserQuestion` is not available.
+**Text mode (`workflow.text_mode: true` in config or `--text` flag):** Set `TEXT_MODE=true` if `--text` is present in `$ARGUMENTS` OR `text_mode` from init JSON is `true`. When TEXT_MODE is active, replace every `AskUserQuestion` call with a plain-text numbered list and ask the user to type their choice number. This is required for non-the agent runtimes (OpenAI Codex, Gemini CLI, etc.) where `AskUserQuestion` is not available.
 Use AskUserQuestion:
 
 - header: "Low Conf."

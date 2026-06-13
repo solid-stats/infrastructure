@@ -9,7 +9,7 @@
  * the prior hand-written .cjs; only types are added.
  *
  * Background: #2808 unified all GSD skill installs to register under the hyphen
- * form (`name: gsd-<cmd>`). The legacy colon form `/gsd:<cmd>` is no longer
+ * form (`name: gsd-<cmd>`). The legacy colon form `/gsd-<cmd>` is no longer
  * routable by Claude Code skill installs, but ~50 runtime emissions in
  * bin/lib/*.cjs still hardcoded it (#3584). Codex installs need the shell-var
  * `$gsd-<cmd>` form. This module is the only place the runtime should decide
@@ -40,12 +40,12 @@ function formatGsdSlash(commandName, runtime) {
     if (commandName === '')
         return commandName;
     // Strip any existing leading prefix so the helper is idempotent and accepts
-    // both legacy `/gsd:<name>` and canonical hyphen-form input (plus the bare
-    // `gsd:<name>` shorthand and codex `$gsd-<name>` shell-var input).
+    // both legacy `/gsd-<name>` and canonical hyphen-form input (plus the bare
+    // `gsd-<name>` shorthand and codex `$gsd-<name>` shell-var input).
     const stripped = commandName.replace(/^[/$]?gsd[-:]/i, '');
     // If the regex matched nothing (no prefix), the input is already a bare name.
     const bare = stripped === commandName ? commandName : stripped;
-    // Defensive: a degenerate input like `/gsd:`, `gsd-`, or whitespace-only
+    // Defensive: a degenerate input like `/gsd-`, `gsd-`, or whitespace-only
     // normalizes to empty. Returning the original colon-form would re-emit the
     // deprecated shape that this module exists to suppress (#3584). Return an
     // empty string so callers see "no command" rather than the broken input.
@@ -61,8 +61,13 @@ function formatGsdSlash(commandName, runtime) {
     const tail = wsMatch && wsMatch[2] ? wsMatch[2] : '';
     const runtimeText = (typeof runtime === 'string' && runtime ? runtime : 'claude').toLowerCase();
     const rt = (0, runtime_name_policy_cjs_1.canonicalizeRuntimeName)(runtimeText) || runtimeText;
-    if (rt === 'codex') {
-        // Codex skills are invoked as $gsd-<cmd> (shell-var syntax). The command
+    // Descriptor-driven: look up commandStyle from the capability registry.
+    // Mirrors the lazy-require pattern from runtime-homes.cts §getGlobalConfigDir.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { runtimes } = require('./capability-registry.cjs');
+    const style = runtimes[rt]?.runtime?.commandStyle;
+    if (style === 'shell-var') {
+        // shell-var runtimes (currently: codex) use $gsd-<cmd> syntax. The command
         // token is lowercased because shell-var identifiers are conventionally
         // lowercase; matches the convertCodexSlash() projection in bin/install.js.
         return `$gsd-${token.toLowerCase()}${tail}`;

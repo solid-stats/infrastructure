@@ -8,7 +8,7 @@
 ## Dispatch
 
 ```
-Read @/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/workflows/discuss-phase-power.md
+Read @.agents/gsd-core/workflows/discuss-phase-power.md
 ```
 
 Execute it end-to-end. Do not continue with the standard interactive steps.

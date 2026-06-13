@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gsd-hook-version: 1.5.0-rc.1
+// gsd-hook-version: 1.5.0-rc.2
 // Claude Code Statusline - GSD Edition
 // Shows: model | current task (or GSD state) | directory | context usage
 
@@ -365,7 +365,7 @@ function runStatusline() {
     let task = '';
     const homeDir = os.homedir();
     // Respect CLAUDE_CONFIG_DIR for custom config directory setups (#870)
-    const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude');
+    const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.agents');
     const todosDir = path.join(claudeDir, 'todos');
     if (session && fs.existsSync(todosDir)) {
       try {
@@ -406,12 +406,12 @@ function runStatusline() {
         const cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
         const { showUpdate, staleWarning } = evaluateUpdateCache(cache);
         if (showUpdate) {
-          gsdUpdate = '\x1b[33m⬆ /gsd-update\x1b[0m │ ';
+          gsdUpdate = '\x1b[33m⬆ /gsd:update\x1b[0m │ ';
         }
         if (staleWarning === 'dev') {
           gsdUpdate += '\x1b[33m⚠ dev install — re-run installer to sync hooks\x1b[0m │ ';
         } else if (staleWarning === 'stale') {
-          gsdUpdate += '\x1b[31m⚠ stale hooks — run /gsd-update\x1b[0m │ ';
+          gsdUpdate += '\x1b[31m⚠ stale hooks — run /gsd:update\x1b[0m │ ';
         }
       } catch (e) {}
     }

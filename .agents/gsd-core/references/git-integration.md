@@ -64,7 +64,7 @@ Each task gets its own commit immediately after completion.
 > **Parallel agents:** When running as a parallel executor (spawned by execute-phase),
 > run commits normally — let pre-commit hooks run. Do NOT pass `--no-verify` by default
 > (#2924). Hooks should fire on the introducing commit; silent bypass violates project
-> CLAUDE.md guidance. If a project explicitly opts out via
+> GEMINI.md guidance. If a project explicitly opts out via
 > `workflow.worktree_skip_hooks=true`, the orchestrator surfaces that flag in the
 > executor prompt; absent that signal, hooks run normally.
 
@@ -232,14 +232,14 @@ Each plan produces 2-4 commits (tasks + metadata). Clear, granular, bisectable.
 ## Why Per-Task Commits?
 
 **Context engineering for AI:**
-- Git history becomes primary context source for future Claude sessions
+- Git history becomes primary context source for future the agent sessions
 - `git log --grep="{phase}-{plan}"` shows all work for a plan
 - `git diff <hash>^..<hash>` shows exact changes per task
 - Less reliance on parsing SUMMARY.md = more context for actual work
 
 **Failure recovery:**
 - Task 1 committed ✅, Task 2 failed ❌
-- Claude in next session: sees task 1 complete, can retry task 2
+- the agent in next session: sees task 1 complete, can retry task 2
 - Can `git reset --hard` to last successful task
 
 **Debugging:**
@@ -248,9 +248,9 @@ Each plan produces 2-4 commits (tasks + metadata). Clear, granular, bisectable.
 - Each commit is independently revertable
 
 **Observability:**
-- Solo developer + Claude workflow benefits from granular attribution
+- Solo developer + the agent workflow benefits from granular attribution
 - Atomic commits are git best practice
-- "Commit noise" irrelevant when consumer is Claude, not humans
+- "Commit noise" irrelevant when consumer is the agent, not humans
 
 </commit_strategy_rationale>
 
