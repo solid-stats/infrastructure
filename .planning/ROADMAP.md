@@ -198,8 +198,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 12-04-PLAN.md — Host swap + kubelet NoSwap drop-in over SSH + docs/resource-protection.md (PREP-02) [wave 2, operator-gated]
-- [ ] 12-05-PLAN.md — Live apply: preflight sizing + bootstrap apply + QoS rollout + validate-phase-12.sh (PREP-01/03/04/05) [wave 2, operator-gated]
+- [x] 12-04-PLAN.md — Host swap + kubelet NoSwap drop-in over SSH + docs/resource-protection.md (PREP-02) [wave 2, operator-gated]
+- [x] 12-05-PLAN.md — Live apply: preflight sizing + bootstrap apply + QoS rollout + validate-phase-12.sh (PREP-01/03/04/05) [wave 2, operator-gated]
 
 #### Phase 13: Deploy Pipeline & Metrics Stack
 
@@ -302,7 +302,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 9. web Runtime Wiring | v2.0 | 1/1 | Complete | 2026-06-12 |
 | 10. S3 Lifecycle & Retention | v2.0 | 3/3 | Complete | 2026-06-12 |
 | 11. Production Cutover | v2.0 | 2/2 | Complete | 2026-06-12 |
-| 12. Resource Protection & Obs Foundation | v3.0 | 3/5 | In Progress|  |
+| 12. Resource Protection & Obs Foundation | v3.0 | 5/5 | Complete   | 2026-06-13 |
 | 13. Deploy Pipeline & Metrics Stack | v3.0 | 0/TBD | Not started | - |
 | 14. Public Edge & Grafana TLS | v3.0 | 0/TBD | Not started | - |
 | 15. Log Stack | v3.0 | 0/TBD | Not started | - |
