@@ -76,6 +76,14 @@ data:
       name: Prometheus
       type: prometheus
       url: http://prometheus-server.monitoring.svc:80
+    - access: proxy
+      isDefault: false
+      jsonData:
+        maxLines: 1000
+        timeout: "60"
+      name: Loki
+      type: loki
+      url: http://loki.monitoring.svc:3100
 ---
 # Source: grafana/templates/pvc.yaml
 apiVersion: v1
@@ -180,7 +188,7 @@ spec:
         app.kubernetes.io/instance: grafana
         app.kubernetes.io/version: "12.3.1"
       annotations:
-        checksum/config: 7e49dce84e20af431d72c0e74094d2f2143a4d6901ec7f474659828b05b0f837
+        checksum/config: f9cbe975eccb0a73c81c359f0f0c3888a8324f8410fddfc6ae576a69e0c2a3d3
         checksum/sc-dashboard-provider-config: e70bf6a851099d385178a76de9757bb0bef8299da6d8443602590e44f05fdf24
         kubectl.kubernetes.io/default-container: grafana
     spec:
@@ -233,6 +241,8 @@ spec:
               value: "/tmp/dashboards"
             - name: RESOURCE
               value: "both"
+            - name: NAMESPACE
+              value: "monitoring"
             - name: REQ_USERNAME
               valueFrom:
                 secretKeyRef:

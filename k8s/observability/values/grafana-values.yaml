@@ -64,10 +64,15 @@ sidecar:
     label: grafana_dashboard
     labelValue: "1"
     folder: /tmp/dashboards
-    searchNamespace: null
+    # Restrict sidecar search to monitoring namespace so chart renders a namespaced
+    # Role instead of a ClusterRole (obs-ci-deployer is namespace-scoped; ClusterRole
+    # is forbidden in k8s/observability/ by validate-obs-manifests.py gate T-15-07).
+    searchNamespace: monitoring
 
-# Prometheus datasource provisioned at deploy time — zero UI action needed (MET-05).
-# URL: prometheus-server Service rendered by helm template in 13-02.
+# Datasources provisioned at deploy time (MET-05, LOG-03).
+# Both entries live in one datasources.yaml key — grafana/grafana chart v10.5.15
+# does not support a separate additionalDataSources top-level key; all datasources
+# must be listed under datasources.datasources\.yaml.datasources.
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -79,3 +84,13 @@ datasources:
         isDefault: true
         jsonData:
           timeInterval: "30s"
+      # Loki added as a second (non-default) datasource (LOG-03, 15-03).
+      # URL: fullnameOverride: loki in 15-01 → Service named exactly 'loki'.
+      - name: Loki
+        type: loki
+        url: http://loki.monitoring.svc:3100
+        access: proxy
+        isDefault: false
+        jsonData:
+          maxLines: 1000
+          timeout: "60"
