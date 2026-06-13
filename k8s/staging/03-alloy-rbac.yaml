@@ -1,0 +1,46 @@
+# Operator-applied bootstrap manifest — DO NOT apply from CI.
+# This file is applied ONCE by the operator: kubectl apply -f k8s/staging/03-alloy-rbac.yaml
+# CI (GitHub Actions) never applies this file. The deploy glob must exclude
+# 03-alloy-rbac.yaml so that each master-push deploy does not overwrite operator-managed RBAC.
+#
+# Contains Alloy's ClusterRole + ClusterRoleBinding.
+# The rendered 80-alloy.yaml uses rbac.create:false — cluster RBAC lives here only.
+# obs-ci-deployer is namespace-scoped and cannot create ClusterRole (Pitfall 4).
+# T-15-04 mitigation: read-only get/list/watch only; no write verbs, no secrets access.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/part-of: solid-stats
+rules:
+  # Required for discovery.kubernetes (pod/service/endpoint discovery)
+  - apiGroups: ["", "discovery.k8s.io", "networking.k8s.io"]
+    resources: ["endpoints", "endpointslices", "ingresses", "pods", "services"]
+    verbs: ["get", "list", "watch"]
+  # Required for loki.source.kubernetes (pod log tailing via k8s API)
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  # Required for loki.source.kubernetes_events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy
+  labels:
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/part-of: solid-stats
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: monitoring

@@ -69,14 +69,16 @@ jobs:
           # Exclude operator-bootstrapped, non-CI-managed manifests:
           # 00-namespace.yaml (cluster-scoped Namespace), 01-ci-rbac.yaml
           # (runtime ci-deployer RBAC), 01-obs-rbac.yaml (obs namespaces +
-          # obs-ci-deployer RBAC), and 02-priority-classes.yaml (cluster-scoped
-          # PriorityClass). All four are applied once by the operator and must
-          # not be overwritten by CI on each master-push deploy.
+          # obs-ci-deployer RBAC), 02-priority-classes.yaml (cluster-scoped
+          # PriorityClass), and 03-alloy-rbac.yaml (Alloy ClusterRole+CRB —
+          # cluster-scoped; obs-ci-deployer cannot create ClusterRole). All five
+          # are applied once by the operator and must not be overwritten by CI.
           find k8s/staging -maxdepth 1 -name '*.yaml' \
             ! -name '00-namespace.yaml' \
             ! -name '01-ci-rbac.yaml' \
             ! -name '01-obs-rbac.yaml' \
             ! -name '02-priority-classes.yaml' \
+            ! -name '03-alloy-rbac.yaml' \
             | sort | sed 's/^/-f /' | \
             xargs kubectl apply -n "$K8S_NAMESPACE" --dry-run=server
 
@@ -135,14 +137,16 @@ jobs:
           # Exclude operator-bootstrapped, non-CI-managed manifests:
           # 00-namespace.yaml (cluster-scoped Namespace), 01-ci-rbac.yaml
           # (runtime ci-deployer RBAC), 01-obs-rbac.yaml (obs namespaces +
-          # obs-ci-deployer RBAC), and 02-priority-classes.yaml (cluster-scoped
-          # PriorityClass). All four are applied once by the operator and must
-          # not be overwritten by CI on each master-push deploy.
+          # obs-ci-deployer RBAC), 02-priority-classes.yaml (cluster-scoped
+          # PriorityClass), and 03-alloy-rbac.yaml (Alloy ClusterRole+CRB —
+          # cluster-scoped; obs-ci-deployer cannot create ClusterRole). All five
+          # are applied once by the operator and must not be overwritten by CI.
           find k8s/staging -maxdepth 1 -name '*.yaml' \
             ! -name '00-namespace.yaml' \
             ! -name '01-ci-rbac.yaml' \
             ! -name '01-obs-rbac.yaml' \
             ! -name '02-priority-classes.yaml' \
+            ! -name '03-alloy-rbac.yaml' \
             | sort | sed 's/^/-f /' | \
             xargs kubectl apply -n "$K8S_NAMESPACE"
 
