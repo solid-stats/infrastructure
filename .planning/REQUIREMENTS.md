@@ -12,7 +12,7 @@ a trimmed, single-replica footprint (no VPS resize).
 ### Preflight & Resource Protection (PREP)
 
 - [x] **PREP-01**: Operator can re-run a resource preflight that snapshots node CPU/memory/disk and existing allocations before any observability workload is applied.
-- [ ] **PREP-02**: Host swap (persistent) is configured on the staging node for host-process relief, documented as NOT a substitute for pod memory limits.
+- [x] **PREP-02**: Host swap (persistent) is configured on the staging node for host-process relief, documented as NOT a substitute for pod memory limits.
 - [x] **PREP-03**: PriorityClasses (`app-critical` ≫ `obs-background`) exist so the scheduler evicts observability pods before postgres/server-2 under memory pressure.
 - [x] **PREP-04**: The app workloads (postgres, server-2) run at Guaranteed QoS (requests == limits) so they are last to be evicted.
 - [x] **PREP-05**: Two namespaces (`monitoring`, `error-tracking`) exist, each with a non-default ServiceAccount and least-privilege RBAC, separate from the runtime `ci-deployer`.
