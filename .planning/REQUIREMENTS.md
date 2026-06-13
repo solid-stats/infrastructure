@@ -13,9 +13,9 @@ a trimmed, single-replica footprint (no VPS resize).
 
 - [x] **PREP-01**: Operator can re-run a resource preflight that snapshots node CPU/memory/disk and existing allocations before any observability workload is applied.
 - [ ] **PREP-02**: Host swap (persistent) is configured on the staging node for host-process relief, documented as NOT a substitute for pod memory limits.
-- [ ] **PREP-03**: PriorityClasses (`app-critical` ≫ `obs-background`) exist so the scheduler evicts observability pods before postgres/server-2 under memory pressure.
+- [x] **PREP-03**: PriorityClasses (`app-critical` ≫ `obs-background`) exist so the scheduler evicts observability pods before postgres/server-2 under memory pressure.
 - [ ] **PREP-04**: The app workloads (postgres, server-2) run at Guaranteed QoS (requests == limits) so they are last to be evicted.
-- [ ] **PREP-05**: Two namespaces (`monitoring`, `error-tracking`) exist, each with a non-default ServiceAccount and least-privilege RBAC, separate from the runtime `ci-deployer`.
+- [x] **PREP-05**: Two namespaces (`monitoring`, `error-tracking`) exist, each with a non-default ServiceAccount and least-privilege RBAC, separate from the runtime `ci-deployer`.
 
 ### Metrics & Dashboards (MET)
 
@@ -101,9 +101,9 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 |-------------|-------|--------|
 | PREP-01 | Phase 12 | Complete |
 | PREP-02 | Phase 12 | Pending |
-| PREP-03 | Phase 12 | Pending |
+| PREP-03 | Phase 12 | Complete |
 | PREP-04 | Phase 12 | Pending |
-| PREP-05 | Phase 12 | Pending |
+| PREP-05 | Phase 12 | Complete |
 | DEP-01 | Phase 13 | Pending |
 | DEP-02 | Phase 13 | Pending |
 | DEP-03 | Phase 13 | Pending |

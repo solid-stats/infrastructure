@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Staging Observability Stack
 status: executing
-stopped_at: Completed 10-03-PLAN.md (docs tasks)
-last_updated: "2026-06-13T16:06:13.341Z"
+stopped_at: Completed 12-02-PLAN.md
+last_updated: "2026-06-13T16:16:31.319Z"
 last_activity: 2026-06-13 -- Phase 12 execution started
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 5
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 12 (Resource Protection & Obs Foundation) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-06-13 -- Phase 12 execution started
 
@@ -70,6 +70,7 @@ Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 | Phase 11-production-cutover P01 | 20 | 1 tasks | 1 files |
 | Phase 11-production-cutover P02 | 25 | 2 tasks | 2 files |
 | Phase 12 P01 | 186 | 3 tasks | 3 files |
+| Phase 12 P02 | 296 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -103,6 +104,9 @@ Recent decisions affecting current work:
 - [Phase ?]: checks script+runbook marker strings; file existence alone insufficient (T-11-08)
 - [Phase ?]: Phase 12-01 validation harness
 - [Phase ?]: Phase 12-01 validation harness
+- [Phase ?]: obs-ci-deployer Role is namespace-scoped to monitoring and error-tracking only — no access to solid-stats-staging enforced by k8s RBAC namespace boundary
+- [Phase ?]: globalDefault:false on both PriorityClasses — prevents retroactive re-prioritisation of unclassed pods (Pitfall 6)
+- [Phase ?]: daemonsets added to obs-ci-deployer Role for Grafana Alloy (Phase 15)
 
 ### Pending Todos
 
@@ -183,8 +187,8 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-13T16:05:56.319Z
-Stopped at: Completed 10-03-PLAN.md (docs tasks)
+Last session: 2026-06-13T16:16:31.316Z
+Stopped at: Completed 12-02-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
