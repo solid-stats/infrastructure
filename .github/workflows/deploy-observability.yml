@@ -97,4 +97,6 @@ jobs:
           kubectl -n monitoring rollout status deployment/kube-state-metrics --timeout=120s
           kubectl -n monitoring rollout status daemonset/node-exporter --timeout=120s
           kubectl -n monitoring rollout status deployment/postgres-exporter --timeout=120s
+          kubectl -n monitoring rollout status statefulset/loki --timeout=180s
+          kubectl -n monitoring rollout status daemonset/alloy --timeout=120s
           echo "All obs workloads rolled out successfully"
