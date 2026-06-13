@@ -67,9 +67,17 @@ jobs:
         run: |
           set -euo pipefail
           # Exclude operator-bootstrapped, non-CI-managed manifests:
-          # 00-namespace.yaml (cluster-scoped Namespace) and 01-ci-rbac.yaml
-          # (the namespace-scoped ci-deployer Role cannot get/create either).
-          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '00-namespace.yaml' ! -name '01-ci-rbac.yaml' | sort | sed 's/^/-f /' | \
+          # 00-namespace.yaml (cluster-scoped Namespace), 01-ci-rbac.yaml
+          # (runtime ci-deployer RBAC), 01-obs-rbac.yaml (obs namespaces +
+          # obs-ci-deployer RBAC), and 02-priority-classes.yaml (cluster-scoped
+          # PriorityClass). All four are applied once by the operator and must
+          # not be overwritten by CI on each master-push deploy.
+          find k8s/staging -maxdepth 1 -name '*.yaml' \
+            ! -name '00-namespace.yaml' \
+            ! -name '01-ci-rbac.yaml' \
+            ! -name '01-obs-rbac.yaml' \
+            ! -name '02-priority-classes.yaml' \
+            | sort | sed 's/^/-f /' | \
             xargs kubectl apply -n "$K8S_NAMESPACE" --dry-run=server
 
   deploy:
@@ -125,9 +133,17 @@ jobs:
         run: |
           set -euo pipefail
           # Exclude operator-bootstrapped, non-CI-managed manifests:
-          # 00-namespace.yaml (cluster-scoped Namespace) and 01-ci-rbac.yaml
-          # (the namespace-scoped ci-deployer Role cannot get/create either).
-          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '00-namespace.yaml' ! -name '01-ci-rbac.yaml' | sort | sed 's/^/-f /' | \
+          # 00-namespace.yaml (cluster-scoped Namespace), 01-ci-rbac.yaml
+          # (runtime ci-deployer RBAC), 01-obs-rbac.yaml (obs namespaces +
+          # obs-ci-deployer RBAC), and 02-priority-classes.yaml (cluster-scoped
+          # PriorityClass). All four are applied once by the operator and must
+          # not be overwritten by CI on each master-push deploy.
+          find k8s/staging -maxdepth 1 -name '*.yaml' \
+            ! -name '00-namespace.yaml' \
+            ! -name '01-ci-rbac.yaml' \
+            ! -name '01-obs-rbac.yaml' \
+            ! -name '02-priority-classes.yaml' \
+            | sort | sed 's/^/-f /' | \
             xargs kubectl apply -n "$K8S_NAMESPACE"
 
       - name: Verify rollouts
