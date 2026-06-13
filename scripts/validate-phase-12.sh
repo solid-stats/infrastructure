@@ -108,9 +108,12 @@ echo "ok: obs-ci-deployer SA exists in error-tracking"
 echo ""
 echo "--- PREP-05: RBAC isolation ---"
 
+# `kubectl auth can-i` signals the answer via exit code (0 for "yes", 1 for "no"),
+# which trips `set -e` on the command substitution. Capture stdout and swallow the
+# exit code with `|| true` so the assert below — not the exit code — is the gate.
 can_deploy="$(kubectl auth can-i create deployments \
   --as=system:serviceaccount:monitoring:obs-ci-deployer \
-  -n monitoring)"
+  -n monitoring 2>/dev/null || true)"
 assert "obs-ci-deployer can create deployments in monitoring" "$can_deploy" "yes"
 
 # ---------------------------------------------------------------------------
@@ -119,7 +122,7 @@ assert "obs-ci-deployer can create deployments in monitoring" "$can_deploy" "yes
 
 cannot_access="$(kubectl auth can-i get pods \
   --as=system:serviceaccount:monitoring:obs-ci-deployer \
-  -n "${namespace}")"
+  -n "${namespace}" 2>/dev/null || true)"
 assert "obs-ci-deployer cannot get pods in ${namespace}" "$cannot_access" "no"
 
 # ---------------------------------------------------------------------------
