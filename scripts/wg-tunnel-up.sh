@@ -63,6 +63,7 @@ printf '%s' "$WG_PRIVATE_KEY" | sudo wg set "$WG_INTERFACE" \
   private-key /dev/stdin \
   peer "$WG_PEER_PUBLIC_KEY" \
   endpoint "$WG_ENDPOINT" \
+  persistent-keepalive 25 \
   allowed-ips "$WG_ALLOWED_IPS"
 
 # --- 4. Bring interface up --------------------------------------------------
@@ -76,6 +77,12 @@ sudo ip link set up dev "$WG_INTERFACE"
 echo "Waiting for handshake (timeout: ${HANDSHAKE_TIMEOUT_SECS}s)..."
 start_epoch=$(date +%s)
 while true; do
+  # Prime: WireGuard initiates a handshake only when an outbound packet needs
+  # to reach the peer. Poke the API server through the tunnel to force that
+  # initiation (the connect may fail until the tunnel is up — we only need it
+  # to queue a packet so the handshake starts).
+  timeout 1 bash -c "echo > /dev/tcp/$K8S_API_HOST/$K8S_API_PORT" 2>/dev/null || true
+
   if sudo wg show "$WG_INTERFACE" latest-handshakes | grep -qP '\t[1-9][0-9]*$'; then
     echo "Handshake complete."
     break
