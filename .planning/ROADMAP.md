@@ -220,7 +220,7 @@ Plans:
 - [x] 13-01-PLAN.md — Validation scaffold + obs secret renderer: render-obs-secrets.py + validate-obs-manifests.py + validate-phase-13.sh (DEP-04) [wave 1]
 - [x] 13-02-PLAN.md — Helm render: Prometheus + kube-state-metrics + node-exporter + postgres-exporter values + manifests (DEP-01, MET-01/02/03) [wave 1]
 - [x] 13-03-PLAN.md — Helm render: Grafana datasource + sidecar + 4 vendored dashboards as ConfigMaps (DEP-01, MET-05, MET-06) [wave 1]
-- [ ] 13-04-PLAN.md — Prometheus SD ClusterRole into 01-obs-rbac.yaml + rabbitmq 15692/plugin + deploy-observability.yml (DEP-02, DEP-03, MET-04) [wave 1]
+- [x] 13-04-PLAN.md — Prometheus SD ClusterRole into 01-obs-rbac.yaml + rabbitmq 15692/plugin + deploy-observability.yml (DEP-02, DEP-03, MET-04) [wave 1]
 
 **Wave 2** *(operator bootstrap — autonomous:false)*
 
@@ -319,7 +319,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 10. S3 Lifecycle & Retention | v2.0 | 3/3 | Complete | 2026-06-12 |
 | 11. Production Cutover | v2.0 | 2/2 | Complete | 2026-06-12 |
 | 12. Resource Protection & Obs Foundation | v3.0 | 5/5 | Complete   | 2026-06-13 |
-| 13. Deploy Pipeline & Metrics Stack | v3.0 | 3/6 | In Progress|  |
+| 13. Deploy Pipeline & Metrics Stack | v3.0 | 4/6 | In Progress|  |
 | 14. Public Edge & Grafana TLS | v3.0 | 0/TBD | Not started | - |
 | 15. Log Stack | v3.0 | 0/TBD | Not started | - |
 | 16. Error Tracking (GlitchTip) | v3.0 | 0/TBD | Not started | - |
