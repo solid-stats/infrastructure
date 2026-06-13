@@ -1,20 +1,19 @@
 ---
-status: testing
+status: complete
 phase: 10-s3-lifecycle-retention
 source: [10-VERIFICATION.md]
 started: 2026-06-13T01:40:00Z
-updated: 2026-06-13T01:40:00Z
+updated: 2026-06-13T06:05:00Z
 ---
 
 ## Current Test
 
-number: 1
-name: S3-03 — Timeweb S3 lifecycle support proven empirically (operator-gated)
+number: 3
+name: S3-03 proven + 30-day retention APPLIED to backups/postgres/ (operator-executed 2026-06-13)
 expected: |
-  Operator runs the probe Job and (after review) the apply script against live Timeweb S3,
-  records the API-support result + an observed x-amz-expiration as evidence in docs/s3-lifecycle.md,
-  THEN applies the 30-day retention to backups/postgres/. Retention is not relied upon until proven.
-awaiting: operator execution (consequential: applying retention DELETES old backups; not run unattended)
+  Empirical proof recorded (API supported, PUT/GET/x-amz-expiration), then the 30-day retention
+  applied to backups/postgres/ with operator confirmation after a backup-inventory review.
+result: ✅ DONE 2026-06-13. All three tests resolved; retention live. See per-test results below.
 
 ## Tests
 
@@ -28,18 +27,18 @@ result: ✅ x-amz-expiration PRESENT (2026-06-13). A reversible PUT→GET round-
 
 ### 3. Apply real retention to backups/postgres/ (consequential)
 expected: `bash scripts/apply-s3-lifecycle.sh` applies config/s3/backups-lifecycle.json (30-day expiration on backups/postgres/ + abort-incomplete-multipart 7d). GET-before-PUT aborts if a different config exists unless FORCE_OVERWRITE=1. `get-bucket-lifecycle-configuration` round-trips the applied policy.
-result: [pending — operator] Run ONLY after tests 1-2 pass and evidence is recorded in docs/s3-lifecycle.md. This DELETES backup objects older than 30 days — confirm the retention window is intended first.
+result: ✅ APPLIED 2026-06-13 (operator-confirmed). `FORCE_OVERWRITE=1 bash scripts/apply-s3-lifecycle.sh` → `lifecycle configuration applied successfully`. The guard WARNed on the leftover `probe-roundtrip` rule, FORCE_OVERWRITE=1 replaced it with config/s3/backups-lifecycle.json (30-day expire on backups/postgres/ + abort-incomplete-multipart 7d). Pre-apply inventory: 37 backups / 111 objects, 2026-05-10 → 2026-06-13, ~904 MB; 30-day cutoff 2026-05-14 → the 6 oldest backups (05-10..05-13, 18 objects) will async-expire within ~24h; 31 recent backups (incl. today's 06-13) retained. Async deletion observable via `aws s3 ls backups/postgres/ --recursive | wc -l` dropping from 111.
 
 ## Summary
 
 total: 3
-passed: 0
-issues: 1
-pending: 1
+passed: 3
+issues: 0
+pending: 0
 skipped: 0
-blocked: 1
+blocked: 0
 
-note: 2026-06-13 — S3-03 PROVEN. Timeweb fully supports the lifecycle API: PUT→GET round-trip OK + x-amz-expiration computed (reversible test on isolated s3-lifecycle-probe/). CRITICAL caveat: delete-bucket-lifecycle is a NO-OP — a config can only be REPLACED via PUT, never removed (rollback = PUT new config). Test 3 (destructive apply to backups/postgres/) now only gated on: (a) backup-inventory review (blast radius), (b) operator confirmation. The apply runs with FORCE_OVERWRITE=1 (a harmless leftover probe rule is present; the apply PUT replaces it). Latent follow-up (non-blocking): the apply guard + probe heuristic crash on a CLEAN bucket via the aws-cli NoneType bug — fix to read raw <Code>; does not affect this already-non-clean bucket.
+note: 2026-06-13 — PHASE 10 COMPLETE. S3-03 proven (Timeweb supports GET/PUT/x-amz-expiration; reversible round-trip) and the 30-day retention APPLIED to backups/postgres/ after a backup-inventory review + operator confirmation. 6 oldest backups (>30d) will async-expire; 31 retained. CRITICAL caveat carried forward: delete-bucket-lifecycle is a NO-OP on Timeweb — a config can only be REPLACED via PUT, never removed (rollback = PUT new config); documented in docs/s3-lifecycle.md §7. Latent follow-up (non-blocking, v2.x): the apply guard + probe heuristic crash on a CLEAN bucket via the aws-cli NoneType bug — fix to classify from the raw <Code>; does not affect this already-non-clean bucket.
 
 ## Gaps
 

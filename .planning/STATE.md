@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Production-Ready Infra & kubectl-native CD
 status: executing
-stopped_at: "All 6 phases EXECUTED. Phases 06,07,08,09 complete — 06,07,08 now LIVE-VERIFIED (06 CD proven end-to-end on staging 2026-06-13: PR dry-run + master deploy green from real runners; 6 latent bugs fixed). Phases 10 & 11 human_needed — consequential live steps (apply prod S3 retention; flip prod traffic) operator-gated."
-last_updated: "2026-06-13T04:15:00Z"
-last_activity: 2026-06-13 -- Phase 06 (kubectl-native CD) LIVE-VERIFIED on staging cluster; CI WireGuard peer provisioned + persisted; 6 latent CD bugs fixed and merged to master.
+stopped_at: "Phases 06,07,08,09,10 COMPLETE — 06,07,08 LIVE-VERIFIED; 10 retention APPLIED on staging 2026-06-13 (S3-03 proven: Timeweb GET/PUT/x-amz-expiration; 30d retention live on backups/postgres/, 6 oldest backups async-expiring). Only remaining v2 item: Phase 11 live production traffic flip — deferred by scope (AGENTS.md: production out of v2; mechanism built + offline-proven). v2 in-scope work effectively done."
+last_updated: "2026-06-13T06:10:00Z"
+last_activity: 2026-06-13 -- Phase 10 CLOSED: Timeweb lifecycle API empirically proven (GET/PUT/x-amz-expiration; delete is a NO-OP), 30-day retention applied to backups/postgres/ after inventory review + operator confirmation.
 progress:
   total_phases: 6
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 21
-  completed_plans: 19
-  percent: 81
+  completed_plans: 21
+  percent: 92
 ---
 
 # Project State
@@ -30,12 +30,12 @@ Milestone v2.0: ALL 6 PHASES EXECUTED. Status by phase:
 - Phase 07 (Edge Automation): COMPLETE ✓ + LIVE-VERIFIED on staging VPS (all 6 UAT items; 2 live bugs fixed)
 - Phase 08 (Automated Restore Drill): COMPLETE ✓ + LIVE-VERIFIED (drill PASS on cluster; postgres-0 untouched; 26 tables/303267 rows restored to scratch)
 - Phase 09 (web Runtime Wiring): COMPLETE ✓ (0-replica stub; server-side dry-run accepted by cluster; CD applies the slot)
-- Phase 10 (S3 Lifecycle & Retention): EXECUTED, human_needed — S3-01/02 delivered + offline-verified (30d retention floor enforced in CI); S3-03 empirical proof + applying retention to prod backups is OPERATOR-GATED (consequential). See 10-UAT.md.
-- Phase 11 (Production Cutover): EXECUTED, human_needed — CUT-01..04 mechanism delivered + offline-proven (4 gates, anchored single-line switch, SELF_TEST'd rollback, smoke+auto-rollback, DRY_RUN). The live production traffic flip is OPERATOR-GATED. See 11-UAT.md.
+- Phase 10 (S3 Lifecycle & Retention): COMPLETE ✓ + LIVE (2026-06-13) — S3-03 empirically proven (Timeweb GET/PUT/x-amz-expiration via reversible round-trip; `delete-bucket-lifecycle` is a NO-OP — replace-only). 30-day retention APPLIED to backups/postgres/ after inventory (37 backups; 6 oldest >30d async-expiring; 31 retained) + operator confirmation. See 10-UAT.md, docs/s3-lifecycle.md §7. Latent follow-up (v2.x): apply guard crashes on a CLEAN bucket (aws-cli NoneType bug) — non-blocking on this non-clean bucket.
+- Phase 11 (Production Cutover): mechanism COMPLETE + offline-proven (4 gates, anchored single-line switch, SELF_TEST'd rollback, smoke+auto-rollback, DRY_RUN). Live production traffic flip is DEFERRED BY SCOPE (AGENTS.md: v2 targets staging only; production cutover intentionally deferred) — not a v2 execution item. See 11-UAT.md.
 
-Quality: every phase passed gsd-plan-checker (revisions applied), gsd-code-review (all critical+warning fixed), and gsd-verifier. `python3 scripts/validate-staging.py` exits 0 (10 checks). Tree clean. Commits on master (NOT pushed — awaiting operator).
+Quality: every phase passed gsd-plan-checker (revisions applied), gsd-code-review (all critical+warning fixed), and gsd-verifier. `python3 scripts/validate-staging.py` exits 0 (10 checks). Phase 06 fixes merged to master; .planning docs committed locally ([skip ci], pending operator push).
 
-Progress: [████████░░] 81% (4/6 phases complete; 10 & 11 executed, operator-gated)
+Progress: [█████████░] 92% (5/6 phases complete; Phase 11 live flip deferred by scope — v2 in-scope work done)
 
 ## Performance Metrics
 
@@ -129,13 +129,16 @@ Recent decisions affecting current work:
   2 live-only bugs: apk-needs-root → root initContainer + non-root main split
   (978e2f2); main uid 999→70 (real postgres user) for initdb getpwuid. See 08-UAT.md.
 
-- Phase 10 (human_needed, OPERATOR-GATED): S3-01/S3-02 delivered + offline-verified
-  (validate-staging.py enforces the 30-day retention floor). S3-03 empirical proof
-  (Timeweb lifecycle API support + x-amz-expiration on an isolated test prefix) AND
-  applying the retention policy to the prod `backups/postgres/` prefix are operator-run
-  — applying retention DELETES old backups (consequential), and shared-S3/cluster
-  writes are not done unattended. Turnkey: probe Job + scripts/apply-s3-lifecycle.sh.
-  See 10-UAT.md and docs/s3-lifecycle.md.
+- Phase 10 (RESOLVED 2026-06-13): S3-03 empirically proven on live Timeweb S3 —
+  GET returns standard 404 NoSuchLifecycleConfiguration; PUT→GET round-trip + a
+  computed x-amz-expiration confirmed on an isolated test prefix; `delete-bucket-
+  lifecycle` is a NO-OP (config is replace-only, never removable). 30-day retention
+  APPLIED to backups/postgres/ via `FORCE_OVERWRITE=1 scripts/apply-s3-lifecycle.sh`
+  after a backup-inventory review (37 backups; the 6 oldest >30d async-expire; 31
+  retained, incl. today's). The `NoneType` aws-cli bug is a client parse error on the
+  empty-<Message> 404; a latent v2.x follow-up: the apply guard/probe crash only on a
+  CLEAN bucket (this bucket now always has a config, so non-blocking). See 10-UAT.md,
+  docs/s3-lifecycle.md §5/§7.
 
 - Phase 11 (human_needed, OPERATOR-GATED): the production cutover MECHANISM is
   delivered + offline-proven (4 gates, anchored single-line nginx-upstream switch,
@@ -152,7 +155,7 @@ Recent decisions affecting current work:
 - Phase 6 (CD): k8s ≥1.24 SA has no auto-token Secret — the `kubernetes.io/service-account-token` Secret must be created explicitly; serving cert must carry `10.8.0.1` in its SANs.
 - Phase 6 (CD): RBAC must be namespace-scoped yet still cover `rollout status`; verify with `auth can-i --list` and an SA-impersonated dry-run.
 - Phase 8 (DRILL): the drill must run in an ephemeral scratch PostgreSQL with a guarded target DB name — never live `postgres-0` / `postgres-data`.
-- Phase 10 (S3): Timeweb S3 lifecycle parity is MEDIUM confidence — prove with a put-then-get round-trip and an observed expiry before trusting retention.
+- Phase 10 (S3) — ✓ RESOLVED 2026-06-13: Timeweb lifecycle parity proven via a live put-then-get round-trip + observed x-amz-expiration. NEW finding: `delete-bucket-lifecycle` is a NO-OP (replace-only); rollback = PUT a new config.
 
 ## Deferred Items
 
