@@ -224,11 +224,11 @@ Plans:
 
 **Wave 2** *(operator bootstrap — autonomous:false)*
 
-- [ ] 13-05-PLAN.md — Operator bootstrap: apply Prometheus RBAC + create pg_monitor role + set GitHub secrets + storage preflight + docs/observability.md (DEP-04, MET-03) [wave 2, operator-gated]
+- [x] 13-05-PLAN.md — Operator bootstrap: apply Prometheus RBAC + create pg_monitor role + set GitHub secrets + storage preflight + docs/observability.md (DEP-04, MET-03) [wave 2, operator-gated]
 
 **Wave 3** *(live apply + validation — autonomous:false)*
 
-- [ ] 13-06-PLAN.md — Live apply obs stack + rolling-restart rabbitmq + validate-phase-13.sh + right-size from kubectl top (MET-01..06) [wave 3, operator-gated]
+- [x] 13-06-PLAN.md — Live apply obs stack + rolling-restart rabbitmq + validate-phase-13.sh + right-size from kubectl top (MET-01..06) [wave 3, operator-gated]
 
 **UI hint**: yes
 
@@ -319,7 +319,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 10. S3 Lifecycle & Retention | v2.0 | 3/3 | Complete | 2026-06-12 |
 | 11. Production Cutover | v2.0 | 2/2 | Complete | 2026-06-12 |
 | 12. Resource Protection & Obs Foundation | v3.0 | 5/5 | Complete   | 2026-06-13 |
-| 13. Deploy Pipeline & Metrics Stack | v3.0 | 4/6 | In Progress|  |
+| 13. Deploy Pipeline & Metrics Stack | v3.0 | 6/6 | Complete   | 2026-06-13 |
 | 14. Public Edge & Grafana TLS | v3.0 | 0/TBD | Not started | - |
 | 15. Log Stack | v3.0 | 0/TBD | Not started | - |
 | 16. Error Tracking (GlitchTip) | v3.0 | 0/TBD | Not started | - |
