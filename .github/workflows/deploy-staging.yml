@@ -54,6 +54,7 @@ jobs:
           WG_PRIVATE_KEY: ${{ secrets.WG_PRIVATE_KEY }}
           WG_PEER_PUBLIC_KEY: ${{ secrets.WG_PEER_PUBLIC_KEY }}
           WG_ENDPOINT: ${{ secrets.WG_ENDPOINT }}
+          WG_LOCAL_IP: 10.8.0.3/32
         run: bash scripts/wg-tunnel-up.sh
 
       - name: Setup kubeconfig
@@ -88,6 +89,7 @@ jobs:
           WG_PRIVATE_KEY: ${{ secrets.WG_PRIVATE_KEY }}
           WG_PEER_PUBLIC_KEY: ${{ secrets.WG_PEER_PUBLIC_KEY }}
           WG_ENDPOINT: ${{ secrets.WG_ENDPOINT }}
+          WG_LOCAL_IP: 10.8.0.3/32
         run: bash scripts/wg-tunnel-up.sh
 
       - name: Setup kubeconfig
