@@ -244,10 +244,19 @@ Plans:
   3. Operator can reach Grafana at `https://grafana.stats-staging.solid-stats.ru` behind local-user auth with healthy dashboards rendering live data.
 
 **Plans**: 4 plans
+**Wave 1**
+
 - [ ] 14-01-PLAN.md — author bootstrap-obs-edge.sh (env-parameterized adopt-reconcile, ClusterIP discovery, per-domain certbot)
 - [ ] 14-02-PLAN.md — author the grafana. (WebSocket TLS proxy) and errors. (503 placeholder) nginx vhosts
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 14-03-PLAN.md — author validate-obs-edge.py offline validator + docs/obs-edge-bootstrap.md runbook
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 14-04-PLAN.md — operator-gated: create DNS A records, run live bootstrap + per-domain certbot, verify Grafana over HTTPS
+
 **UI hint**: yes
 
 #### Phase 15: Log Stack
