@@ -23,7 +23,9 @@ spec:
   failedJobsHistoryLimit: 5
   jobTemplate:
     spec:
-      backoffLimit: 1
+      # backoffLimit 30: F4 parity-run resilience tuning (was 1). Source of truth is
+      # this manifest — do not revert without updating plans/product/PARITY-COORDINATION.md.
+      backoffLimit: 30
       template:
         metadata:
           labels:
@@ -38,7 +40,9 @@ spec:
             - name: ghcr-pull
           containers:
             - name: replays-fetcher
-              image: ghcr.io/solid-stats/replays-fetcher:8395fbc58df3422a235d0a198e34eaf460491f21
+              # F1 fix (conditional-writes) — pinned to the live-validated image. Do not
+              # revert to 8395fbc… without updating plans/product/PARITY-COORDINATION.md.
+              image: ghcr.io/solid-stats/replays-fetcher:7e5ca974053f814aaedb8698c427d85a6a43c723
               imagePullPolicy: IfNotPresent
               args: ["run-once"]
               env:
@@ -50,6 +54,19 @@ spec:
                   value: "true"
                 - name: REPLAY_SOURCE_MAX_PAGES
                   value: "786"
+                # F4 parity-run resilience tuning + F1 conditional-writes flag.
+                # Source of truth is this manifest — see plans/product/PARITY-COORDINATION.md.
+                # Order mirrors the live CronJob to keep `kubectl diff` clean.
+                - name: REPLAY_SOURCE_RETRY_ATTEMPTS
+                  value: "8"
+                - name: REPLAY_SOURCE_REQUEST_SPACING_MS
+                  value: "500"
+                - name: REPLAY_SOURCE_CONCURRENCY
+                  value: "2"
+                - name: REPLAY_SOURCE_TIMEOUT_MS
+                  value: "60000"
+                - name: S3_CHECKPOINT_CONDITIONAL_WRITES
+                  value: "false"
               envFrom:
                 - secretRef:
                     name: replays-fetcher-runtime
