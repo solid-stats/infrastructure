@@ -1,0 +1,168 @@
+# Operator-applied bootstrap manifest — DO NOT apply from CI.
+# This file is applied ONCE by the operator: kubectl apply -f k8s/staging/01-obs-rbac.yaml
+# CI (GitHub Actions) never applies this file. The deploy glob must exclude
+# 01-obs-rbac.yaml so that each master-push deploy does not overwrite operator-managed RBAC.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: error-tracking
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: obs-ci-deployer
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: obs-ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+---
+# k8s ≥1.24: token Secrets are NOT auto-generated for ServiceAccounts.
+# The annotation below instructs the control plane to populate .data.token
+# after the Secret is created. No token value is stored in git.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: obs-ci-deployer-token
+  namespace: monitoring
+  annotations:
+    kubernetes.io/service-account.name: obs-ci-deployer
+  labels:
+    app.kubernetes.io/name: obs-ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+type: kubernetes.io/service-account-token
+---
+# Namespace-scoped Role — covers verbs needed for kubectl apply on obs workloads.
+# No cluster-scoped resources, no destructive verbs, no cross-namespace access.
+# Includes daemonsets for Grafana Alloy (Phase 15).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: obs-ci-deployer
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: obs-ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+rules:
+  # Deployments, StatefulSets, DaemonSets: apply + rollout status
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # CronJobs: apply (rollout status not applicable)
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Pods: needed for kubectl rollout status --watch
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Core resources: apply
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "secrets", "persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  # ServiceAccounts in namespace (workload manifests may create them)
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: obs-ci-deployer
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: obs-ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+roleRef:
+  kind: Role
+  name: obs-ci-deployer
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    name: obs-ci-deployer
+    namespace: monitoring
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: obs-ci-deployer
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: obs-ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+---
+# k8s ≥1.24: token Secrets are NOT auto-generated for ServiceAccounts.
+# The annotation below instructs the control plane to populate .data.token
+# after the Secret is created. No token value is stored in git.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: obs-ci-deployer-token
+  namespace: error-tracking
+  annotations:
+    kubernetes.io/service-account.name: obs-ci-deployer
+  labels:
+    app.kubernetes.io/name: obs-ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+type: kubernetes.io/service-account-token
+---
+# Namespace-scoped Role — covers verbs needed for kubectl apply on obs workloads.
+# No cluster-scoped resources, no destructive verbs, no cross-namespace access.
+# Includes daemonsets for Grafana Alloy (Phase 15).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: obs-ci-deployer
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: obs-ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+rules:
+  # Deployments, StatefulSets, DaemonSets: apply + rollout status
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # CronJobs: apply (rollout status not applicable)
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Pods: needed for kubectl rollout status --watch
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Core resources: apply
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "secrets", "persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  # ServiceAccounts in namespace (workload manifests may create them)
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: obs-ci-deployer
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: obs-ci-deployer
+    app.kubernetes.io/part-of: solid-stats
+roleRef:
+  kind: Role
+  name: obs-ci-deployer
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    name: obs-ci-deployer
+    namespace: error-tracking
