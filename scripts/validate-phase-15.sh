@@ -116,13 +116,16 @@ assert "LOG-01: loki_boltdb_shipper_compactor_running" "$compactor_running" "1"
 echo ""
 echo "--- LOG-01: Loki retention config ---"
 
-loki_config="$(kubectl -n "${namespace}" exec pod/loki-0 -- \
-  wget -qO- localhost:3100/config 2>/dev/null || true)"
+# Read the live Loki ConfigMap (source of truth) rather than the /config HTTP endpoint:
+# the loki image is distroless (no wget/sh to exec), and Loki normalizes 168h -> "1w"
+# in /config output. The ConfigMap carries the literal limits_config.retention_period.
+loki_config="$(kubectl -n "${namespace}" get configmap loki \
+  -o jsonpath='{.data.config\.yaml}' 2>/dev/null || true)"
 
-if echo "$loki_config" | grep -q '168h'; then
-  echo "ok: LOG-01: loki /config contains '168h' retention_period"
+if echo "$loki_config" | grep -qE 'retention_period:[[:space:]]*(168h|1w)'; then
+  echo "ok: LOG-01: loki ConfigMap has retention_period 168h (~7d)"
 else
-  echo "FAIL: LOG-01: loki /config does not contain '168h' retention_period" >&2
+  echo "FAIL: LOG-01: loki ConfigMap retention_period is not 168h/1w" >&2
   echo "      Config excerpt: $(echo "$loki_config" | grep -i retention | head -5 || echo '(none)')" >&2
   exit 1
 fi
