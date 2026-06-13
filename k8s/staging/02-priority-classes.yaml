@@ -1,0 +1,34 @@
+# Operator-applied bootstrap manifest — DO NOT apply from CI.
+# Applied once: kubectl apply -f k8s/staging/02-priority-classes.yaml
+# PriorityClass is cluster-scoped; the namespace-scoped ci-deployer cannot create it.
+# The CI deploy glob must exclude 02-priority-classes.yaml.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: app-critical
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+value: 1000000
+preemptionPolicy: PreemptLowerPriority
+globalDefault: false
+description: >-
+  Runtime app workloads (postgres, server-2, replay-parser-2, etc).
+  Evicted after obs-background pods under node memory pressure.
+  app-critical (1000000) >> obs-background (100) — scheduler evicts
+  obs-background first; app-critical pods are last to be displaced.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: obs-background
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+value: 100
+preemptionPolicy: PreemptLowerPriority
+globalDefault: false
+description: >-
+  Observability workloads (Prometheus, Grafana, Loki, etc).
+  Evicted before app-critical pods under node memory pressure.
+  obs-background (100) << app-critical (1000000) — evicted first
+  so runtime app pods are protected under node resource pressure.
