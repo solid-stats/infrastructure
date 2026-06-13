@@ -25,7 +25,7 @@ a trimmed, single-replica footprint (no VPS resize).
 - [x] **MET-04**: RabbitMQ metrics are scraped via the native `rabbitmq_prometheus` plugin (port 15692) — no separate exporter.
 - [x] **MET-05**: Grafana runs with Prometheus provisioned as a healthy datasource (provisioned as code).
 - [x] **MET-06**: Standard dashboards are provisioned as code (node-exporter, kube-state/cluster, PostgreSQL, RabbitMQ) and render live data.
-- [ ] **MET-07**: Operator can reach Grafana at the public staging URL behind local-user auth.
+- [x] **MET-07**: Operator can reach Grafana at the public staging URL behind local-user auth.
 
 ### Logs (LOG)
 
@@ -117,7 +117,7 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 | EDGE-01 | Phase 14 | Pending |
 | EDGE-02 | Phase 14 | Complete |
 | EDGE-03 | Phase 14 | Complete |
-| MET-07 | Phase 14 | Pending |
+| MET-07 | Phase 14 | Complete |
 | LOG-01 | Phase 15 | Pending |
 | LOG-02 | Phase 15 | Pending |
 | LOG-03 | Phase 15 | Pending |

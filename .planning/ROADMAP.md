@@ -247,7 +247,7 @@ Plans:
 **Wave 1**
 
 - [x] 14-01-PLAN.md — author bootstrap-obs-edge.sh (env-parameterized adopt-reconcile, ClusterIP discovery, per-domain certbot)
-- [ ] 14-02-PLAN.md — author the grafana. (WebSocket TLS proxy) and errors. (503 placeholder) nginx vhosts
+- [x] 14-02-PLAN.md — author the grafana. (WebSocket TLS proxy) and errors. (503 placeholder) nginx vhosts
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -333,7 +333,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 11. Production Cutover | v2.0 | 2/2 | Complete | 2026-06-12 |
 | 12. Resource Protection & Obs Foundation | v3.0 | 5/5 | Complete   | 2026-06-13 |
 | 13. Deploy Pipeline & Metrics Stack | v3.0 | 6/6 | Complete   | 2026-06-13 |
-| 14. Public Edge & Grafana TLS | v3.0 | 1/4 | In Progress|  |
+| 14. Public Edge & Grafana TLS | v3.0 | 2/4 | In Progress|  |
 | 15. Log Stack | v3.0 | 0/TBD | Not started | - |
 | 16. Error Tracking (GlitchTip) | v3.0 | 0/TBD | Not started | - |
 | 17. Network Isolation & Stack Validation | v3.0 | 0/TBD | Not started | - |
