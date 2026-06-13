@@ -21,10 +21,12 @@ alloy:
   resources:
     requests:
       cpu: 30m
-      memory: 64Mi
+      memory: 96Mi
     limits:
       cpu: 100m
-      memory: 128Mi
+      # 192Mi (was 128Mi): live right-sizing showed Alloy at ~118Mi during the initial
+      # backfill burst — too close to a 128Mi limit. Headroom prevents OOM flapping.
+      memory: 192Mi
 
   # Alloy HTTP server on port 12345 — used for Prometheus metrics scrape
   listenPort: 12345
