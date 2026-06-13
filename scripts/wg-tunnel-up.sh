@@ -53,10 +53,14 @@ sudo ip link add dev "$WG_INTERFACE" type wireguard
 echo "Assigning local IP $WG_LOCAL_IP..."
 sudo ip address add "$WG_LOCAL_IP" dev "$WG_INTERFACE"
 
-# --- 3. Configure peer (private key via process substitution — never on disk)
+# --- 3. Configure peer (private key via /dev/stdin — never on disk) ---------
+# NB: process substitution <(...) does NOT survive `sudo` — sudo closes
+# inherited FDs (closefrom=3), so the FD-backed /dev/fd/NN path disappears in
+# the wg process ("fopen: No such file or directory"). /dev/stdin (FD 0) IS
+# preserved by sudo, so the key still never touches disk.
 echo "Configuring peer $WG_PEER_PUBLIC_KEY..."
-sudo wg set "$WG_INTERFACE" \
-  private-key <(printf '%s' "$WG_PRIVATE_KEY") \
+printf '%s' "$WG_PRIVATE_KEY" | sudo wg set "$WG_INTERFACE" \
+  private-key /dev/stdin \
   peer "$WG_PEER_PUBLIC_KEY" \
   endpoint "$WG_ENDPOINT" \
   allowed-ips "$WG_ALLOWED_IPS"
