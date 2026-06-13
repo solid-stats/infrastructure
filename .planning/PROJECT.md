@@ -32,6 +32,25 @@ automated restore drill, the `web` runtime, and a controlled production cutover.
 - Automated restore drill: scripted PostgreSQL restore validation.
 - `web` runtime wiring: Kubernetes manifests for the future `web` application.
 
+## Current Milestone: v3.0 — Staging Observability Stack
+
+**Goal:** Stand up the full self-hosted observability stack on the staging k3s
+cluster — metrics, logs, and Sentry-compatible error tracking — fitted to the
+RAM-bound single node. Staging only; the production mirror (decision D2) is a
+later milestone.
+
+**Target features:**
+- Metrics: Prometheus + Grafana + kube-state-metrics + node-exporter.
+- Logs: Loki + Grafana Alloy, ~7-day retention.
+- Error tracking: GlitchTip with its own PostgreSQL + Redis (errors only).
+- Workload exporters: postgres-exporter + rabbitmq-exporter, first dashboards.
+- Public access via host nginx vhosts + certbot (`grafana.`/`errors.`
+  subdomains), separate from the runtime deploy path.
+- App-side Sentry SDK integration prepared as separate app-repo PRs.
+
+**Source:** `plans/infrastructure/briefs/observability-plan.md`; RELEASE-PLAN
+Phase 0 Track 2 (decision W5).
+
 ## Requirements
 
 ### Validated
@@ -52,26 +71,21 @@ automated restore drill, the `web` runtime, and a controlled production cutover.
 
 ### Active
 
-_v1/v2 items below are SHIPPED; Active requirements are re-scoped at the next milestone via `/gsd-new-milestone`._
+<!-- v3.0 — Staging Observability Stack. Detailed REQ-IDs live in REQUIREMENTS.md. -->
 
+- [ ] Resource preflight + host swap so the trimmed stack fits the 8 GB single node.
+- [ ] Metrics stack (Prometheus, Grafana, kube-state-metrics, node-exporter) on staging.
+- [ ] Log stack (Loki + Grafana Alloy) collecting cluster logs into Grafana.
+- [ ] GlitchTip error tracking with its own PostgreSQL + Redis, closed registration.
+- [ ] Postgres + RabbitMQ exporters wired into Prometheus plus first dashboards.
+- [ ] Public observability domains via host nginx + certbot, separate from runtime CD.
+- [ ] NetworkPolicy isolation for the observability namespaces (after CNI proof).
+- [ ] Errors-only Sentry SDK integration prepared for server-2/replay-parser-2/replays-fetcher.
 
-- [ ] Make `infrastructure` the deploy source of truth for staging shared
-  resources and app runtime wiring.
-- [ ] Keep v1 focused on staging: deploy, backup, restore-list validation,
-  controlled full-run, and old-vs-new diff readiness.
-- [ ] Configure PostgreSQL backups to Timeweb S3 under a stable
-  `backups/postgres/` prefix.
-- [ ] Provide a manual backup command that creates a backup Job, uploads the
-  dump/list/manifest to S3, and verifies `pg_restore --list`.
-- [ ] Preserve `replays-fetcher` as suspended until backup verification passes
-  and a controlled manual full-run is explicitly started.
-- [ ] Gradually move deployment ownership out of app repositories so app repos
-  build and push images while this repo deploys staging wiring.
-- [ ] Add enough validation to prevent broken manifests, broken scripts, or
-  unsafe secret rendering from reaching staging.
-- [ ] Document and execute a restore drill path after the backup-list gate.
-- [ ] Prepare manual full-run and diff pipeline phases after backup confidence
-  exists.
+### Previously Shipped (v1.0 / v2.0)
+
+_Re-scoped out of Active at the v3.0 milestone start; the delivered items are in
+the Validated list above and the Shipped Milestone sections._
 
 ### Out of Scope
 
@@ -153,6 +167,9 @@ exceptions for any workload that must run outside those defaults.
 | kubectl-native CD over WireGuard (not SSH/scp) | A scoped SA + closed k3s API is safer + git-as-source-of-truth than SSH deploy | ✓ Good (v2.0) — live-verified; surfaced 6 latent script bugs only a real run could catch |
 | Cutover lever IS the nginx upstream; edge + restore drill land before cutover | Production is never flipped without a proven-reversible lever + recoverability | ✓ Good (v2.0) — mechanism live-verified, reversible; flip deferred by scope |
 | Apply S3 retention to live backups after empirical Timeweb proof | Timeweb lifecycle parity was MEDIUM-confidence — prove GET/PUT/expiry before relying on it | ✓ Good (v2.0) — proven + applied; found `delete-bucket-lifecycle` is a no-op (replace-only) |
+| Staging observability runs trimmed + host swap, not on a bigger VPS | Node is RAM-bound (8 GB, no swap, ~1.7 GB free); a resize is costly and RAM frees up once legacy is decommissioned | — Pending (v3.0) |
+| Observability deploy path stays separate from the runtime CD path | Runtime deploy must not depend on the obs deploy succeeding (brief validation gate) | — Pending (v3.0) |
+| Obs services exposed via host nginx + certbot, not an in-cluster ingress | k3s has no ingress controller (Traefik disabled); reuse the v2.0 Phase 07 edge pattern | — Pending (v3.0) |
 
 ## Evolution
 
@@ -192,4 +209,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state.
 
 ---
-*Last updated: 2026-06-13 — milestone v2.0 shipped*
+*Last updated: 2026-06-13 — milestone v3.0 (Staging Observability Stack) started*

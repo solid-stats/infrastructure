@@ -4,10 +4,11 @@
 
 - ✅ **v1.0 Staging Foundation** - Phases 1-5 (shipped 2026-05-10)
 - ✅ **v2.0 Production-Ready Infra & kubectl-native CD** - Phases 6-11 (shipped 2026-06-13; live prod cutover flip deferred by scope)
+- 🚧 **v3.0 Staging Observability Stack** - Phases 12-18 (in progress)
 
 ## Overview
 
-v1 proved the staging infrastructure path: a reproducible infra-owned deploy, a manual backup and restore-list gate, a gradual app CD ownership boundary, a controlled full-run, and old-vs-new diff readiness. v2.0 hardens that into production-readiness. The keystone is kubectl-native CD — replacing SSH/scp with a WireGuard tunnel brought up inside the CI job and a namespace-scoped ServiceAccount applying directly against the closed k3s API. Every other feature deploys through that path, so it lands first. Edge automation, an automated restore drill, the `web` runtime slot, and S3 lifecycle land in parallel between the CD foundation and the finale, building the reversibility and recovery confidence required for the last step: a single-lever, reversible production cutover.
+v1 proved the staging infrastructure path and v2.0 hardened it into production-readiness — kubectl-native CD over WireGuard, edge automation, an automated restore drill, S3 lifecycle, and a reversible cutover lever. v3.0 makes that runtime *observable* without destabilizing the workloads it observes. The node is RAM-bound (8 GB, no swap, ~1.7 GB free), so the keystone is resource protection: because host swap does NOT protect pods on k3s (NoSwap default + issue #12677), protection comes from PriorityClasses + app pods at Guaranteed QoS, and that must land *before* any observability pod does. On that foundation, a separate observability deploy path (its own `deploy-observability.yml`, `k8s/observability/`, `obs-ci-deployer` SA) carries the metrics stack (standalone Prometheus + Grafana + kube-state-metrics + node-exporter, rendered with `helm template`, never the operator), validated internally first. The public edge — DNS, the independent host-nginx obs-edge bootstrap, and certbot TLS — is split into its own phase so Grafana goes public on a clean, reusable edge that the error-tracking vhost later reuses. Logs (Loki monolithic + Alloy) and Sentry-compatible error tracking (GlitchTip, PostgreSQL-only) layer on as additional Grafana datasources and a second public edge vhost. NetworkPolicy comes last — only after scraping and datasources are proven — so a wrong default-deny can't mask earlier breakage. App-side error SDK PRs are tracked here but owned in the app repos, prepared once the GlitchTip DSN exists.
 
 ## Phases
 
@@ -23,12 +24,19 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: App CD Boundary** - App repositories can keep building images while infrastructure owns staging runtime wiring and pinned image tags.
 - [x] **Phase 4: Controlled Full Run** - Operator can explicitly start and monitor a manual ingest run without enabling recurring fetching first.
 - [x] **Phase 5: Diff and Cutover Readiness** - Operator can produce reviewable old-vs-new diff output while production cutover remains blocked.
-- [ ] **Phase 6: kubectl-native CD** - CI deploys staging via `kubectl` over a WireGuard tunnel as a namespace-scoped ServiceAccount, with SSH removed.
-- [x] **Phase 7: Edge Automation** - Host nginx, TLS renewal, and firewall for staging are repo-managed, idempotent, and proven reversible. (completed 2026-06-12)
-- [x] **Phase 8: Automated Restore Drill** - Operator can prove the latest S3 backup restores cleanly into an ephemeral scratch PostgreSQL, never touching live data. (completed 2026-06-12)
-- [x] **Phase 9: web Runtime Wiring** - The future `web` application has a conventions-compliant, validated Kubernetes slot deployed as a stub. (completed 2026-06-12)
-- [ ] **Phase 10: S3 Lifecycle & Retention** - Backup-prefix retention is enforced via a repo-stored expiration policy, with Timeweb support proven empirically.
-- [ ] **Phase 11: Production Cutover** - Operator can flip production traffic to the new runtime in one reversible nginx-upstream edit, gated and smoke-checked.
+- [x] **Phase 6: kubectl-native CD** - CI deploys staging via `kubectl` over a WireGuard tunnel as a namespace-scoped ServiceAccount, with SSH removed.
+- [x] **Phase 7: Edge Automation** - Host nginx, TLS renewal, and firewall for staging are repo-managed, idempotent, and proven reversible.
+- [x] **Phase 8: Automated Restore Drill** - Operator can prove the latest S3 backup restores cleanly into an ephemeral scratch PostgreSQL, never touching live data.
+- [x] **Phase 9: web Runtime Wiring** - The future `web` application has a conventions-compliant, validated Kubernetes slot deployed as a stub.
+- [x] **Phase 10: S3 Lifecycle & Retention** - Backup-prefix retention is enforced via a repo-stored expiration policy, with Timeweb support proven empirically.
+- [x] **Phase 11: Production Cutover** - Operator can flip production traffic to the new runtime in one reversible nginx-upstream edit, gated and smoke-checked.
+- [ ] **Phase 12: Resource Protection & Obs Foundation** - The node is OOM-protected (swap, PriorityClasses, app pods at Guaranteed QoS) and the two obs namespaces + least-privilege RBAC exist before any observability pod lands.
+- [ ] **Phase 13: Deploy Pipeline & Metrics Stack** - Prometheus + Grafana + exporters run via a separate obs deploy path and dashboards render live data, validated internally (no public edge yet).
+- [ ] **Phase 14: Public Edge & Grafana TLS** - DNS, the independent host-nginx obs-edge bootstrap, and certbot make Grafana reachable over TLS at its public staging URL behind local-user auth.
+- [ ] **Phase 15: Log Stack** - Loki + Alloy collect cluster logs with ~7-day retention and a LogQL query returns recent `server-2` lines in Grafana.
+- [ ] **Phase 16: Error Tracking (GlitchTip)** - GlitchTip runs with its own PostgreSQL, closed registration, and a public TLS URL on the reused obs-edge; a forced test error appears and a project DSN exists.
+- [ ] **Phase 17: Network Isolation & Stack Validation** - NetworkPolicies isolate the obs namespaces without breaking scraping, and one re-runnable script validates the whole stack on any fresh deploy.
+- [ ] **Phase 18: App-side Error SDK** - Errors-only Sentry SDK integration is prepared as separate app-repo PRs for server-2, replay-parser-2, and replays-fetcher using the GlitchTip DSN.
 
 ## Phase Details
 
@@ -114,155 +122,161 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 </details>
 
-### 🚧 v2.0 Production-Ready Infra & kubectl-native CD (In Progress)
+<details>
+<summary>✅ v2.0 Production-Ready Infra & kubectl-native CD (Phases 6-11) - SHIPPED 2026-06-13</summary>
 
-**Milestone Goal:** Deploy staging with direct `kubectl` from CI over WireGuard (no SSH), make git the source of truth for what ships, and close the production-readiness gaps deferred from v1 — edge automation, S3 lifecycle, automated restore drill, the `web` runtime, and a controlled production cutover.
-
-**Execution Order:** CD first / cutover last is the only hard ordering. Phases 7-10 are independent and sequenced by capacity. Edge (7) and the restore drill (8) must both land before cutover (11): the cutover lever *is* the nginx upstream and must be proven reversible, and production is never flipped without proven recoverability.
-
-#### Phase 6: kubectl-native CD
+### Phase 6: kubectl-native CD
 
 **Goal**: CI deploys staging by running `kubectl` on the runner over a WireGuard tunnel as a namespace-scoped ServiceAccount, with all SSH transport removed and the operator-bootstrap boundary documented.
 **Depends on**: Phase 5
 **Requirements**: CD-01, CD-02, CD-03, CD-04, CD-05, CD-06, CD-07, CD-08, CD-09
-**Success Criteria** (what must be TRUE):
+**Plans**: 4/4 complete
 
-  1. A push to `master` deploys staging automatically by running `kubectl apply` from the runner over a verified WireGuard tunnel, with no SSH/scp to the VPS; a PR runs validate plus a server-side dry-run without deploying.
-  2. CI authenticates as the `solid-stats-staging`-scoped ServiceAccount using a long-lived token Secret (not admin kubeconfig, not an SSH key), and `kubectl auth whoami` confirms it is not `system:anonymous`.
-  3. The deploy job aborts before any `kubectl` if the WireGuard handshake has not completed, and `6443` is reachable only through the tunnel.
-  4. The ServiceAccount can apply and `rollout status` every staging workload kind within the namespace and nothing cluster-scoped; the namespace and CI RBAC are bootstrapped once by the operator via a documented runbook, and CI never creates the namespace.
-  5. All `CD_SSH_*` secrets and SSH code paths are removed, only one deploy runs at a time, and an SA-token rotation runbook (owner, cadence, paired with WG key rotation) is documented.
-
-**Plans**: 4 plans
-Plans:
-**Wave 1**
-
-- [x] 06-01-PLAN.md — Operator bootstrap manifest (01-ci-rbac.yaml) + operator runbook (docs/operator-bootstrap.md)
-- [x] 06-02-PLAN.md — SA-token and WireGuard key rotation runbook (docs/sa-token-rotation.md)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 06-03-PLAN.md — WireGuard handshake gate script + kubeconfig construction script
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 06-04-PLAN.md — Workflow refactor (WireGuard + kubectl native, PR/master split, concurrency lock) + SSH script deletion
-
-#### Phase 7: Edge Automation
+### Phase 7: Edge Automation
 
 **Goal**: The public staging edge — host nginx vhost, TLS renewal, and firewall — is repo-managed, idempotently re-runnable, and proven reversible in isolation before it becomes the cutover lever.
 **Depends on**: Phase 6
 **Requirements**: EDGE-01, EDGE-02, EDGE-03, EDGE-04, EDGE-05
-**Success Criteria** (what must be TRUE):
+**Plans**: 4/4 complete
 
-  1. The host nginx vhost config for staging lives in the repo and an idempotent bootstrap script applies it the same way on every re-run.
-  2. TLS certificates renew automatically via host `certbot` on a systemd timer with an `nginx -t`-gated reload hook, and `certbot renew --dry-run` passes.
-  3. A certificate-renewal failure surfaces as an alert or log entry rather than failing silently.
-  4. The host firewall allows 80/443 inbound and keeps `6443` reachable only through the WireGuard tunnel.
+### Phase 8: Automated Restore Drill
 
-**Plans**: 4 plans
-Plans:
-**Wave 1** *(parallel — no shared files)*
-
-- [x] 07-01-PLAN.md — Offline validator (scripts/validate-edge.py) + nginx vhost verbatim mirror (config/nginx/sites-available/stats-staging-solid-stats.conf)
-- [x] 07-02-PLAN.md — OnFailure= drop-in (config/systemd/certbot.service.d/onfailure.conf) + failure handler unit + deploy-hook script (stock certbot.timer preserved)
-
-**Wave 2** *(depends on Wave 1)*
-
-- [x] 07-03-PLAN.md — Adopt-reconcile bootstrap (scripts/bootstrap-edge.sh: backup live vhost, install repo copy, ufw split-tunnel) + teardown (scripts/teardown-edge.sh: .bak restore)
-
-**Wave 3** *(depends on Wave 2)*
-
-- [x] 07-04-PLAN.md — Operator runbook (docs/edge-bootstrap.md: adopt flow, OPERATOR-ONLY labels, Phase 11 lever, reversibility proof)
-
-#### Phase 8: Automated Restore Drill
-
-**Goal**: Operator can prove on demand that the latest S3 backup restores into an ephemeral scratch PostgreSQL with passing sanity checks, never touching live data, with the drill kept out of the CD deploy path.
+**Goal**: Operator can prove on demand that the latest S3 backup restores into an ephemeral scratch PostgreSQL, never touching live data, with the drill kept out of the CD deploy path.
 **Depends on**: Phase 6
 **Requirements**: DRILL-01, DRILL-02, DRILL-03, DRILL-04
-**Success Criteria** (what must be TRUE):
+**Plans**: 3/3 complete
 
-  1. Operator can run an on-demand restore drill that restores the latest S3 backup into an ephemeral scratch PostgreSQL, never touching live `postgres-0` / `postgres-data`.
-  2. The drill runs post-restore sanity assertions (row-count / object checks) and fails loudly when they do not pass.
-  3. The drill tears down its scratch resources and logs the result as evidence.
-  4. Drill manifests live outside the staging deploy glob, so CD never schedules them.
-
-**Plans**: 3 plans
-Plans:
-**Wave 1** *(parallel — no shared files)*
-
-- [x] 08-01-PLAN.md — Job manifest (k8s/staging/restore-drill/70-restore-drill.yaml) + operator script (scripts/restore-drill.sh)
-- [x] 08-02-PLAN.md — DRILL-04 depth-1 guard + restore-drill.sh syntax check in scripts/validate-staging.py
-
-**Wave 2** *(depends on Wave 1)*
-
-- [x] 08-03-PLAN.md — docs/backup-restore.md automated runbook (doc task complete; live-drill checkpoint awaiting operator)
-
-#### Phase 9: web Runtime Wiring
+### Phase 9: web Runtime Wiring
 
 **Goal**: The future `web` application has a conventions-compliant Kubernetes slot — deployed as a 0-replica / image-pending stub — wired into validation and the rollout-status gate.
 **Depends on**: Phase 6
 **Requirements**: WEB-01, WEB-02, WEB-03
-**Success Criteria** (what must be TRUE):
+**Plans**: 1/1 complete
 
-  1. `web` Deployment, Service, and ConfigMap exist following existing `server-2` conventions: dedicated ServiceAccount, resource requests/limits, probes, and a pinned image.
-  2. `web` deploys as a 0-replica / image-pending stub until a real image exists, without breaking the deploy.
-  3. `validate-staging.py` `EXPECTED_*` and the rollout-status verification include `web`.
-
-**Plans**: 1 plan
-Plans:
-**Wave 1**
-
-- [x] 09-01-PLAN.md — web manifests (ConfigMap + Service + ServiceAccount + Deployment) + validate-staging.py + deploy-staging.yml rollout gate
-
-#### Phase 10: S3 Lifecycle & Retention
+### Phase 10: S3 Lifecycle & Retention
 
 **Goal**: Backup-prefix retention is enforced through a repo-stored, script-applied expiration policy, with Timeweb S3 lifecycle support proven empirically before retention is relied upon.
 **Depends on**: Phase 8
 **Requirements**: S3-01, S3-02, S3-03
-**Success Criteria** (what must be TRUE):
+**Plans**: 3/3 complete
 
-  1. A per-prefix expiration lifecycle policy for `backups/postgres/` is stored in the repo and applied via script.
-  2. The lifecycle config aborts incomplete multipart uploads.
-  3. Timeweb S3 lifecycle support is proven empirically — a put-then-get round-trip plus an observed test-object expiry — recorded as evidence before retention is trusted.
+### Phase 11: Production Cutover
 
-**Plans**: 3 plans
-Plans:
-**Wave 1** *(parallel — no shared files)*
-
-- [x] 10-01-PLAN.md — Lifecycle JSON (config/s3/backups-lifecycle.json) + offline validator (validate-s3-lifecycle.py) + apply script (apply-s3-lifecycle.sh) + validate-staging.py extension
-- [x] 10-02-PLAN.md — S3-03 empirical proof Job (k8s/staging/s3-lifecycle/80-s3-lifecycle-probe-job.yaml) + operator-gated checkpoint
-
-**Wave 2** *(depends on Wave 1)*
-
-- [x] 10-03-PLAN.md — Operator runbook (docs/s3-lifecycle.md) + validate-staging.py docs check + final operator confirmation checkpoint
-
-#### Phase 11: Production Cutover
-
-**Goal**: Operator can switch production traffic to the new runtime in a single reversible nginx-upstream edit, gated on a fresh backup and a green diff, with a tested rollback and a post-cutover smoke check.
+**Goal**: Operator can switch production traffic to the new runtime in a single reversible nginx-upstream edit, gated on a fresh backup and a green diff, with a tested rollback and a post-cutover smoke check (mechanism live-verified; live flip deferred by scope).
 **Depends on**: Phase 7, Phase 8, Phase 9, Phase 10
 **Requirements**: CUT-01, CUT-02, CUT-03, CUT-04
+**Plans**: 2/2 complete
+
+</details>
+
+### 🚧 v3.0 Staging Observability Stack (In Progress)
+
+**Milestone Goal:** Stand up the full self-hosted observability stack — metrics, logs, and Sentry-compatible error tracking — on the RAM-bound single-node staging k3s cluster, fitted with real OOM protection and a deploy path independent of runtime CD. Staging only; the production mirror (decision D2) is a later milestone.
+
+**Execution Order:** Resource protection FIRST (swap + PriorityClasses + app pods to Guaranteed QoS + the two namespaces/RBAC) before any observability workload lands — swap does NOT protect pods (k3s NoSwap + issue #12677), so protection is PriorityClass/QoS. The separate obs deploy pipeline lands with the metrics stack (settles the render-then-apply model + Grafana) so metrics has a path to deploy without widening runtime CD; metrics is validated internally first (port-forward / ClusterIP). The public edge (DNS → HTTP vhost → certbot → TLS vhost) is its own phase that puts Grafana online and establishes the reusable obs-edge bootstrap that the GlitchTip vhost later reuses. Logs and error tracking layer on as additional datasources / a second edge vhost. NetworkPolicy LAST, only after scraping + datasources are validated. The app-side SDK track comes after the GlitchTip DSN exists.
+
+#### Phase 12: Resource Protection & Obs Foundation
+
+**Goal**: The staging node is protected against OOM eviction of postgres/server-2 before any observability pod is deployed, and the two observability namespaces with least-privilege RBAC exist as the foundation everything else deploys into.
+**Depends on**: Phase 11
+**Requirements**: PREP-01, PREP-02, PREP-03, PREP-04, PREP-05
 **Success Criteria** (what must be TRUE):
 
-  1. Legacy and new runtimes run in parallel and the cutover is a single reversible nginx-upstream switch.
-  2. A tested rollback path reverts the upstream in one edit, with legacy kept warm.
-  3. The cutover is gated on a fresh backup point and a green diff gate before it is allowed to proceed.
-  4. A post-cutover smoke check curls the public host to confirm the new runtime responds before legacy is retired.
+  1. Operator can re-run a resource preflight that snapshots node CPU/memory/disk and existing allocations, recording the headroom available before any obs workload is applied.
+  2. Persistent host swap is configured on the staging node (visible in `free -h` and `/proc/swaps`, persisted in fstab) and documented as host-process relief only — explicitly NOT a substitute for pod memory limits.
+  3. `app-critical` and `obs-background` PriorityClasses exist, and the app workloads (postgres, server-2, and the other runtime pods) carry `app-critical` so the scheduler evicts observability pods first under memory pressure.
+  4. postgres and server-2 run at Guaranteed QoS (memory requests == limits), confirmed on the live pods, so they are last to be evicted.
+  5. `monitoring` and `error-tracking` namespaces exist, each with a non-default ServiceAccount and least-privilege RBAC (`obs-ci-deployer`), kept separate from the runtime `ci-deployer`.
 
-**Plans**: 2 plans
-Plans:
-**Wave 1**
+**Plans**: TBD
 
-- [x] 11-01-PLAN.md — scripts/cutover.sh: 4-gate reversible upstream switch with auto-rollback (CUT-01..04)
+#### Phase 13: Deploy Pipeline & Metrics Stack
 
-**Wave 2** *(depends on Wave 1)*
+**Goal**: A complete metrics stack — Prometheus, Grafana, kube-state-metrics, node-exporter, and the PostgreSQL/RabbitMQ exporters — runs on staging via a deploy path independent of runtime CD, with dashboards rendering live data, validated internally (port-forward / ClusterIP) with no public edge yet.
+**Depends on**: Phase 12
+**Requirements**: DEP-01, DEP-02, DEP-03, DEP-04, MET-01, MET-02, MET-03, MET-04, MET-05, MET-06
+**Success Criteria** (what must be TRUE):
 
-- [x] 11-02-PLAN.md — docs/cutover.md runbook + validate-staging.py cutover gate extension + operator checkpoint
+  1. Observability manifests are rendered with `helm template`, committed under `k8s/observability/`, and applied by a separate `deploy-observability.yml` workflow (own concurrency group, obs-ci-deployer + WireGuard path); the runtime deploy path does not depend on the obs deploy succeeding, and all obs secrets are rendered from GitHub environment secrets into k8s Secrets with no secret values in git.
+  2. Prometheus runs from standalone rendered manifests (no operator/CRDs) with a tuned scrape interval and bounded retention sized to its PVC, and its `/targets` page shows kube-state-metrics, node-exporter, postgres-exporter (app ≥ v0.15.0, non-superuser `pg_monitor` role), and RabbitMQ (native plugin, port 15692) all UP.
+  3. Grafana runs with Prometheus provisioned as a healthy datasource and standard dashboards (node-exporter, kube-state/cluster, PostgreSQL, RabbitMQ) provisioned as code, all rendering live data.
+  4. Operator can reach Grafana internally (port-forward or ClusterIP) and confirm dashboards render live data, with no public ingress or TLS configured yet.
+
+**Plans**: TBD
+**UI hint**: yes
+
+#### Phase 14: Public Edge & Grafana TLS
+
+**Goal**: Grafana is reachable over TLS at its public staging URL behind local-user auth via an independent host-nginx obs-edge bootstrap, establishing the reusable edge pattern the error-tracking vhost will later reuse.
+**Depends on**: Phase 13
+**Requirements**: EDGE-01, EDGE-02, EDGE-03, MET-07
+**Success Criteria** (what must be TRUE):
+
+  1. DNS A records for both `grafana.stats-staging.solid-stats.ru` and `errors.stats-staging.solid-stats.ru` resolve to the staging host (both issued now to avoid Let's Encrypt rate limits per Pitfall 9, even though the `errors.` upstream is wired later).
+  2. An independent host nginx obs-edge bootstrap (v2.0 Phase 07 adopt-reconcile pattern, a dedicated `bootstrap-obs-edge.sh`) serves an HTTP-only vhost first, then a certbot-issued TLS certificate, proxying Grafana over a valid certificate — established as the reusable bootstrap the GlitchTip phase later extends for the `errors.` vhost.
+  3. Operator can reach Grafana at `https://grafana.stats-staging.solid-stats.ru` behind local-user auth with healthy dashboards rendering live data.
+
+**Plans**: TBD
+**UI hint**: yes
+
+#### Phase 15: Log Stack
+
+**Goal**: Cluster logs are collected conservatively into Loki with bounded retention and queryable in Grafana as a second datasource, without leaking request bodies or secrets.
+**Depends on**: Phase 13
+**Requirements**: LOG-01, LOG-02, LOG-03
+**Success Criteria** (what must be TRUE):
+
+  1. Loki runs in monolithic/filesystem mode on a right-sized PVC with compactor-driven ~7-day retention, confirmed by `loki_compactor_runs_total > 0`.
+  2. A Grafana Alloy DaemonSet collects cluster logs with a conservative label set (namespace/pod/container/app/job only — no request bodies, no secrets) and reports `alloy_logs_entries_total > 0`.
+  3. Loki is a healthy Grafana datasource and a LogQL query in Grafana Explore returns recent `server-2` log lines.
+
+**Plans**: TBD
+**UI hint**: yes
+
+#### Phase 16: Error Tracking (GlitchTip)
+
+**Goal**: GlitchTip captures errors with its own PostgreSQL and closed registration, is reachable over TLS at its public staging URL on the reused obs-edge bootstrap, and a forced staging test error is visible with a project DSN issued for the app-SDK track.
+**Depends on**: Phase 13, Phase 14
+**Requirements**: ERR-01, ERR-02, ERR-03
+**Success Criteria** (what must be TRUE):
+
+  1. GlitchTip runs with its own PostgreSQL (PostgreSQL-only mode, Valkey/Redis disabled) following the strict first-run order (migrate → close registration → create superuser), separate from the app database.
+  2. Self-registration is disabled and only the seeded local superuser can log in (verified against the registration endpoint).
+  3. The `errors.stats-staging.solid-stats.ru` vhost serves GlitchTip over valid TLS (reusing the Phase 14 obs-edge bootstrap with GlitchTip's ClusterIP), and a project + DSN exist with a deliberately forced staging test error appearing in GlitchTip.
+
+**Plans**: TBD
+**UI hint**: yes
+
+#### Phase 17: Network Isolation & Stack Validation
+
+**Goal**: NetworkPolicies isolate the observability namespaces without breaking validated scraping or datasources, and a single re-runnable script proves the whole stack healthy on any fresh staging deploy.
+**Depends on**: Phase 15, Phase 16
+**Requirements**: NET-01, NET-02, VAL-01
+**Success Criteria** (what must be TRUE):
+
+  1. NetworkPolicy enforcement under k3s/kube-router is confirmed with a test policy before any default-deny is relied upon.
+  2. Default-deny + minimal-allow NetworkPolicies isolate `monitoring` and `error-tracking` (including an allow-prometheus-scrape rule into `solid-stats-staging`), applied only after scraping/datasources were validated, and all Prometheus targets remain UP and all Grafana datasources remain healthy after they are applied.
+  3. A re-runnable validation script verifies the full stack on a fresh staging deploy: Prometheus target health, Grafana datasource health, a Loki query, and a forced GlitchTip test event — failing loudly on any broken capability.
+
+**Plans**: TBD
+
+#### Phase 18: App-side Error SDK
+
+**Goal**: Errors-only Sentry SDK integration is prepared as separate, reviewable app-repo PRs for server-2, replay-parser-2, and replays-fetcher, wired to the GlitchTip DSN — tracked here, owned in those repos.
+**Depends on**: Phase 16
+**Requirements**: SDK-01
+**Success Criteria** (what must be TRUE):
+
+  1. A separate PR exists in each of server-2, replay-parser-2, and replays-fetcher adding errors-only Sentry SDK init (no traces/APM/session replay) wired to the GlitchTip DSN via a `SENTRY_DSN` env var sourced from secrets, not committed.
+  2. The GlitchTip DSN handoff is documented (project DSN → app-repo secret → SDK env var) so each app repo can adopt it independently of this repo's deploy path.
+  3. With the SDK PR merged in at least one app workload, a forced error from that workload appears in GlitchTip — confirming the end-to-end app → GlitchTip path.
+
+**Plans**: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -271,9 +285,16 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. App CD Boundary | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 4. Controlled Full Run | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 5. Diff and Cutover Readiness | v1.0 | 1/1 | Complete | 2026-05-10 |
-| 6. kubectl-native CD | v2.0 | 4/4 | Complete   | 2026-06-12 |
-| 7. Edge Automation | v2.0 | 4/4 | Complete    | 2026-06-12 |
-| 8. Automated Restore Drill | v2.0 | 3/3 | Complete    | 2026-06-12 |
-| 9. web Runtime Wiring | v2.0 | 1/1 | Complete    | 2026-06-12 |
-| 10. S3 Lifecycle & Retention | v2.0 | 3/3 | Complete   | 2026-06-12 |
-| 11. Production Cutover | v2.0 | 2/2 | Complete   | 2026-06-12 |
+| 6. kubectl-native CD | v2.0 | 4/4 | Complete | 2026-06-12 |
+| 7. Edge Automation | v2.0 | 4/4 | Complete | 2026-06-12 |
+| 8. Automated Restore Drill | v2.0 | 3/3 | Complete | 2026-06-12 |
+| 9. web Runtime Wiring | v2.0 | 1/1 | Complete | 2026-06-12 |
+| 10. S3 Lifecycle & Retention | v2.0 | 3/3 | Complete | 2026-06-12 |
+| 11. Production Cutover | v2.0 | 2/2 | Complete | 2026-06-12 |
+| 12. Resource Protection & Obs Foundation | v3.0 | 0/TBD | Not started | - |
+| 13. Deploy Pipeline & Metrics Stack | v3.0 | 0/TBD | Not started | - |
+| 14. Public Edge & Grafana TLS | v3.0 | 0/TBD | Not started | - |
+| 15. Log Stack | v3.0 | 0/TBD | Not started | - |
+| 16. Error Tracking (GlitchTip) | v3.0 | 0/TBD | Not started | - |
+| 17. Network Isolation & Stack Validation | v3.0 | 0/TBD | Not started | - |
+| 18. App-side Error SDK | v3.0 | 0/TBD | Not started | - |

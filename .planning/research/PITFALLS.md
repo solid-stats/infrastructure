@@ -1,226 +1,384 @@
 # Pitfalls Research
 
-**Domain:** Production-readiness infra for an existing k3s staging cluster (WireGuard-tunnelled kubectl CD from GitHub-hosted runners, Timeweb S3-compatible storage, PostgreSQL restore drills, host-nginx edge, production cutover)
-**Researched:** 2026-06-11
-**Confidence:** HIGH on k3s SA-token / WireGuard / cutover mechanics (official docs + repo evidence); MEDIUM on Timeweb S3 lifecycle exact feature parity (vendor docs confirm lifecycle exists but not full AWS feature surface).
+**Domain:** Kubernetes observability stack on constrained single-node k3s
+**Researched:** 2026-06-13
+**Confidence:** HIGH (memory/eviction/storage mechanics), MEDIUM (k3s swap behavior, GlitchTip Helm specifics)
 
-This file is scoped to the v2.0 milestone: ADDING six features to the system that already exists in this repo. Every pitfall below is tied to concrete facts in the repo: API at `https://10.8.0.1:6443` reachable only over the `wg0` tunnel (`6443` closed at ufw + Timeweb perimeter, `51820/udp` public), current CD is SSH-based in `deploy-staging.sh` / `deploy-staging.yml`, backup CronJob writes `backups/postgres/<id>/...` to `s3.twcstorage.ru` (path-style, region `ru-1`), restore drill restores into `solid_stats_restore_drill` inside the live `postgres-0` pod, edge is host nginx to `https://stats-staging.solid-stats.ru`, `web` runtime not yet wired.
+---
+
+## Top 3 Deployment-Sinking Risks
+
+The three pitfalls most likely to take down this specific deployment, in order:
+
+1. **OOM eviction of postgres/server-2** — no swap means OOM is instant kill, not a slowdown; without PriorityClass the scheduler has no basis to protect app pods over obs pods.
+2. **Loki or Prometheus PVC undersized + local-path can't expand** — one redeploy with data loss to fix; gets worse as Loki fills disk and crashes the whole node.
+3. **GlitchTip first-run sequence wrong** — migration Job must complete before web/worker start; open registration + default superuser = exposed error tracker.
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: WireGuard handshake never completes from the ephemeral runner — "another tunnel swallows the UDP handshake"
+### Pitfall 1: OOM Kill Hits Postgres or server-2, Not the Observability Stack
 
 **What goes wrong:**
-The CD job brings up `wg0`, but `kubectl` hangs and dies on `dial tcp 10.8.0.1:6443: i/o timeout`. The tunnel never reaches a handshake. This is the runner-side version of the trap already documented for workstations in `wireguard-access.md`: if any other route/tunnel/NAT captures UDP to `<VPS_PUBLIC_IP>:51820`, the handshake is swallowed and the link never establishes.
+The node is already at ~77% memory (~6.2 GB used of 8 GB) before the obs stack lands. No swap means the kernel OOM killer fires without warning — no graceful eviction, no chance to rebalance. Without explicit PriorityClass assignments, Kubernetes does not know that postgres is more important than Prometheus. When memory pressure peaks (typically during Prometheus WAL compaction or Loki ingestion spikes), the scheduler will evict or the OOM killer will shoot whatever pod has the worst oom_score_adj ratio — which may be postgres (Burstable QoS if requests < limits) before it kills obs pods.
 
-**Why it happens:**
-- GitHub-hosted runners are NAT'd and ephemeral; their egress source IP changes every run, but WireGuard is stateless/roaming-tolerant so that alone is fine — the failure is usually the runner having no default route for the WG endpoint, a corporate/Actions egress proxy that only passes TCP/443, or `AllowedIPs` set so it tries to route the endpoint IP *through* the tunnel (chicken-and-egg).
-- No `PersistentKeepalive` on the runner peer → the first packet must come from the runner, and if there is any stateful NAT in front of the VPS the return path is closed until keepalive opens it.
-- MTU: WG default 1420; on some egress paths fragmented UDP is dropped, so the handshake (small) succeeds but the first large `kubectl` TLS flight silently stalls — looks like "connected but every command times out."
+**Why it bites here specifically:**
+- No swap = OOM is an instant hard kill, not a slowdown the scheduler can react to.
+- ~1.7 GB headroom before adding obs stack; Prometheus alone needs 300–500 MB; Loki another 200–400 MB; GlitchTip (web + worker + beat + Redis) another 400–600 MB. Total new demand ~1–1.5 GB — exceeds headroom without trimming.
+- Obs pods start at BestEffort or Burstable QoS by default if limits are not set correctly, which means the eviction order is unpredictable.
+- A Burstable postgres pod (requests < limits) and a Burstable Prometheus pod compete on the ratio of `(usage - request) / request`; Prometheus WAL compaction can spike usage well above its request, triggering eviction of the wrong pod first.
 
 **How to avoid:**
-- On the runner peer config: `PersistentKeepalive = 25`, and `AllowedIPs = 10.8.0.1/32` ONLY (split tunnel — never `0.0.0.0/0`, which would blackhole the runner's own GitHub callbacks and the WG endpoint route).
-- Confirm the endpoint IP is reached directly: the route to `<VPS_PUBLIC_IP>` must be the runner's normal default route, not `wg0`.
-- After `wg-quick up`, gate on an explicit handshake check before any `kubectl`: poll `wg show wg0 latest-handshakes` until non-zero (or `ping -c1 -W5 10.8.0.1`), fail fast with the WG state dumped to logs. Do not let `kubectl` be the thing that "discovers" the tunnel is down.
-- Lower `MTU = 1380` on the runner `[Interface]` if large responses stall while small ones work.
-- Egress: 51820/udp outbound must be allowed by whatever network the runner sits on. Self-hosted runners behind a TCP-only proxy cannot do raw WG — that pushes you to `wireguard-go` over a different path or a self-hosted runner on a network that permits UDP.
+- Create two PriorityClasses before deploying any obs workload:
+  ```yaml
+  # app-critical: postgres, rabbitmq, server-2, replay-parser-2
+  apiVersion: scheduling.k8s.io/v1
+  kind: PriorityClass
+  metadata:
+    name: app-critical
+  value: 1000
+  globalDefault: false
+  preemptionPolicy: PreemptLowerPriority
+  ---
+  # obs-background: all obs pods
+  apiVersion: scheduling.k8s.io/v1
+  kind: PriorityClass
+  metadata:
+    name: obs-background
+  value: 100
+  globalDefault: false
+  preemptionPolicy: Never   # obs pods cannot preempt each other OR app pods
+  ```
+- Set `priorityClassName: app-critical` on postgres, rabbitmq, server-2, replay-parser-2.
+- Set `priorityClassName: obs-background` on ALL obs pods (Prometheus, Grafana, Loki, Alloy, kube-state-metrics, node-exporter, GlitchTip and its postgres/Redis).
+- Make app pods Guaranteed QoS: set `requests == limits` for memory on postgres and server-2. Guaranteed pods are evicted last and have the most favorable OOM score.
+- Size obs pod memory limits conservatively and enforce them (limits = hard ceiling). Set requests at ~60–70% of limits so the scheduler sees accurate demand.
+- Add host swap (2–4 GB) as a host-level buffer BEFORE deploying the obs stack. Even if pods cannot use swap directly (see Pitfall 2), the host kernel uses swap for other host-level processes, freeing RAM for pods. Enable via `fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile` + fstab. Do not rely on pods consuming swap.
 
 **Warning signs:**
-`wg show` shows `latest handshake: (none)` / `transfer: 0 B received`; `kubectl` errors are `i/o timeout` not `connection refused` (refused would mean you reached something); small commands work but `kubectl logs`/`apply` of big manifests hang.
+- `kubectl describe node` shows `MemoryPressure=True` or eviction events.
+- `dmesg | grep -i "oom"` shows postgres or server-2 in OOM log lines.
+- Pod restarts on postgres or server-2 without an application crash.
 
-**Phase to address:** kubectl-native CD phase (WireGuard-in-CI). Make the handshake gate part of the very first iteration.
+**Phase to address:** Phase 0 / Pre-deployment preflight — PriorityClass creation and app pod annotation MUST land before any obs workload is deployed. Swap MUST be added to the host before Phase 1.
 
 ---
 
-### Pitfall 2: k3s ≥1.24 ServiceAccount has no auto-generated token Secret — the CI token is empty or absent
+### Pitfall 2: Swap Is Host-Level Relief Only — Pods Do Not Use It Transparently
 
 **What goes wrong:**
-You create the deploy ServiceAccount, then try to read its token from `secrets/<sa>-token` (the pre-1.24 way) to paste into a GitHub secret. On k3s (modern, ≥1.24) that Secret does not exist, so the kubeconfig has an empty token and CD authenticates as `system:anonymous` → every `kubectl` returns `Forbidden`.
+Operators add swap to the host expecting it to automatically protect pods from OOM. In practice, Kubernetes pods do NOT benefit from host swap by default and may not even with explicit configuration on the k3s version in use.
 
-**Why it happens:**
-Kubernetes 1.24 turned on `LegacyServiceAccountTokenNoAutoGeneration` (GA in 1.26): the API server no longer auto-creates a long-lived Secret for each SA. k3s tracks upstream, so a cluster provisioned recently behaves this way. People copy old StackOverflow snippets that assume the Secret exists.
+**Why it bites here specifically:**
+- The k3s default ships with `fail-swap-on=false` typically disabled, meaning it may refuse to start if swap exists unless configured.
+- NodeSwap feature gate: graduated to Beta in Kubernetes 1.28, default behavior in 1.32 is `NoSwap` — workloads cannot use swap even when the node has it, unless `swapBehavior: LimitedSwap` is explicitly configured. Only `LimitedSwap` is available (UnlimitedSwap was removed in 1.32).
+- NodeSwap requires cgroup v2. k3s on Ubuntu 22.04+ typically uses cgroup v2, but confirm: `stat -f /sys/fs/cgroup` should show `tmpfs`; `cat /sys/fs/cgroup/cgroup.controllers` should exist.
+- There is a confirmed k3s bug (issue #12677) where pods ignore swap even when NodeSwap is enabled and fail-swap-on=false is set. The issue is marked Done but may depend on the exact k3s patch version.
+- Even if NodeSwap is working: only Burstable pods can use swap; Guaranteed pods (requests == limits) never use swap by design.
 
 **How to avoid:**
-Pick one deliberately:
-- **Long-lived (matches the milestone's "long-lived SA token in CI secrets")**: create the Secret explicitly — `kind: Secret`, `type: kubernetes.io/service-account-token`, annotation `kubernetes.io/service-account.name: <sa>`; the controller then populates `.data.token`. Store that in the `staging` GitHub environment. Document it as a long-lived credential that must be rotated.
-- **Short-lived (preferred security-wise)**: don't store a token at all — but a GitHub-hosted runner can't `kubectl create token <sa> --duration=...` without already being authenticated, so for this topology a long-lived bound-Secret token is the pragmatic choice. Just make rotation a first-class runbook step (see Pitfall 6).
-- Either way, build the kubeconfig in-job from the token + the cluster CA, and assert identity before deploying: `kubectl auth whoami` (or `auth can-i`) must NOT be anonymous.
+- Treat swap as host-process relief only — it frees physical RAM that host daemons (containerd, kubelet, sshd, fish) would otherwise consume, indirectly giving pods more room.
+- To use swap with k3s kubelet add to `/etc/rancher/k3s/config.yaml`:
+  ```yaml
+  kubelet-arg:
+    - "fail-swap-on=false"
+    - "feature-gates=NodeSwap=true"
+  ```
+  And in kubelet config: `memorySwap.swapBehavior: LimitedSwap`
+  Restart k3s service after changes.
+- Do NOT design memory budgets assuming pods will use swap. Budget as if no swap exists for pods.
+- Verify cgroup v2 BEFORE enabling NodeSwap: `ls /sys/fs/cgroup/memory.swap.max` — if this file exists, cgroup v2 is active.
 
 **Warning signs:**
-`error: You must be logged in to the server (Unauthorized)` or `Forbidden`; `kubectl auth whoami` shows `system:anonymous`; the SA's `secrets:` list is empty in `kubectl get sa <sa> -o yaml`.
+- k3s fails to start after adding swap without `fail-swap-on=false`.
+- `/proc/swaps` shows swap active but `kubectl top pods` shows no swap usage even under pressure.
 
-**Phase to address:** kubectl-native CD phase (ServiceAccount + RBAC setup), before the WireGuard glue is trusted.
+**Phase to address:** Phase 0 preflight — verify cgroup version, add swap to host, configure kubelet flag if desired, document that pod-level swap is NOT guaranteed.
 
 ---
 
-### Pitfall 3: TLS SAN / CA mismatch when the runner hits `10.8.0.1` instead of `127.0.0.1`
+### Pitfall 3: Prometheus Cardinality Explosion — TSDB Memory Grows Without Bound
 
 **What goes wrong:**
-CD connects through the tunnel and gets `x509: certificate is valid for 127.0.0.1, 10.43.0.1, kubernetes.default..., not 10.8.0.1`, or the workaround `--insecure-skip-tls-verify` gets committed into CI (which silently disables MITM protection on the one path that crosses the public internet's UDP).
+Prometheus memory usage grows linearly with the number of active time series. On a busy node, cAdvisor alone generates thousands of series per container (CPU/memory/network per container per CPU per namespace). kube-state-metrics adds more. With a short scrape interval and no metric-relabeling drops, Prometheus easily hits 500 MB–1 GB RAM for a small but label-rich cluster, then OOMKills.
 
-**Why it happens:**
-The k3s serving cert only includes SANs it was told about. `wireguard-access.md` already requires adding `10.8.0.1` to `tls-san` in `/etc/rancher/k3s/config.yaml` and restarting k3s — but that is documented as a workstation step and is easy to assume "already done." If the cert was regenerated, rotated, or the node IP/hostname changed, `10.8.0.1` can drop out of the SAN list. Separately, the kubeconfig's embedded CA may not match after a k3s data-dir reset.
+**Why it bites here specifically:**
+- This node runs postgres, rabbitmq, server-2, replay-parser-2, replays-fetcher, AND all obs pods — relatively high container density for a single small node.
+- Default scrape interval in kube-prometheus-stack Helm chart is 30s; default retention is 15 days. Both inflate TSDB memory.
+- cAdvisor scraping is enabled by default for all containers, all CPU cores, all network interfaces.
+- Setting only `--storage.tsdb.retention.time` does NOT cap memory — retention caps on-disk blocks but the head block (last 2h) stays in RAM regardless of retention.
+- `--storage.tsdb.retention.size` does cap disk but can be violated during compaction (upstream issue #11112 — compaction can temporarily exceed the size limit, risking a full disk).
+- WAL is always in memory until compaction — WAL memory cannot be directly limited.
 
 **How to avoid:**
-- Treat `10.8.0.1 ∈ tls-san` as a verified precondition of the CD phase, not an assumption: `openssl s_client -connect 10.8.0.1:6443 </dev/null 2>/dev/null | openssl x509 -noout -text | grep -A1 'Subject Alternative Name'` must list it.
-- In CI, point `server:` at `https://10.8.0.1:6443` and supply the real cluster CA (`certificate-authority-data`). Never `--insecure-skip-tls-verify` in CD.
-- If you must hit it by a name, add that name to `tls-san` too and use it consistently.
+- Set scrape interval to 60s for non-critical targets (kube-state, node-exporter); 30s only for app targets (postgres-exporter, rabbitmq-exporter).
+- Drop high-cardinality useless metrics via `metric_relabel_configs`. Examples to drop on a small cluster:
+  - `container_tasks_state` (per-task container metrics, rarely needed)
+  - `container_cpu_usage_seconds_total` with `cpu=~"cpu.*"` label variants beyond `"total"`
+  - All `go_*` runtime metrics from exporters you don't monitor
+  - `apiserver_request_duration_seconds_bucket` histogram (dozens of buckets × endpoints)
+- Set retention to 7 days (matches Loki target): `--storage.tsdb.retention.time=7d`
+- Set size retention: `--storage.tsdb.retention.size=5GB` (leave buffer below PVC size)
+- Enable WAL compression: `--storage.tsdb.wal-compression`
+- Set memory limit on Prometheus pod at 400 MB; set request at 250 MB. If it OOMKills, the limit was too tight — increase to 512 MB before adjusting series count.
+- Run `prometheus_tsdb_head_series` metric after 1 hour; if above 50,000 series, drop more via relabeling before retention issues accumulate.
 
 **Warning signs:**
-`x509: certificate is valid for ... not 10.8.0.1`; someone proposing `--insecure-skip-tls-verify` in a PR; cert errors that appear only after a k3s restart/upgrade.
+- `prometheus_tsdb_head_series > 50000` in Prometheus self-metrics.
+- Prometheus pod repeatedly OOMKilled (check `kubectl describe pod prometheus-xxx`).
+- `prometheus_tsdb_compactions_failed_total` incrementing (disk or memory pressure during compaction).
 
-**Phase to address:** kubectl-native CD phase. Bundle with Pitfall 1/2 as the "can CI reach + trust + auth to the API" gate.
+**Phase to address:** Phase 1 (metrics stack) — set these values in Helm values before first apply. Do NOT use defaults then tune later; the head block fills RAM within hours.
 
 ---
 
-### Pitfall 4: Deploy RBAC too broad (cluster-admin) or too narrow (can't `rollout status`)
+### Pitfall 4: Loki Fills the 31 GB Disk — local-path PVC Cannot Expand
 
 **What goes wrong:**
-- Too broad: the long-lived CI token is bound to `cluster-admin` or a `ClusterRoleBinding`. A leaked token (Pitfall 6) then owns the whole cluster, not just one namespace.
-- Too narrow: a hand-written namespace Role grants `apps/deployments` and `core/pods` but the deploy script (`deploy-staging.sh`, lines 30-36) also does `rollout status statefulset/...`, `get service`, `get cronjob`, creates the namespace, and `kubectl apply`s Secrets/ConfigMaps/ServiceAccounts. Missing verbs → `Forbidden` mid-deploy, often after some resources already applied (partial deploy).
+Loki without retention_enabled=true accumulates chunks indefinitely. With conservative 7-day retention, a busy logging cluster on a 4-node setup would stay small, but a single node with all workloads generating logs + Loki ingesting its own logs creates a feedback loop. The compactor must be running and correctly configured or chunks are never deleted. If the PVC runs out and `local-path` does not support `allowVolumeExpansion`, the only fix is delete PVC + redeploy (data loss) or add a new PV manually.
 
-**Why it happens:**
-`kubectl rollout status` reads Deployments/StatefulSets AND watches their Pods/ReplicaSets; `apply` needs `get/patch/create` on every kind in `k8s/staging/*.yaml` (Namespace, Secret, ConfigMap, Service, Deployment, StatefulSet, CronJob, ServiceAccount). It's hard to enumerate by hand, so people either over-grant or under-grant.
+**Why it bites here specifically:**
+- k3s default `local-path` StorageClass sets `allowVolumeExpansion: false` — confirmed from the constraint in the milestone brief.
+- 31 GB free disk is shared between: Loki PVC, Prometheus PVC, GlitchTip postgres PVC, GlitchTip Redis PVC, container image layers (Loki image ~400 MB, Prometheus ~200 MB, GlitchTip ~1 GB with deps), containerd image store, Alloy WAL buffer.
+- Loki local storage: chunk files + BoltDB/TSDB index. At 7-day retention with moderate log volume (~5 MB/s ingest), this can reach 3–5 GB. Without compaction, it never shrinks.
+- Loki does NOT delete data based on free disk space — it only deletes based on retention configuration. A full disk crashes the pod; it does not back off gracefully.
 
 **How to avoid:**
-- Namespace-scoped `Role` + `RoleBinding` in `solid-stats-staging` only (never ClusterRoleBinding for the deploy identity). Namespace creation should be done once by an admin out-of-band, NOT by the CI identity, so CD doesn't need cluster-level `namespaces: create` — this also removes the `kubectl create namespace` privilege from `deploy-staging.sh` for the kubectl-native path.
-- Derive the verb/resource list from the manifests, then verify with `kubectl auth can-i --list --as=system:serviceaccount:solid-stats-staging:<sa> -n solid-stats-staging` and dry-run the full apply as the SA in a pre-merge check.
-- Include `get/list/watch` on `deployments`, `statefulsets`, `replicasets`, `pods` (for rollout status), plus `apply` verbs (`get/list/create/patch/update`) on `services`, `configmaps`, `secrets`, `cronjobs`, `serviceaccounts`. No `delete` unless a prune step truly needs it.
+- Size PVC generously upfront: 10 GB for Loki (covers 7-day retention × 2 for WAL + compactor working dir). Do NOT set 5 GB and plan to expand.
+- Enable retention and compaction in Loki config:
+  ```yaml
+  compactor:
+    working_directory: /loki/compactor
+    shared_store: filesystem
+    retention_enabled: true
+    retention_delete_delay: 2h
+    retention_delete_worker_count: 150
+  limits_config:
+    retention_period: 168h   # 7 days
+  ```
+- Set `chunk_retain_period` > 0 (30m default) so compactor can safely delete.
+- Set index period to 24h — required for boltdb-shipper retention.
+- Monitor disk usage via node-exporter + alert before 80% full (even without external alerts, make the Grafana panel prominent).
+- For Prometheus: 7 GB PVC (5 GB retention + WAL headroom). Use `--storage.tsdb.retention.size=5GB` so Prometheus self-manages.
+- For GlitchTip postgres: 3 GB PVC (error tracking data only, not app data).
 
 **Warning signs:**
-`Forbidden` on `pods`/`replicasets` only during `rollout status` while `apply` worked; partial deploys; `auth can-i --list` showing `*/*` (too broad).
+- `node_filesystem_avail_bytes` for the Loki volume dropping.
+- Loki pod CrashLoopBackOff with `no space left on device` in logs.
+- Compactor not running — check `loki_compactor_runs_total` stays 0 after startup.
 
-**Phase to address:** kubectl-native CD phase (RBAC). Verification = `auth can-i --list` snapshot + SA-impersonated dry-run committed as the phase's evidence.
+**Phase to address:** Phase 2 (log stack) — set PVC sizes and compaction config before first apply. Check `kubectl describe storageclass local-path` to confirm expansion is disabled before sizing.
 
 ---
 
-### Pitfall 5: SSH/legacy path left open after cutover to kubectl-native CD
+### Pitfall 5: CPU Saturation Stalls App Workloads
 
 **What goes wrong:**
-After CD switches to WireGuard+kubectl, the old SSH machinery stays live: `CD_SSH_PRIVATE_KEY/HOST/PORT/USER` secrets remain in the `staging` environment, the deploy host trusts the runner key, port 22 stays broadly open, and `deploy-staging.sh` still SSHes. Now there are two deploy paths and a standing remote-shell credential — exactly what the milestone wanted removed (PROJECT.md: "SSH/scp removed").
+The node is at ~93% CPU before the obs stack lands. Prometheus scraping, rule evaluation, and WAL compaction are CPU-intensive bursts. Loki ingestion (regex parsing, chunk writing) adds steady CPU. kube-state-metrics and node-exporter add steady low-level CPU polling. The result is CPU throttling on all pods — postgres query latency increases, server-2 request timeouts, RabbitMQ ack delays.
 
-**Why it happens:**
-"It still works, leave it" — the SSH path is load-bearing until the kubectl path is proven, so removal gets deferred and then forgotten. The script and workflow both still reference SSH env vars.
+**Why it bites here specifically:**
+- 93% CPU baseline leaves ~0.3 vCPU of slack on 4 vCPU. Prometheus WAL compaction alone can spike to 1 full vCPU for several seconds.
+- CronJobs (replays-fetcher, postgres-backup) run at scheduled times — if they overlap with a Prometheus compaction, the spike can saturate all 4 cores.
+- k3s node has no autoscaler fallback.
 
 **How to avoid:**
-- Make SSH removal an explicit, gated step of the CD phase, not a someday: rewrite `deploy-staging.sh` to use `kubectl` against the kubeconfig (drop the `ssh "${ssh_args[@]}"` wrappers and the `scp` of rendered secrets — apply directly), and delete the `Install SSH key`/`Trust deploy host` steps from `deploy-staging.yml`.
-- Remove `CD_SSH_*` from the `staging` GitHub environment once the kubectl path has shipped at least one successful deploy.
-- Note: rendered secrets currently travel via `scp` to `/tmp` then `kubectl apply` on the host — the kubectl-native path must `kubectl apply -f -` the rendered secrets over the tunnel (TLS) instead, and never write them to a file on the runner without `trap rm`.
-- Audit ufw: confirm no new `6443` exposure crept in and SSH is restricted (key-only, ideally source-limited), since SSH is no longer the deploy mechanism.
+- Set CPU *requests* low (scheduler signal) but CPU *limits* tight on obs pods:
+  - Prometheus: request 100m, limit 500m
+  - Loki: request 100m, limit 300m
+  - Grafana: request 50m, limit 200m
+  - kube-state-metrics: request 50m, limit 150m
+  - node-exporter: request 25m, limit 100m
+  - Alloy: request 50m, limit 200m
+  - GlitchTip web/worker: request 50m, limit 200m each
+- Increase scrape intervals: 60s for infrastructure targets; 120s for kube-state.
+- Disable recording rules initially — evaluate whether rule-eval CPU is worth it vs. query-time computation for this scale.
+- Disable Prometheus federation and remote-write if not needed (prevents extra CPU on push).
+- Check `node_cpu_seconds_total{mode="idle"}` after obs deployment — target >15% idle at steady state.
 
 **Warning signs:**
-`CD_SSH_*` still present after CD migration; both old and new deploy jobs runnable; `deploy-staging.sh` still contains `ssh`/`scp`; rendered secret YAML written to the runner filesystem.
+- `rate(node_cpu_seconds_total{mode="idle"}[5m]) < 0.05` (less than 5% idle).
+- Pod CPU throttling: `container_cpu_throttled_seconds_total` rising for postgres or server-2.
+- PostgreSQL query latency increasing (server-2 response times).
 
-**Phase to address:** kubectl-native CD phase (final hardening step) — block phase completion on SSH removal + secret cleanup.
+**Phase to address:** Phase 1 (metrics stack) — set CPU limits in Helm values from day one. Revisit after 24h of live data.
 
 ---
 
-### Pitfall 6: Long-lived SA token rotation / leak risk
+### Pitfall 6: GlitchTip First-Run Sequence Failure
 
 **What goes wrong:**
-The long-lived bound-Secret token sits in a GitHub environment secret indefinitely. It is a namespace-admin-equivalent credential reachable from any workflow that can select the `staging` environment, printed into kubeconfig in-job (risk of log echo), and never rotated. A fork-PR, a compromised action, or an over-permissive `environment` gate leaks it.
+Multiple failure modes on first deploy:
+1. Web/worker pods start before the Django migration Job completes — Django crashes with `relation "x" does not exist`.
+2. Superuser not created before ENABLE_USER_REGISTRATION=False is set — nobody can log in and there is no in-cluster way to create a user without exec.
+3. Celery worker and beat are separate containers/pods by default — if beat does not start, scheduled cleanup tasks (error aggregation, retention) never run, memory grows.
+4. Redis (or Valkey) persistence: if Redis AOF/RDB is not configured, a Redis pod restart loses the Celery task queue, dropping unprocessed error events.
 
-**Why it happens:**
-Long-lived tokens don't expire, so nothing forces rotation. The "it works" credential becomes permanent. Pull-request triggers can run workflows; if the deploy job (or a careless `echo`) runs on `pull_request`, the secret is exposed to untrusted code.
+**Why it bites here specifically:**
+- k3s does not have a managed Helm hook retry mechanism; the migration Job must succeed before web pods become ready.
+- GlitchTip 5.x supports running without Redis/Valkey (PostgreSQL as Celery broker), which simplifies the stack but requires `VALKEY_URL=""` to be explicitly set; forgetting this means GlitchTip tries to connect to a Redis that may not exist.
+- GlitchTip uses ENABLE_USER_REGISTRATION to lock registration, but this flag must be set AFTER superuser creation — or lock before creating, then create via `kubectl exec`.
 
 **How to avoid:**
-- Keep the deploy job behind `environment: staging` with required reviewers, and ensure it does NOT run on `pull_request` (current workflow already guards deploy with `if: github.event_name != 'pull_request'` — preserve that).
-- Mask the token: never `echo` it; build kubeconfig with `kubectl config set-credentials --token=... ` from an env var, rely on GitHub's automatic secret masking, and disable command tracing (`set +x`) around credential handling.
-- Define a rotation runbook: delete + recreate the token Secret, update the GitHub secret, verify with `auth whoami`. Pair rotation with WG peer key rotation. Document an owner and cadence.
-- Bound blast radius via Pitfall 4 (namespace Role, not cluster-admin) so a leak is contained to `solid-stats-staging`.
+- Use Helm `helm.sh/hook: pre-install,pre-upgrade` on the migration Job; set `helm.sh/hook-delete-policy: before-hook-creation` to clean old Job pods.
+- Set `initContainers` on web/worker that wait for migration completion (or use the Helm hook ordering — Job must succeed before Deployment rollout).
+- Sequence on first deploy:
+  1. Deploy GlitchTip with ENABLE_USER_REGISTRATION=True.
+  2. Confirm migration Job completed (`kubectl wait --for=condition=complete job/glitchtip-migrate`).
+  3. Create superuser: `kubectl exec deploy/glitchtip-web -- python manage.py createsuperuser --noinput --username admin --email <email>` with DJANGO_SUPERUSER_PASSWORD env var.
+  4. Set ENABLE_USER_REGISTRATION=False and redeploy.
+- For Redis: set `appendonly yes` in Redis config. Or use GlitchTip 5.2+ with PostgreSQL backend (set `VALKEY_URL=""`) to eliminate Redis entirely and reduce memory by ~50–100 MB.
+- Set memory limits on GlitchTip Redis at 128 MB with `maxmemory 100mb` and `maxmemory-policy allkeys-lru`.
+- For celery beat: confirm it is running as a separate process or pod and that its schedule persists — if beat crashes without persistent storage, tasks stop running silently.
 
 **Warning signs:**
-Token age unknown / never rotated; token usable from `pull_request` runs; `set -x` around credential steps; the same token reused across more than the deploy workflow.
+- GlitchTip web pod CrashLoopBackOff on first deploy — check for Django migration errors.
+- `kubectl logs job/glitchtip-migrate` showing `no such table` or `relation does not exist` errors.
+- No Celery tasks processing — check worker logs for connection errors to Redis/Valkey/Postgres.
+- Registration locked but no admin user — exec into web pod and run `createsuperuser`.
 
-**Phase to address:** kubectl-native CD phase (token lifecycle + rotation runbook), revisited at Production cutover (production gets its own scoped token, never the staging one).
+**Phase to address:** Phase 3 (error tracking) — deployment order is: GlitchTip postgres → migration Job → web → worker → beat. Validate migration success before marking phase complete.
 
 ---
 
-### Pitfall 7: TLS renewal / host-nginx breaks during production cutover
+### Pitfall 7: Alloy DaemonSet Log Permission and Path Gotchas Under k3s/containerd
 
 **What goes wrong:**
-Edge automation (host nginx + cert renewal) is added at the same time traffic is cut from legacy to the new runtime. A certbot/acme renewal hook reloads nginx mid-cutover, or the new server block for the new upstream has a config error, and `nginx -s reload` fails or serves the wrong upstream → the public `https://stats-staging.solid-stats.ru` (and later production host) drops or serves stale/legacy.
+Alloy DaemonSet mounts `/var/log/pods` from the host. Under k3s with containerd, log paths are symlinked: `/var/log/pods/<namespace>_<pod>_<uid>/<container>/` with actual logs under `/var/lib/rancher/k3s/agent/containerd/` or similar. Alloy may follow symlinks correctly but needs host-level read permissions. Running Alloy without a privileged security context or without mounting the correct host paths results in empty log streams with no error — Alloy silently collects nothing.
 
-**Why it happens:**
-Host nginx is currently undocumented operational state (staging.md: host nginx/cert automation is explicitly *not owned* yet). Introducing automation (reload hooks, firewall rules) and re-pointing the upstream simultaneously means two unproven changes interact. ACME HTTP-01 renewal also needs port 80 reachable; a firewall change in the same phase can break the challenge and silently let certs lapse weeks later.
+Additionally, Alloy should NOT collect its own logs in a recursive loop (Alloy logs → Loki → Alloy tries to scrape Loki → Loki logs → loop).
+
+**Why it bites here specifically:**
+- k3s uses its own containerd data directory (`/var/lib/rancher/k3s/`), not the standard Docker/containerd path. Log symlinks under `/var/log/pods` point into this directory.
+- Community forum reports (Grafana Labs, issue confirmed) of `permission denied` when mounting `/var/log/pods` without the right securityContext.
+- A DaemonSet on a single node is still a DaemonSet — one pod runs, but if misconfigured it produces no logs and no error.
 
 **How to avoid:**
-- Separate edge automation from cutover: land host nginx + cert renewal + firewall as their own phase, prove a renewal dry-run (`certbot renew --dry-run`) and `nginx -t` gating every reload, BEFORE re-pointing any traffic.
-- Make the upstream switch a single reversible change (one `proxy_pass` / upstream block) with `nginx -t` then `reload`, and keep the legacy upstream config one comment away for instant rollback.
-- Verify ACME challenge path stays open after firewall automation: leave 80/443 inbound, confirm renewal succeeds end-to-end, set a cert-expiry alert so a broken renewal is caught in days not at expiry.
-- Don't let cert renewal hooks blind-reload a config that hasn't passed `nginx -t`.
+- Mount both `/var/log/pods` and `/var/log/containers` as hostPath volumes.
+- Add volume mount for `/var/lib/rancher/k3s` (read-only) so Alloy can follow symlinks.
+- Run Alloy container with `runAsUser: 0` (root) or with `supplementalGroups` that has read access to containerd log files.
+- Add label-based exclusion to prevent Alloy from collecting its own logs:
+  ```
+  # In Alloy config: drop logs from monitoring namespace itself
+  drop_block {
+    source = "namespace"
+    value  = "monitoring"
+  }
+  ```
+  Or filter GlitchTip/Loki/Prometheus namespaces from Alloy's own log collection if chatty.
+- Validate with: `kubectl exec -it alloy-xxx -- /bin/sh -c "ls /var/log/pods"` — should see actual pod directories, not empty.
+- Check Alloy self-metrics: `alloy_logs_entries_total` should be > 0 within 60s of deploy.
 
 **Warning signs:**
-`nginx -t` not run before reload in the renewal hook; cutover PR also changes firewall/cert config; no cert-expiry monitoring; HTTP-01 renewal after a firewall change never re-tested.
+- Alloy pod running but `alloy_logs_entries_total` stays 0.
+- `permission denied` in Alloy pod logs.
+- Loki shows no log streams in Grafana Explore.
 
-**Phase to address:** Edge automation phase (nginx/TLS/firewall) FIRST and standalone; Production cutover phase consumes a proven edge and only flips the upstream.
+**Phase to address:** Phase 2 (log stack) — validate log collection before closing phase. Required success criterion: logs from `solid-stats-staging` namespace visible in Grafana Explore.
 
 ---
 
-### Pitfall 8: Timeweb S3 lifecycle rules silently differ from AWS or are partially unsupported
+### Pitfall 8: NetworkPolicy Default-Deny Applied Before Scrape Paths Are Allowed — Silent Breakage
 
 **What goes wrong:**
-You write an AWS-style `put-bucket-lifecycle-configuration` JSON (transitions to storage classes, `AbortIncompleteMultipartUpload`, tag/prefix `Filter` blocks, `NoncurrentVersionExpiration`) and either the call is accepted but only partially honored, or it errors on the unsupported field — so backups under `backups/postgres/` are believed to be auto-expiring when they are not (unbounded S3 growth / cost), or replay/artifact prefixes get expired more aggressively than intended.
+Applying a `default-deny` NetworkPolicy to the `solid-stats-staging` namespace (or any app namespace) before creating the allow rules for Prometheus scraping silently breaks all metric collection. Prometheus shows targets as DOWN but the pods themselves continue running. This is especially insidious because the pods appear healthy — the breakage is invisible until someone looks at Prometheus targets or Grafana dashboards show gaps.
 
-**Why it happens:**
-Timeweb's S3 is S3-*compatible*, not S3. Vendor docs confirm lifecycle and versioning ARE supported, but the exact AWS feature surface (transitions/storage classes don't exist the same way, `Filter` vs legacy `Prefix` schema, multipart-abort rules, per-prefix granularity) is not guaranteed. The backup job already uses `addressing_style path` and `--endpoint-url` precisely because the API isn't drop-in AWS — lifecycle is the next compatibility cliff. There are multiple distinct prefixes that must coexist (`backups/postgres/`, raw replays, parser artifacts, future reports), each wanting different retention.
+**Why it bites here specifically:**
+- The plan calls for NetworkPolicy after CNI enforcement is proven — but if someone applies default-deny prematurely or in the wrong order, there is no alarm.
+- Prometheus scrapes cross-namespace: it lives in `monitoring` namespace and scrapes targets in `solid-stats-staging`, `glitchtip`, and `kube-system`. Each requires an explicit cross-namespace allow rule.
+- k3s uses Flannel CNI by default, which supports NetworkPolicy via `network-policy` controller (enabled with `--flannel-backend=vxlan` + `--kube-proxy-arg=...` — verify: `kubectl get pods -n kube-system | grep flannel`). If NetworkPolicy is not actually enforced by the CNI, applying policies is a no-op (false security).
 
 **How to avoid:**
-- Treat lifecycle support as something to *prove on Timeweb*, not assume: apply a rule, then read it back (`get-bucket-lifecycle-configuration`) and confirm the stored rule matches what you sent; then verify actual expiry on a throwaway test object dated in the past (or wait one cycle) before trusting it for real retention.
-- Use the simplest portable construct: prefix-scoped `Expiration { Days }` only. Avoid transitions/storage-class moves and tag filters unless Timeweb explicitly supports them.
-- Decide retention per prefix explicitly (backups vs replays vs artifacts) — never one bucket-wide rule that could expire backups you meant to keep.
-- If versioning is enabled, also set `NoncurrentVersionExpiration` or non-current copies accumulate forever; if Timeweb ignores it, fall back to not versioning the backup prefix.
-- Prefer configuring via Timeweb's own panel/API if the S3 lifecycle endpoint proves flaky, and document which mechanism is authoritative.
+- Verify CNI supports NetworkPolicy before creating any policy: deploy a test pod in `monitoring`, try to curl a pod in `solid-stats-staging`, then apply a deny policy, verify the curl fails.
+- Create allow rules BEFORE applying default-deny:
+  ```yaml
+  # In solid-stats-staging: allow ingress from monitoring namespace on exporter ports
+  apiVersion: networking.k8s.io/v1
+  kind: NetworkPolicy
+  metadata:
+    name: allow-prometheus-scrape
+    namespace: solid-stats-staging
+  spec:
+    podSelector: {}
+    policyTypes: [Ingress]
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: monitoring
+        ports:
+          - protocol: TCP
+            port: 9187  # postgres-exporter
+          - protocol: TCP
+            port: 9419  # rabbitmq-exporter
+  ```
+- Apply and validate scraping succeeds BEFORE adding default-deny.
+- Keep NetworkPolicy as last step in each namespace after full scrape/datasource validation.
 
 **Warning signs:**
-`get-bucket-lifecycle-configuration` returns nothing or a rule different from what you put; `MalformedXML`/`NotImplemented`/`InvalidRequest` on apply; S3 usage keeps growing past the intended retention window; old `backups/postgres/<id>/` objects still present long after expiry days.
+- Prometheus target page shows `connection refused` or `context deadline exceeded` for previously-healthy targets after a network policy change.
+- Grafana datasource test fails after obs namespace changes.
+- `kubectl exec -n monitoring -- curl http://postgres-exporter.solid-stats-staging:9187/metrics` times out.
 
-**Phase to address:** S3 lifecycle phase. Verification = put-then-get round-trip + an observed expiry on a test object, captured as evidence (PROJECT.md requires S3 object checks for completion).
+**Phase to address:** Phase 4 (network isolation) — must come AFTER Phase 1–3 scraping is fully validated. The plan already states this; it must be a hard ordering constraint in the roadmap.
 
 ---
 
-### Pitfall 9: Restore drill corrupts the live DB / PVC due to weak isolation
+### Pitfall 9: certbot Let's Encrypt Rate Limits and DNS Race
 
 **What goes wrong:**
-The drill is meant to restore into `solid_stats_restore_drill` inside the live `postgres-0` pod (backup-restore.md). But `pg_restore --clean --if-exists` pointed at the wrong `--dbname`, a missing `--dbname` (defaults to the connection DB), or a copy-paste that targets `solid_stats` instead of the drill DB will DROP/overwrite live staging data. Restoring inside the production pod also competes for the same PVC disk/IO and can fill `postgres-data` (20Gi) — a large dump + restored DB can exhaust the volume and crash live PostgreSQL.
+Requesting two new subdomain certificates (`grafana.stats-staging.solid-stats.ru` and `errors.stats-staging.solid-stats.ru`) in rapid succession, especially after failed attempts, risks hitting Let's Encrypt rate limits (50 certificates per registered domain per week, 5 failed validation attempts per domain per hour).
 
-**Why it happens:**
-The drill runs in the same pod and same PostgreSQL instance as live data (only a separate database name isolates it). `--clean --if-exists` is destructive by design; one wrong flag/name turns a drill into a wipe. Disk pressure from a second full DB on the same PVC is easy to overlook. Automating the drill (the milestone goal) removes the human who would have noticed the wrong target.
+**Why it bites here specifically:**
+- Both subdomains are new — first time issuing certs for them.
+- The v2.0 certbot work already proved that `certbot renew` hangs on auth certs (see memory: `certbot full-renew hangs on auth cert`). A botched first attempt consuming a rate-limit slot before DNS is ready is a known risk on this host.
+- If DNS `A` records for the new subdomains are not yet propagated when certbot runs HTTP-01 validation, the attempt fails and counts against the hourly limit.
 
 **How to avoid:**
-- For an *automated* drill, do NOT restore into the live `postgres-0`/`postgres-data` PVC. Spin up an ephemeral, throwaway PostgreSQL Pod/Job with its own emptyDir or short-lived PVC in the same namespace, restore there, smoke-check, tear down. This makes corruption of live data structurally impossible.
-- Hard-guard the target: assert the connection DB name == drill DB and `!= solid_stats` before running `pg_restore`; never run `--clean` against a connection whose default DB is live.
-- Size/disk guard: ensure the scratch volume has headroom for dump + restored DB; never let the restore share the live 20Gi PVC.
-- Keep the manual runbook's explicit `--dbname=solid_stats_restore_drill` and `dropdb` cleanup, but in automation prefer full instance isolation over same-instance separate-DB.
-- Run the drill against a downloaded dump copy, not by reading/writing live tables.
+- Add DNS A records and wait for propagation (check with `dig +short grafana.stats-staging.solid-stats.ru @8.8.8.8`) BEFORE running certbot.
+- Use `certbot --dry-run` first to confirm the HTTP-01 challenge path works through host nginx.
+- If the nginx vhost for the new subdomains is not yet configured, the HTTP-01 challenge at `/.well-known/acme-challenge/` will 404. Configure nginx vhost (even with a temporary `return 200`) BEFORE certbot.
+- Issue both certs in a single `certbot certonly --cert-name` command with multiple `-d` flags if both subdomains share the same cert, reducing rate limit exposure.
+- Use Let's Encrypt staging (`--test-cert`) to validate the setup before the real issue.
 
 **Warning signs:**
-Drill restore connects to `solid_stats`; `pg_restore` without an explicit drill `--dbname`; live row counts change after a drill; `postgres-data` usage spikes during drills; drill and live share the same PVC.
+- certbot error: `too many certificates already issued for registered domain solid-stats.ru`.
+- `dig` returns NXDOMAIN for new subdomains.
+- nginx returns 404 on `/.well-known/acme-challenge/test`.
 
-**Phase to address:** Automated restore drill phase. Verification = drill runs with live DB checksums/row counts unchanged before/after; scratch isolation demonstrated.
+**Phase to address:** Phase 3 (public edge) — DNS must be verified before certbot is run. Dry-run first, then production cert issue.
 
 ---
 
-### Pitfall 10: `web` runtime collides with manifest apply ordering and edge routing
+### Pitfall 10: postgres-exporter / rabbitmq-exporter Add Connection Load to Already-Loaded Postgres
 
 **What goes wrong:**
-Adding `web` manifests to `k8s/staging/` breaks deploys because (a) the repo relies on numeric filename-prefix ordering (`00-`, `10-`...`60-`) and `deploy-staging.sh` concatenates `k8s/staging/*.yaml` with `awk` then `kubectl apply -f -` as one stream — a `web` file numbered to land before its namespace/secret/configmap dependencies fails apply; (b) `deploy-staging.sh`'s `rollout status` list is hard-coded (postgres, rabbitmq, server-2, replay-parser-2) so a new `web` Deployment is deployed but never verified — green CD, broken `web`; (c) edge routing: host nginx now must route `web` vs `server-2` (API) on the same host, and a path/host collision sends API traffic to `web` or vice-versa.
+postgres-exporter opens a persistent connection to PostgreSQL and runs queries on every scrape (default every 30s). postgres-exporter v0.14.0 had a confirmed connection-leak bug (patched in v0.15.0) that exhausted `max_connections`. On an already-loaded postgres with existing app connections (server-2, replay-parser-2), even a non-leaking exporter adds a monitored connection that counts against `max_connections` (default 100 in Postgres).
 
-**Why it happens:**
-The apply model is "glob + concatenate + apply once," which is order- and dependency-sensitive, and the verification list is static. `web` is the first genuinely new workload added under the new ownership model, so the ordering/verification/edge assumptions baked for the existing four services get exercised for the first time.
+**Why it bites here specifically:**
+- The app postgres (in `solid-stats-staging`) is the same postgres handling server-2 and replay-parser-2 business data. GlitchTip gets its own postgres, but the exporter monitors the app postgres.
+- Default `max_connections=100` shared between app connections + replication slots + exporter = tight budget.
+- rabbitmq-exporter uses the management API (HTTP), not AMQP, so it does not consume RabbitMQ connections, but it does add HTTP polling load to the management plugin.
 
 **How to avoid:**
-- Number `web` manifests after their dependencies (config/secret/namespace) and before nothing they don't depend on; keep one-Kind-per-concern files consistent with existing prefixes.
-- Update the rollout-status verification in `deploy-staging.sh`/docs to include the `web` Deployment, or make verification derive from labels (`app.kubernetes.io/part-of: solid-stats`) rather than a hard-coded list, so new workloads are automatically gated.
-- Define `web` Service + edge routing explicitly: decide host/path split (`server-2` API vs `web` UI) and validate the nginx upstream map before cutover (ties into Pitfall 7).
-- Give `web` the same guardrails as existing workloads per the kubernetes-specialist skill and PROJECT.md: explicit ServiceAccount (not default), `automountServiceAccountToken: false` unless needed, resource requests/limits, probes, pinned image SHA (not `latest`), security context.
+- Pin postgres-exporter to v0.15.0+ (avoid the v0.14.0 connection leak).
+- Create a dedicated read-only Postgres user for the exporter with minimal grants:
+  ```sql
+  CREATE USER exporter WITH PASSWORD 'xxx' CONNECTION LIMIT 2;
+  GRANT pg_monitor TO exporter;
+  ```
+  The `pg_monitor` role (Postgres 10+) provides all metrics access without superuser.
+- Set exporter scrape interval to 60s (not 30s) to halve connection-hold duration.
+- Monitor `pg_stat_activity` connection count; alert if > 80% of `max_connections`.
+- For rabbitmq-exporter: use the official `kbudde/rabbitmq-exporter` or Prometheus native rabbitmq plugin. Configure it with the rabbitmq management user (already exists). Scrape interval 60s.
+- Optionally front postgres with PgBouncer (transaction-mode pooler) before adding the exporter if connection budget is tight — but this is a separate phase item.
 
 **Warning signs:**
-`kubectl apply -f -` errors on `web` resources referencing a not-yet-applied namespace/secret; CD goes green but `web` pods are `CrashLoopBackOff`/`Pending` (not in rollout-status list); nginx serves `web` for API routes; `web` using the default ServiceAccount.
+- `FATAL: sorry, too many clients already` in server-2 or replay-parser-2 logs.
+- postgres-exporter pod in CrashLoopBackOff with `pq: too many connections`.
+- `pg_stat_activity` count near `max_connections`.
 
-**Phase to address:** `web` runtime wiring phase; edge interaction validated jointly with the Edge automation phase.
+**Phase to address:** Phase 1 / exporter sub-phase — create the read-only exporter user as part of the pre-deploy runbook; do not use superuser credentials.
 
 ---
 
@@ -228,99 +386,106 @@ The apply model is "glob + concatenate + apply once," which is order- and depend
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| `--insecure-skip-tls-verify` in CD to dodge the SAN issue | CD connects immediately | Disables MITM protection on the one hop crossing public internet (the WG endpoint); becomes permanent | Never — fix `tls-san` (Pitfall 3) |
-| Bind the CI token to `cluster-admin` | No RBAC enumeration work | Leaked token owns the whole cluster; violates least-privilege baseline | Never for the deploy identity |
-| Keep SSH deploy path "just in case" after kubectl CD ships | Easy rollback | Two deploy paths + standing remote-shell credential; the thing the milestone removed | Only until first successful kubectl deploy, then delete |
-| Restore drill into the live `postgres-0` (separate DB only) | Reuses running PostgreSQL, simplest manual path | One wrong `--dbname`/`--clean` wipes live data; PVC disk pressure | OK for a careful *manual* drill; never for the *automated* drill |
-| One bucket-wide S3 lifecycle rule | One rule to manage | Can expire backups you meant to keep; can't differentiate prefixes | Never — backups vs replays vs artifacts need different retention |
-| Hard-coded rollout-status service list | Simple, explicit | New workloads (web) deploy unverified; green CD hides broken pods | Acceptable short-term if a TODO + manual check exists; better to derive from labels |
-| Long-lived SA token with no rotation runbook | Works forever, no plumbing | Permanent namespace-admin credential, no rotation, leak is silent | Only with a documented rotation owner + cadence |
+| Skip PriorityClass, rely on QoS only | Simpler initial deploy | Unpredictable eviction; obs pod may outlive postgres during pressure | Never — set PriorityClass before first obs deploy |
+| Use default Helm values (scrape_interval=30s, retention=15d) | Zero config | Prometheus OOMKills within days; TSDB fills disk | Never for this constrained node |
+| Use a single PVC of "probably enough" size for Loki | One less decision | PVC cannot expand; redeploy = data loss | Never — right-size upfront |
+| Deploy GlitchTip with ENABLE_USER_REGISTRATION=True permanently | Skip superuser race | Any user who reaches the URL can create an account and see all error events | Never in staging; close registration within Phase 3 |
+| Prometheus superuser credentials for postgres-exporter | Simpler setup | Connection leak bug risk; exporter has write access; violates least privilege | Never |
+| Apply NetworkPolicy default-deny first, add allows later | "Secure first" feel | Silent scraping breakage; hours of debugging | Never — validate scraping, THEN add deny |
+| Skip swap configuration entirely | Less risk of kubelet startup issues | First OOM under obs stack load kills something critical | Acceptable ONLY if obs memory budget is confirmed safely within headroom |
+
+---
 
 ## Integration Gotchas
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| WireGuard from GitHub-hosted runner | No keepalive / `AllowedIPs=0.0.0.0/0` / no handshake gate before kubectl | `PersistentKeepalive=25`, `AllowedIPs=10.8.0.1/32`, poll `wg show ... latest-handshakes` before any kubectl |
-| k3s API auth from CI | Reading a non-existent auto SA token Secret (≥1.24) | Explicitly create `kubernetes.io/service-account-token` Secret; assert `auth whoami != anonymous` |
-| k3s serving cert | Hitting `10.8.0.1` not in `tls-san` | Add `10.8.0.1` to `/etc/rancher/k3s/config.yaml` `tls-san`, restart k3s, verify SAN via `openssl s_client` |
-| Timeweb S3 lifecycle | Assuming AWS feature parity (transitions, tag filters, multipart-abort) | Put-then-get round-trip + observed expiry on a test object; prefix `Expiration{Days}` only |
-| Timeweb S3 addressing | Virtual-hosted-style / wrong region | Keep path-style (`addressing_style path`) + `--endpoint-url https://s3.twcstorage.ru`, region `ru-1`, as backup job already does |
-| pg_restore drill | `--clean`/wrong `--dbname` against live DB | Automated drill into an ephemeral throwaway PostgreSQL instance, not live `postgres-0`/PVC |
-| Host nginx + ACME during cutover | Blind `nginx -s reload`; firewall change breaks HTTP-01 | `nginx -t` gate every reload; `certbot renew --dry-run`; keep 80/443 open; cert-expiry alert |
-| `web` into glob-apply pipeline | Misnumbered file / missing from rollout-status list | Order by dependency; gate rollout by `part-of` label, not hard-coded names |
+| Prometheus → postgres-exporter | Use superuser DSN, v0.14.0 image | Use `pg_monitor` role, pin to v0.15.0+ |
+| Alloy → k3s containerd logs | Only mount `/var/log/pods`, miss symlink targets | Also mount `/var/lib/rancher/k3s` read-only; run as root |
+| Loki compactor | Leave `retention_enabled: false` (default) | Explicitly set `retention_enabled: true` + retention period |
+| GlitchTip → its own Postgres | Race between web pod and migration Job | Use Helm pre-install hook; `kubectl wait --for=condition=complete` |
+| certbot → new subdomains | Run before DNS propagates | Verify DNS resolution + configure nginx vhost first |
+| NetworkPolicy → cross-namespace scraping | Apply default-deny before allow rules | Create allow rules first, validate, then apply deny |
+| Prometheus → kube-state-metrics | Default scrape includes all API object labels (huge cardinality) | Use `metricLabelsAllowlist` to restrict label exposure |
+
+---
 
 ## Performance Traps
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| WG MTU too high for runner egress | Small kubectl commands work, `apply`/`logs` of large payloads stall | Set runner `MTU=1380`; gate on handshake not on first big command | Whenever a large manifest stream or log is fetched over the tunnel |
-| Backups never expire (lifecycle silently no-op) | S3 usage climbs; tariff can't be downgraded (Timeweb limitation) | Verify lifecycle actually deletes; alert on bucket size | Weeks/months in — slow cost bleed |
-| Restore drill on live PVC | `postgres-data` (20Gi) fills; live PostgreSQL crashes on disk pressure | Drill in ephemeral instance with its own volume | When dump+restored DB approaches PVC free space |
-| Concatenated single `kubectl apply` stream | One bad doc fails the whole apply / partial state | Keep manifests valid + ordered; consider server-side apply or per-file apply if web adds complexity | As manifest count/dependencies grow with `web` |
+| High-cardinality labels in kube-state-metrics | Prometheus memory > 500 MB within 6h | `metricLabelsAllowlist` + `metric_relabel_configs` drops | Immediately on first scrape cycle if not pre-configured |
+| Loki ingesting all namespaces including monitoring itself | Loki disk fills 2x faster, compaction can't keep up | Filter out `monitoring` and `glitchtip` namespaces from Alloy config | After ~3 days without compaction keeping up |
+| GlitchTip Celery beat missing (single container oversight) | Error aggregation stops; retention cleanup never runs | Confirm celery-beat is a separate process/container in the Helm chart | Silently, within first deploy; symptoms days later |
+| redis without maxmemory set | Redis grows unbounded, OOMKills | Set `maxmemory 100mb` + `maxmemory-policy allkeys-lru` | Within hours if error volume spikes |
+| Prometheus default 15-day retention on 5 GB PVC | Disk full at day 8-9 (compaction overhead) | Set retention to 7d + size-based retention with 20% buffer | Around day 8 for moderate series count |
 
-## Security Mistakes
-
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| `6443` opened to public/perimeter during CD work | k3s API exposed to the internet | Keep `6443` closed at ufw + Timeweb; allow only on `wg0` (`ufw allow in on wg0 to any port 6443`) |
-| Long-lived SA token reusable from `pull_request` runs | Untrusted fork code exfiltrates a namespace-admin token | `environment: staging` gate; deploy job not on `pull_request`; mask token, no `set -x` around it |
-| Token bound cluster-wide | Leak = full-cluster compromise | Namespace `Role`/`RoleBinding` only; namespace created out-of-band by admin |
-| Rendered secrets written to runner filesystem / scp'd | Secret material on disk / in transit beyond TLS | `kubectl apply -f -` rendered secrets over the tunnel; `trap rm` any temp file; never log |
-| SSH key + port 22 left broadly open post-cutover | Standing remote-shell attack surface after SSH is no longer needed | Remove `CD_SSH_*`, restrict/lock down SSH after kubectl CD ships |
-| Default ServiceAccount / token automount on `web` | Pod can call API with ambient creds | Explicit SA, `automountServiceAccountToken: false` unless required (matches existing workloads) |
+---
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **WireGuard CD:** handshake gate present — verify `wg show wg0 latest-handshakes` is non-zero BEFORE the first `kubectl`, not that kubectl "eventually worked once."
-- [ ] **SA token:** verify `kubectl auth whoami` is the deploy SA (not `system:anonymous`) and the token Secret actually has `.data.token`.
-- [ ] **RBAC:** verify `auth can-i --list` covers `rollout status` (pods/replicasets get/list/watch) AND every Kind in `k8s/staging/*.yaml` — run a full SA-impersonated dry-run.
-- [ ] **SSH removal:** verify `CD_SSH_*` secrets deleted and `deploy-staging.sh`/workflow contain no `ssh`/`scp` after CD migration.
-- [ ] **TLS SAN:** verify `10.8.0.1` is in the live serving cert SANs and CD uses the real CA (no `--insecure-skip-tls-verify`).
-- [ ] **S3 lifecycle:** verify with `get-bucket-lifecycle-configuration` round-trip AND an observed expiry on a test object — not just "the put succeeded."
-- [ ] **Restore drill:** verify live DB row counts/checksums unchanged before/after, and that the drill uses an isolated instance/volume.
-- [ ] **Edge/TLS:** verify `certbot renew --dry-run` passes, every reload is `nginx -t`-gated, and a cert-expiry alert exists; HTTP-01 still works after firewall automation.
-- [ ] **Cutover:** verify instant rollback (legacy upstream one edit away) and that the upstream actually points where intended (`curl` the public host).
-- [ ] **web runtime:** verify `web` Deployment is in the rollout-status gate, manifests apply in dependency order, edge routes API vs UI correctly, and it has SA/limits/probes/pinned SHA.
+- [ ] **Swap enabled:** `/proc/swaps` is non-empty AND `free -h` shows swap — not just `swapon` run but not persistent in `/etc/fstab`.
+- [ ] **PriorityClass on app pods:** `kubectl get pod -n solid-stats-staging -o jsonpath='{.items[*].spec.priorityClassName}'` — must show `app-critical`, not empty.
+- [ ] **Loki retention running:** `loki_compactor_runs_total > 0` after first compaction interval (~1h); check chunks directory is shrinking after 7d.
+- [ ] **GlitchTip registration closed:** `curl -s https://errors.stats-staging.solid-stats.ru/api/0/auth/register/ | grep -i "registration"` — should show registration disabled.
+- [ ] **Prometheus scraping all expected targets:** Prometheus `/targets` page — ALL targets GREEN; no DOWN state with `connection refused`.
+- [ ] **NetworkPolicy validated:** After applying default-deny, verify Prometheus targets still healthy (they should be — allow rules were applied first).
+- [ ] **Alloy collecting logs:** `alloy_logs_entries_total > 0`; Grafana Explore → Loki → `{namespace="solid-stats-staging"}` returns recent logs.
+- [ ] **postgres-exporter using non-superuser:** `SELECT usename, usesuper FROM pg_user WHERE usename='exporter'` — usesuper must be false.
+- [ ] **certbot certs valid for both subdomains:** `curl -vI https://grafana.stats-staging.solid-stats.ru` — TLS handshake succeeds, cert not expired, SAN matches.
+- [ ] **GlitchTip receives a test error:** SDK integration sends a test exception; it appears in GlitchTip issues list within 60s.
+
+---
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| WG handshake fails in CI | LOW | Dump `wg show`; fix keepalive/AllowedIPs/MTU/endpoint route; re-run; tunnel is stateless so no cleanup |
-| Anonymous/empty SA token | LOW | Create the `service-account-token` Secret; refresh GitHub secret; `auth whoami` |
-| TLS SAN mismatch | LOW-MED | Add `10.8.0.1` to `tls-san`, `systemctl restart k3s`; re-verify SAN; NEVER skip-verify |
-| Partial deploy from too-narrow RBAC | MED | Add missing verbs; re-apply (apply is idempotent); reconcile partially-applied state |
-| Leaked long-lived token | MED-HIGH | Delete token Secret (invalidates it), recreate, rotate GitHub secret, audit access logs; namespace-scope limits blast radius |
-| Lifecycle silently not expiring | LOW-MED | Reconfigure via panel/API; manual cleanup of overdue objects; add bucket-size alert |
-| Drill wiped live DB | HIGH | Restore from latest `backups/postgres/` dump into live DB; the very backup the drill validates is the recovery — but downtime + possible data loss since last backup |
-| Cutover/edge broke public host | LOW (if reversible) | Revert the single upstream edit, `nginx -t && nginx -s reload`; legacy stays one edit away |
-| web breaks apply ordering | LOW | Renumber manifest; re-run idempotent apply; add to rollout-status gate |
+| OOM killed postgres | HIGH | `kubectl rollout restart statefulset/postgres`; verify WAL consistency; check data integrity; was the PVC intact? |
+| Prometheus OOMKilled | LOW | Increase memory limit; reduce scrape interval; add metric drops; restart pod (TSDB on PVC, data intact) |
+| Loki PVC full, local-path can't expand | HIGH | Scale Loki to 0; manually delete old chunk files from host (`/var/lib/rancher/k3s/storage/<pvc>/loki/chunks/`); restart; OR create new PVC + redeploy (data loss) |
+| GlitchTip registration open | MEDIUM | Immediately set `ENABLE_USER_REGISTRATION=False` and roll; audit who registered in Django admin |
+| NetworkPolicy broke scraping | LOW | `kubectl delete networkpolicy default-deny -n <namespace>`; fix allow rules; reapply deny |
+| certbot rate-limited | MEDIUM | Wait up to 1 week; use staging cert temporarily; or use DNS-01 challenge to bypass HTTP-01 issues |
+| postgres-exporter connection leak (v0.14.0) | LOW | Pin to v0.15.0+; restart exporter pod; run `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename='exporter'` to clear leaked connections |
+
+---
 
 ## Pitfall-to-Phase Mapping
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| 1. WG handshake swallowed | kubectl-native CD | `wg show` handshake gate non-zero before kubectl; CD green from a runner |
-| 2. k3s ≥1.24 no auto SA token | kubectl-native CD | Token Secret has `.data.token`; `auth whoami` == deploy SA |
-| 3. TLS SAN / CA mismatch | kubectl-native CD | `openssl s_client` SANs include `10.8.0.1`; no skip-verify in CD |
-| 4. RBAC too broad/narrow | kubectl-native CD | `auth can-i --list` snapshot + SA-impersonated full dry-run |
-| 5. SSH path left open | kubectl-native CD (final gate) | `CD_SSH_*` removed; no `ssh`/`scp` in scripts/workflow |
-| 6. Token rotation/leak | kubectl-native CD; revisit at Cutover | Rotation runbook exists; deploy not on `pull_request`; token masked |
-| 7. TLS renewal breaks edge | Edge automation (standalone, before cutover) | `certbot renew --dry-run` ok; `nginx -t`-gated reloads; expiry alert |
-| 8. S3 lifecycle differs on Timeweb | S3 lifecycle | put-then-get round-trip + observed test-object expiry |
-| 9. Drill corrupts live DB/PVC | Automated restore drill | Live row counts unchanged; isolated instance/volume |
-| 10. web ordering/routing collision | web runtime wiring (+ Edge for routing) | web in rollout gate; dependency-ordered apply; correct edge route |
-| Production cutover interactions (7+10) | Production cutover | Reversible single-edit upstream switch; public host curl; instant rollback proven |
+| OOM / no swap / PriorityClass | Phase 0: Preflight + host swap + PriorityClass | `kubectl describe node` — no MemoryPressure; app pods have `app-critical` priority |
+| Swap behavior in k3s | Phase 0: Preflight verification | `free -h` shows swap; document whether pods can use it |
+| Prometheus cardinality / memory | Phase 1: Metrics stack (Helm values) | `prometheus_tsdb_head_series < 50000`; no OOMKill in 24h |
+| CPU saturation | Phase 1: Metrics stack (interval + limits) | `node_cpu_seconds_total{mode="idle"}` > 15% at steady state |
+| Loki disk fill / no expansion | Phase 2: Log stack (PVC sizing + compaction) | Compactor running; retention visible after 7d; disk usage stable |
+| Alloy log collection | Phase 2: Log stack | `alloy_logs_entries_total > 0`; staging namespace logs in Grafana |
+| GlitchTip first-run sequence | Phase 3: Error tracking | Migration job complete before web; registration closed; test error received |
+| NetworkPolicy order | Phase 4: Network isolation | Applied after Phase 1–3 validation; all targets still GREEN post-apply |
+| certbot DNS race | Phase 3: Public edge | DNS resolves; dry-run passes; prod cert issued and valid |
+| postgres-exporter connection load | Phase 1 exporter sub-phase | Exporter user is non-superuser; `pg_stat_activity` count within budget |
+
+---
 
 ## Sources
 
-- [Managing Service Accounts — Kubernetes (1.24 no auto-token, `LegacyServiceAccountTokenNoAutoGeneration`, manual `service-account-token` Secret)](https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/) — HIGH
-- [Service Accounts — Kubernetes (bound/projected tokens, `kubectl create token`)](https://kubernetes.io/docs/concepts/security/service-accounts/) — HIGH
-- [k3s token docs](https://docs.k3s.io/cli/token) — MEDIUM (k3s tracks upstream SA behavior)
-- [Timeweb S3 bucket management — lifecycle + versioning supported, endpoint `s3.twcstorage.ru`, path & virtual-hosted addressing, AWS SigV2/V4, Swift API](https://timeweb.cloud/docs/s3-storage/manage-storage/manage-buckets) — MEDIUM (confirms lifecycle exists; full AWS feature parity not guaranteed)
-- [AWS PutBucketLifecycleConfiguration reference (the AWS feature surface Timeweb may not fully match)](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html) — HIGH
-- Repo evidence: `docs/wireguard-access.md` (UDP-swallowed-by-another-tunnel trap, `tls-san`, split-tunnel `AllowedIPs`), `scripts/deploy-staging.sh` (SSH/scp model, hard-coded rollout-status list, glob-concatenate apply), `.github/workflows/deploy-staging.yml` (`CD_SSH_*` secrets, `pull_request` guard on deploy), `k8s/staging/60-postgres-backup.yaml` (path-style S3, `s3.twcstorage.ru`, region `ru-1`, `backups/postgres/` prefix), `docs/backup-restore.md` (drill restores into `solid_stats_restore_drill` inside live `postgres-0`), `k8s/staging/30-server-2.yaml` (`PUBLIC_BASE_URL` host, path-style S3 env), `.planning/PROJECT.md` (v2.0 goals, SSH removal, 20Gi PVC, suspended fetcher) — HIGH
+- Kubernetes node-pressure eviction docs: https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/
+- K8s swap support blog (1.28 Beta): https://kubernetes.io/blog/2023/08/24/swap-linux-beta/
+- K8s swap 1.32 improvements: https://www.kubernetes.io/blog/2025/03/25/swap-linux-improvements/
+- k3s NodeSwap pods-ignore-swap issue #12677: https://github.com/k3s-io/k3s/issues/12677
+- Prometheus storage docs: https://prometheus.io/docs/prometheus/latest/storage/
+- Prometheus cardinality in practice: https://medium.com/@dotdc/prometheus-performance-and-cardinality-in-practice-74d5d9cd6230
+- Prometheus tsdb.retention.size compaction overflow issue #11112: https://github.com/prometheus/prometheus/issues/11112
+- Loki retention docs: https://grafana.com/docs/loki/latest/operations/storage/retention/
+- Loki boltdb-shipper docs: https://grafana.com/docs/loki/latest/operations/storage/boltdb-shipper/
+- Grafana Alloy permission denied hostPath issue: https://community.grafana.com/t/permission-denied-accessing-var-log-pods-in-grafana-alloy-with-hostpath-volumes-on-kubernetes/157594
+- GlitchTip install docs: https://glitchtip.com/documentation/install/
+- GlitchTip 5.2 (Valkey-optional): https://glitchtip.com/blog/2025-11-13-glitchtip-5-2-released/
+- postgres-exporter v0.14.0 connection leak: https://gitlab.com/gitlab-org/omnibus-gitlab/-/issues/8292
+- Let's Encrypt rate limits: https://letsencrypt.org/docs/rate-limits/
+- kube-prometheus-stack NetworkPolicy discussion: https://github.com/prometheus-operator/kube-prometheus/discussions/2044
 
 ---
-*Pitfalls research for: production-readiness infra additions to an existing k3s/WireGuard/Timeweb-S3/GitHub-hosted-runner system*
-*Researched: 2026-06-11*
+*Pitfalls research for: Kubernetes observability stack on constrained single-node k3s (v3.0 milestone)*
+*Researched: 2026-06-13*

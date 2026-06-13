@@ -41,3 +41,6 @@ __pycache__
 .agents/settings.json
 .agents/settings.local.json
 .agents/skills/gsd-*/
+
+# GSD research/agent transient caches
+.planning/research/.cache/

@@ -1,237 +1,224 @@
 # Project Research Summary
 
-**Project:** Solid Stats Infrastructure
-**Domain:** Single-staging k3s production-readiness + kubectl-native CD (solo operator, closed VPS)
-**Researched:** 2026-06-11
+**Project:** Solid Stats Infrastructure — v3.0 Staging Observability Stack
+**Domain:** Self-hosted observability (metrics + logs + error tracking) on a constrained single-node k3s
+**Researched:** 2026-06-13
 **Confidence:** HIGH
+
+> Synthesized from STACK.md, FEATURES.md, ARCHITECTURE.md, PITFALLS.md. (SUMMARY.md
+> was persisted by the orchestrator after a #222 synthesizer false-refusal; content
+> is the synthesizer's result reconciled against the four source documents.)
 
 ## Executive Summary
 
-v2.0 adds six features onto an already-working v1 staging system: kubectl-native CD,
-edge automation, S3 lifecycle, an automated PostgreSQL restore drill, `web` runtime
-wiring, and a controlled production cutover. The headline and settled foundation is
-**kubectl-native CD** — replacing the SSH/scp deploy transport with a WireGuard tunnel
-brought up *inside* the GitHub job, authenticating as a namespace-scoped ServiceAccount
-(long-lived `kubernetes.io/service-account-token` Secret), and running `kubectl apply`
-directly against the closed k3s API at `https://10.8.0.1:6443`. Everything else deploys
-*through* that foundation, so it goes first; the production cutover consumes all the
-others and goes last.
+v3.0 adds a complete self-hosted observability suite — Prometheus metrics, Loki logs,
+and GlitchTip (Sentry-compatible) error tracking — to the existing Solid Stats staging
+k3s cluster. The cluster is a single node already running the app workloads at ~77% RAM /
+93% CPU on 8 GB with **no swap**, so the binding constraint is memory headroom, not features.
+The whole milestone is staging-only; the production mirror (decision D2) is a later milestone.
 
-The expert approach here is deliberately lean and host-centric, not cloud-native-maximal.
-Research across all four files converges on the same anti-features: **no GitOps controller
-(ArgoCD/Flux), no service mesh / progressive canary, no cert-manager/ingress, no `mc`,
-no full-tunnel WireGuard.** The public edge stays host-nginx with host `certbot` on a
-systemd timer (k3s has no ingress in scope), S3 lifecycle is **expiration-only** because
-Timeweb does not support storage-class transitions, and the cutover is a single reversible
-nginx-upstream switch with legacy kept warm one edit away. This matches the solo-operator,
-scope-creep-averse reality of one tiny single-namespace cluster.
+The recommended build uses **standalone Helm charts rendered with `helm template` then
+`kubectl apply`** — explicitly NOT kube-prometheus-stack, whose ~14 CRDs are not produced by
+`helm template` and break the render-then-apply / git-as-source-of-truth model carried over
+from v2.0 Phase 06. Metrics come from the standalone `prometheus` + `grafana` +
+`kube-state-metrics` + `prometheus-node-exporter` charts with static scrape config (no
+ServiceMonitor CRDs); logs from monolithic **Loki** (filesystem storage, 7-day compactor
+retention) fed by a **Grafana Alloy** DaemonSet; errors from **GlitchTip** with its own
+PostgreSQL, run in PostgreSQL-only mode (Valkey/Redis disabled) to save memory. RabbitMQ
+needs no separate exporter — the RabbitMQ 4 management image already exposes Prometheus
+metrics on port 15692.
 
-The dominant risks are concentrated in the CD foundation and the data-path features.
-The k3s API hop crosses the public internet over UDP, so the WireGuard handshake must be
-*gated before any kubectl* (split-tunnel `AllowedIPs=10.8.0.1/32`, `PersistentKeepalive=25`,
-possibly `MTU=1380`); the SA token model changed at k8s 1.24 so the token Secret must be
-created explicitly; the serving cert must carry `10.8.0.1` in its SANs (never
-`--insecure-skip-tls-verify`); RBAC must be scoped tightly but still cover `rollout status`;
-and the namespace must be operator-bootstrapped once because a namespaced Role cannot create
-the cluster-scoped Namespace. On the data side, the restore drill must run in an **ephemeral
-scratch PostgreSQL**, never live `postgres-0`, and S3 lifecycle support must be proven on
-Timeweb with a put-then-get round-trip plus an observed expiry, not assumed.
+The dominant risk is OOM, and research overturned the original mitigation assumption:
+**host swap does NOT protect pods** on k3s (kubelet default `NoSwap`, plus k3s issue #12677
+where pods ignore swap even with the feature gate). Swap only relieves host processes
+(kubelet/containerd/sshd). So the trimmed footprint must be real, and the deployment must
+ship a **PriorityClass** split (app-critical ≫ obs-background) with app pods at Guaranteed
+QoS so the scheduler always evicts observability before postgres/server-2. Budgeted footprint
+is ~1.44 GB requests / ~2.5 GB limits; new PVCs total ~22–23 Gi against 31 Gi free, and
+`local-path` has **no volume expansion**, so every PVC is a one-shot sizing decision.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The stack is almost entirely *reuse* of the existing validated v1 stack (GitHub Actions,
-k3s, PostgreSQL 17 / RabbitMQ 4 StatefulSets, GHCR, Timeweb S3, vendored `aws-cli`,
-`render-staging-secrets.py`, `validate-staging.py`). v2.0 adds only the glue for the five
-integration points. See `STACK.md` for full rationale.
+Standalone charts only, pinned, rendered locally/CI and applied as plain manifests. No
+in-cluster operator, no CRDs, no helm on the cluster. Full version table + values snippets
+in STACK.md.
 
 **Core technologies:**
-- **WireGuard-in-CI** (`niklaskeerl/easy-wireguard-action@v2`, pin SHA — or ~6 lines of
-  inline `wg-quick` for zero third-party trust): brings up the tunnel from a client config
-  in secrets, matching `wireguard-access.md` topology 1:1.
-- **`azure/setup-kubectl@v4`** (pin to k3s server minor, e.g. `v1.31.x`): kubectl now runs
-  on the runner, not the VPS, so it must be installed and version-skew-safe.
-- **Scoped ServiceAccount + manual long-lived token Secret + namespaced Role/RoleBinding**
-  (`kubernetes.io/service-account-token`, k8s ≥1.24 model): the CI identity, replacing
-  `CD_SSH_*`. `kubectl create token` is short-lived and unusable for unattended CD.
-- **`aws s3api put-bucket-lifecycle-configuration`** against `s3.twcstorage.ru` (path-style):
-  Timeweb-documented; reuses existing `S3_*` secrets. Expiration-only.
-- **`pg_restore`/`pg_dump` (`postgres:17-alpine`)** in a throwaway Job for the restore drill;
-  **host `certbot --nginx` + systemd timer** for edge TLS (NOT cert-manager).
+- **prometheus** (chart 29.11.0, app v3.12.0) + **kube-state-metrics** (7.4.1) +
+  **prometheus-node-exporter** (4.55.0) — metrics; static scrape config, not the operator.
+- **grafana** (grafana-community 12.4.4) — dashboards + datasources provisioned as ConfigMaps at render time.
+- **loki** (grafana-community 17.3.4, app 3.7.2) — monolithic, filesystem, compactor retention 168h.
+- **alloy** (1.10.0, app v1.17.0) — DaemonSet log collector → Loki; conservative label set.
+- **glitchtip** (chart 8.2.0, app v6.1.4) — own PostgreSQL, PostgreSQL-only mode (`VALKEY_URL=""`); web + worker + beat.
+- **prometheus-postgres-exporter** (chart 8.0.0 → ensure app ≥ v0.15.0; v0.14.0 has a connection-leak bug) — non-superuser `pg_monitor` role.
+- **RabbitMQ metrics:** native `rabbitmq_prometheus` plugin on port 15692 (management image) — the `prometheus-rabbitmq-exporter` chart is deprecated and unsupported on RabbitMQ 4. Confirm the existing `k8s/staging/20-rabbitmq.yaml` is the management variant and exposes 15692.
 
 ### Expected Features
 
-Six features, all P1 except S3 lifecycle and web wiring (P2). See `FEATURES.md`.
+Detail + acceptance checks in FEATURES.md.
 
 **Must have (table stakes):**
-- kubectl-native CD: push-to-deploy on master, WG tunnel in-job, scoped SA + namespace RBAC,
-  ordered `kubectl apply`, rollout-status gating, pre-apply validation, **SSH/`CD_SSH_*` removed**.
-- Edge automation: host nginx config in repo, certbot auto-renew via systemd timer with
-  reload hook + renewal-failure visibility, host firewall (allow 80/443, keep 6443 tunnel-only).
-- Restore drill: full restore into an **ephemeral scratch target**, on-demand command,
-  post-restore sanity assertions, isolation from live PostgreSQL, drill result logged as evidence.
-- Production cutover: both runtimes live in parallel, single-lever reversible nginx-upstream
-  switch, tested rollback, pre-cutover diff gate green + fresh backup point.
-- S3 lifecycle: per-prefix expiration, backup retention window, abort incomplete multipart,
-  config stored in repo + applied via script.
-- web wiring: Deployment+Service+ConfigMap following existing conventions, dedicated SA,
-  resource limits/probes, pinned image (0-replicas/image-pending stub until real image exists).
+- Grafana reachable at a stable public staging URL with healthy Prometheus + Loki datasources.
+- Standard dashboards baked in as ConfigMaps: node-exporter (1860), kube-state/cluster (7249/21742), PostgreSQL (14114), RabbitMQ (10991).
+- Prometheus scraping kubelet/cAdvisor, kube-state-metrics, node-exporter, postgres-exporter, RabbitMQ 15692.
+- Conservative cluster-wide log collection (labels limited to namespace/pod/container/app/job; no request bodies, no secrets); a LogQL query returns recent server-2 lines.
+- GlitchTip capturing errors, closed registration, local superuser, DSN issued; a forced test error appears.
+- Scripted, re-runnable validation for each capability (datasource health, target health, Loki query, forced GlitchTip event).
 
-**Should have (competitive):**
-- Concurrency lock on the deploy job (one line, high value).
-- Post-cutover scripted smoke check; idempotent edge bootstrap script.
-- Distinct short retention for replay/artifact scratch prefixes.
+**Should have (differentiators):**
+- A small Solid-specific dashboard set (workloads, rollouts, queues, DB health, backups, CronJobs).
+- postgres-exporter pointed at both the app DB and the GlitchTip DB.
 
-**Defer (v2.x / future):**
-- PR dry-run diff comment; scheduled drill CronJob + alert; weighted/blue-green nginx cutover.
-- GitOps controller, service mesh, cert-manager, PITR/WAL — explicit anti-features at this scale.
+**Defer / Anti-features (out of scope, with reason):**
+- Traces / APM / session replay — errors-only scope; heavy, not needed for staging visibility.
+- External alerting (Telegram/Discord/Slack/email) — deferred to a later milestone.
+- OAuth/SSO — local users only in v1.
+- GlitchTip application-log ingestion — errors only; logs live in Loki.
+- Full custom dashboards for every domain workflow — start from community dashboards.
 
 ### Architecture Approach
 
-New/changed surface is small and additive (see `ARCHITECTURE.md`). CI `deploy` is rewritten
-to bring up WG → assemble kubeconfig from SA token+CA → render secrets → `kubectl apply -f -`
-(no ssh/scp). New manifests: `05-ci-rbac.yaml` (SA+Role+RoleBinding, right after `00-namespace`),
-`45/46-web-*.yaml` (mirroring the server-2 30/35 split), a **separate** `restore-drill/`
-directory (kept out of the `k8s/staging/*.yaml` deploy glob), and out-of-cluster `edge/` and
-`s3/` directories. The namespace-create chicken-and-egg is resolved by an operator seeding
-`00`+`05` once via their workstation WG kubeconfig; CI's SA owns everything `>=10`.
+Two namespaces — `monitoring` (Prometheus/Grafana/Loki/Alloy/exporters) and `error-tracking`
+(GlitchTip + its postgres) — deployed through a **separate** `deploy-observability.yml` CI
+workflow with its own concurrency group and its own `obs-ci-deployer` ServiceAccount (the
+runtime `ci-deployer` RBAC is not widened, and runtime CD never depends on obs CD). Full detail
+in ARCHITECTURE.md.
 
-**Major components:**
-1. **CI deploy job (modified)** — WG-up, kubeconfig-from-SA-token, kubectl-direct, SSH removed.
-2. **`infra-deployer` SA + namespaced RBAC (new)** — least-privilege CI identity, no ClusterRole.
-3. **Restore-drill Job + scratch namespace (new)** — reads dump from S3, ephemeral pg, never `postgres-0`.
-4. **Host edge automation (new, out-of-cluster)** — repo-managed nginx vhosts + certbot timer + ufw.
-5. **`web` Deployment/Service/ConfigMap (new)** — slot wired to conventions, routed by host nginx.
-6. **S3 lifecycle policy (new)** — per-prefix expiration applied idempotently to the bucket.
+**Major components / integration points:**
+1. **Exposure** — ClusterIP Services proxied by **host nginx** vhosts + certbot, the exact v2.0
+   Phase 07 pattern (reuse the adopt-reconcile bootstrap; a dedicated `bootstrap-obs-edge.sh`
+   keeps it independent). DNS A records for `grafana.`/`errors.` must exist and propagate
+   **before** certbot issues; the HTTP-only vhost must be live first.
+2. **Render pipeline** — `helm template` output committed under `k8s/observability/`, applied
+   by the obs CI workflow over the same WireGuard tunnel + SA-token kubeconfig as v2.0.
+3. **Storage** — new PVCs on `local-path`, right-sized up front (Prometheus ~7–10 Gi, Loki
+   ~8–10 Gi, Grafana ~1 Gi, GlitchTip-pg ~5 Gi); ~9 Gi buffer left of 31 Gi free.
+4. **Secrets** — Grafana admin, GlitchTip secret-key/superuser/DB, exporter DSNs rendered from
+   GitHub environment → k8s Secrets, same model as runtime.
+5. **NetworkPolicy** — k3s **does** enforce it (embedded kube-router, firewall-only mode on
+   Flannel). Apply default-deny + minimal allow rules **last**, after scraping is validated.
 
 ### Critical Pitfalls
 
-Top items from `PITFALLS.md` (10 total, mapped to phases there):
+Top risks (full list + prevention + owning phase in PITFALLS.md):
 
-1. **WireGuard handshake never completes from the ephemeral runner** — gate on
-   `wg show wg0 latest-handshakes` non-zero (or `ping 10.8.0.1`) before any kubectl;
-   split-tunnel `AllowedIPs=10.8.0.1/32`, `PersistentKeepalive=25`, `MTU=1380` if large flights stall.
-2. **k3s ≥1.24 SA has no auto-token Secret** — create the `kubernetes.io/service-account-token`
-   Secret explicitly; assert `kubectl auth whoami != system:anonymous`.
-3. **TLS SAN/CA mismatch on `10.8.0.1`** — verify `10.8.0.1 ∈ tls-san` via `openssl s_client`;
-   supply the real CA; never `--insecure-skip-tls-verify`.
-4. **RBAC too broad or too narrow** — namespace Role only (no ClusterRoleBinding), but must
-   cover `rollout status` (get/list/watch on pods/replicasets/deployments/statefulsets);
-   verify with `auth can-i --list` + SA-impersonated dry-run. Namespace created out-of-band.
-5. **SSH path left open after cutover** — make `CD_SSH_*` removal + script de-SSH a gated step.
-6. **Restore drill corrupts live DB/PVC** — automated drill runs in an ephemeral instance with
-   its own volume, never live `postgres-0`/`postgres-data`; hard-guard the target DB name.
-7. **Edge breaks during cutover** — land edge automation standalone first; `nginx -t`-gate every
-   reload, `certbot renew --dry-run`, keep 80/443 open, cert-expiry alert; cutover only flips upstream.
-8. **Timeweb S3 lifecycle silently differs from AWS** — prove with put-then-get + observed expiry;
-   prefix `Expiration{Days}` only, no transitions/storage classes.
+1. **OOM evicts postgres/server-2** — no swap for pods + no PriorityClass. Avoid: add host swap
+   for host-process relief only; ship `app-critical`/`obs-background` PriorityClasses + app pods
+   at Guaranteed QoS **before** any obs pod lands. Budget memory as if pods have no swap.
+2. **Undersized PVC on non-expandable local-path** — wrong size = redeploy with data loss.
+   Avoid: size every PVC up front; Prometheus size-based retention capped ~80% of its PVC
+   (compaction can transiently exceed the size limit, upstream #11112).
+3. **GlitchTip first-run sequence** — migrations, closed registration, superuser. Avoid: strict
+   order postgres → migration Job → `ENABLE_USER_REGISTRATION=false` → create superuser → issue DSN.
+4. **Prometheus cardinality/CPU on an already-hot node** — cAdvisor + kube-state at short
+   intervals. Avoid: longer scrape interval, metric-relabel drops, scrape only what's used.
+5. **NetworkPolicy default-deny applied too early** silently kills all targets/datasources.
+   Avoid: netpol strictly after Phase 1–3 connectivity is verified.
 
 ## Implications for Roadmap
 
-Build order is dependency-forced: **CD first, cutover last, the rest parallel between.**
-Suggested phases (1:1 with the six features):
+Suggested **5 infra phases** plus a non-infra app-SDK track. This milestone continues v2.0's
+numbering (last shipped phase was 11), so the roadmapper assigns actual numbers from **Phase 12**;
+the logical sequence below is what matters.
 
-### Phase 1: kubectl-native CD (WireGuard-in-CI, scoped SA, SSH removed)
-**Rationale:** Settled foundation — every other feature deploys *through* the new CD path.
-Resolves the namespace-create boundary (operator seeds `00`+`05` once).
-**Delivers:** WG-up-in-job, kubeconfig-from-SA-token, `05-ci-rbac.yaml`, rewritten
-`deploy-staging.sh` (kubectl-direct), `CD_SSH_*` deleted, handshake/auth/SAN gates.
-**Addresses:** Feature #1 (push-to-deploy, scoped SA, no SSH).
-**Avoids:** Pitfalls 1–6 (WG handshake, SA token model, TLS SAN, RBAC scope, SSH cleanup, token rotation).
+### Phase A: Preflight & Resource Protection
+**Rationale:** Hard prerequisite — without OOM protection the obs stack can take down postgres/server-2.
+**Delivers:** host swap (2–4 GB persistent), `app-critical`/`obs-background` PriorityClasses, app
+pods moved to Guaranteed QoS, the two namespaces + `obs-ci-deployer` RBAC, a re-runnable resource
+preflight snapshot.
+**Avoids:** Pitfalls 1 & 2.
 
-### Phase 2: Edge automation (host nginx, cert renewal, firewall)
-**Rationale:** Standalone and *before* cutover — proving renewals and firewall in isolation
-prevents two unproven changes interacting at cutover. Also closes 6443 publicly, reinforcing Phase 1.
-**Delivers:** repo-managed nginx vhosts, certbot systemd timer + reload hook, ufw ruleset,
-idempotent edge bootstrap.
-**Uses:** host `certbot --nginx` (NOT cert-manager); ufw/nftables.
-**Avoids:** Pitfall 7 (`nginx -t`-gated reloads, dry-run renewal, cert-expiry alert, HTTP-01 stays open).
+### Phase B: Metrics Stack
+**Rationale:** The foundation other phases observe against; standalone charts settle the render model.
+**Delivers:** Prometheus (static scrape, tuned retention/cardinality) + kube-state-metrics +
+node-exporter + grafana (provisioned datasource + community dashboards) + postgres-exporter +
+RabbitMQ 15692 scrape; host nginx vhost + TLS for Grafana.
+**Uses:** standalone prometheus/grafana/kube-state/node-exporter charts (STACK.md).
+**Avoids:** Pitfall 4.
 
-### Phase 3: Automated PostgreSQL restore drill
-**Rationale:** Recoverability proof that should precede cutover; independent of edge/web once CD lands.
-**Delivers:** `restore-drill/` scratch-namespace Job + `restore-drill.sh` reading the latest S3 dump,
-ephemeral pg, row-count assertions, teardown, logged evidence.
-**Implements:** isolated scratch-namespace restore (Architecture Pattern 3).
-**Avoids:** Pitfall 9 (never restore over live `postgres-0`/PVC; guard target DB name).
+### Phase C: Log Stack
+**Rationale:** Independent of metrics; adds the second Grafana datasource.
+**Delivers:** Loki (monolithic, compactor retention) + Alloy DaemonSet + Loki datasource in Grafana
++ a LogQL smoke test returning recent server-2 lines.
+**Avoids:** Alloy/k3s log-path and Loki retention pitfalls.
 
-### Phase 4: `web` runtime wiring (stub slot)
-**Rationale:** First genuinely new workload under the new ownership model; low-risk, no traffic yet.
-**Delivers:** `45/46-web-*.yaml` (config+service / deployment split), dedicated SA, limits/probes,
-pinned image or 0-replica stub; `validate-staging.py` `EXPECTED_*` updated.
-**Avoids:** Pitfall 10 (dependency-ordered apply; add web to the rollout-status gate or derive by label).
+### Phase D: Error Tracking (GlitchTip) + Public Edge TLS
+**Rationale:** Heaviest single component; its own validation gate; its own edge vhost.
+**Delivers:** GlitchTip (own postgres, PostgreSQL-only mode) with the strict first-run sequence,
+closed registration, superuser, DSN; host nginx vhost + TLS for `errors.`; a forced test-error gate.
+**Avoids:** Pitfalls 3 & 9 (certbot rate limits / DNS-first).
 
-### Phase 5: S3 lifecycle / retention
-**Rationale:** Fully independent; land after the restore drill confirms retention assumptions are safe.
-**Delivers:** per-prefix `lifecycle.json` + apply script via `aws s3api`, expiration-only,
-multipart-abort, distinct windows for backups vs replays vs artifacts.
-**Avoids:** Pitfall 8 (prove support on Timeweb: put-then-get + observed test-object expiry as evidence).
+### Phase E: Network Isolation (NetworkPolicy)
+**Rationale:** Must come last so a wrong default-deny can't mask earlier breakage.
+**Delivers:** default-deny + allow rules for `monitoring` and `error-tracking`, plus an
+allow-prometheus-scrape rule into `solid-stats-staging`.
+**Avoids:** Pitfalls 5 & 10.
 
-### Phase 6: Production cutover
-**Rationale:** Last — consumes a proven CD path, edge automation, web slot, and recovery confidence.
-**Delivers:** both runtimes parallel, single reversible nginx-upstream switch, tested rollback,
-fresh backup point + green diff gate, post-cutover smoke check.
-**Avoids:** Pitfalls 7+10 interactions (reversible single-edit upstream; curl the public host).
+### App-SDK track (not infra)
+Errors-only Sentry SDK PRs in server-2 / replay-parser-2 / replays-fetcher, prepared in those
+repos after the Phase D DSN exists. Tracked here, owned there.
 
 ### Phase Ordering Rationale
-
-- **CD first / cutover last is the only hard ordering.** Phases 2–5 are otherwise independent and
-  can be sequenced by capacity (`1 → (2,3,4,5) → 6`).
-- Edge (2) before cutover because the cutover lever *is* the nginx upstream and must be proven reversible.
-- Restore drill (3) before cutover because you never flip production without proven recoverability.
-- S3 lifecycle (5) is independent but scheduled after the drill so retention windows are validated against the drill cadence.
+- Protection before payload: swap + PriorityClass + QoS before any obs pod (no-swap-for-pods reality).
+- Metrics first because logs and error-tracking add datasources/edge on top of a settled render model.
+- Edge work (DNS → HTTP vhost → certbot → TLS vhost) is sequenced inside the phase that needs it.
+- NetworkPolicy always last, after connectivity is proven — never upfront.
 
 ### Research Flags
+Phases likely needing deeper planning research:
+- **Phase B:** confirm postgres-exporter app ≥ v0.15.0 in chart 8.0.0; confirm RabbitMQ management image + 15692 in the existing manifest. (~30 min)
+- **Phase C:** Alloy config under k3s/containerd (log paths, permissions); verify `loki_compactor_runs_total > 0`. (~1 h)
+- **Phase D:** GlitchTip Helm chart 8.2.0 maturity vs hand-crafted manifests; PostgreSQL-only mode is marked experimental (5.2+); certbot dry-run + DNS propagation. (1–2 days)
+- **Phase E:** validate NetworkPolicy behavior with kube-router before committing default-deny. (~1 h)
 
-Phases likely needing deeper research during planning:
-- **Phase 1 (CD):** highest-risk integration — WG-from-GitHub-runner mechanics, exact RBAC verb/resource
-  set derived from manifests, SA-token bootstrap. Concentrate verification here.
-- **Phase 5 (S3 lifecycle):** Timeweb S3 feature parity is MEDIUM confidence — must be proven empirically
-  on the live bucket before trusting retention.
-
-Phases with standard patterns (skip research-phase):
-- **Phase 4 (web wiring):** mirrors existing server-2 manifests exactly; established repo convention.
-- **Phase 3 (restore drill):** reuses the backup Job's S3 access pattern + existing runbook.
+Phases with standard patterns (lighter research):
+- **Phase B core:** Prometheus/Grafana/node-exporter are well-documented.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Mostly reuse of validated v1 stack; new pieces (WG action, setup-kubectl, SA token model) are official/well-established. WG action is third-party (pin SHA). |
-| Features | HIGH | Grounded in PROJECT.md scope + Timeweb docs + kubernetes-specialist skill; anti-features explicitly bounded. |
-| Architecture | HIGH | Grounded in the actual repo; namespace-create and apply-ordering boundaries are standard k8s behavior. |
-| Pitfalls | HIGH (MEDIUM on S3) | k3s SA-token/WireGuard/cutover mechanics HIGH; Timeweb S3 lifecycle exact parity MEDIUM (must verify). |
+| Stack | HIGH | Chart/app versions verified against live Chart.yaml on GitHub + ArtifactHub. |
+| Features | MEDIUM | Official Grafana/Loki/GlitchTip docs; dashboard IDs cross-checked; some community sources. |
+| Architecture | HIGH | k3s netpol + render-then-apply verified; direct extension of proven v2.0 Phase 06/07 patterns. |
+| Pitfalls | HIGH | Memory/eviction/swap/cardinality/retention from primary k8s/Prometheus/Loki/k3s sources. |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
-
-- **Timeweb S3 lifecycle exact feature surface** — vendor confirms lifecycle/expiration exist but not full
-  AWS parity. Handle in Phase 5 with a put-then-get round-trip and an observed expiry on a test object before trusting retention.
-- **Long-lived SA token rotation** — the stored token is the weakest link; a rotation runbook (owner + cadence,
-  paired with WG key rotation) must be defined in Phase 1 and revisited at cutover (prod gets its own scoped token).
-- **WG egress from GitHub-hosted runners** — assumes 51820/udp outbound is permitted; if a TCP-only egress path
-  is hit, fallback is `wireguard-go` or a self-hosted runner on a UDP-permitting network. Validate early in Phase 1.
+- **GlitchTip chart vs hand-crafted manifests** + PostgreSQL-only-mode stability — decide during Phase D planning; load-test with a forced error burst before declaring stable.
+- **Swap mechanism** — host `fallocate`+`mkswap`+`swapon` (persistent via fstab); confirmed value is host-process relief only, not pod memory.
+- **RabbitMQ plugin + port 15692** — confirm in `k8s/staging/20-rabbitmq.yaml` during Phase B.
+- **PVC sizes** — conservative estimates; re-check `df -h` on the node before apply (no expansion later).
+- **App repo names/locations** for the SDK PRs — confirm when that track starts.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Repo files: `.planning/PROJECT.md`, `docs/staging.md`, `docs/wireguard-access.md`, `docs/backup-restore.md`,
-  `.github/workflows/deploy-staging.yml`, `scripts/deploy-staging.sh`, `scripts/render-staging-secrets.py`,
-  `scripts/validate-staging.py`, `k8s/staging/*.yaml` — authoritative for current state.
-- `.agents/skills/kubernetes-specialist/SKILL.md` — least-privilege RBAC, no default SA, probes/limits, GitOps-for-fleets.
-- `Azure/setup-kubectl@v4`; Kubernetes SA token model ≥1.24 (manual `service-account-token` Secret = long-lived);
-  Kubernetes Namespace is cluster-scoped (namespaced Role cannot create it).
-- Timeweb S3 object-lifecycle docs — confirms `aws s3api put-bucket-lifecycle-configuration` with prefix `Expiration`; no `mc`, no transitions.
+- prometheus-community Helm charts (Chart.yaml, verified): prometheus 29.11.0, kube-state-metrics 7.4.1, node-exporter 4.55.0, postgres-exporter 8.0.0/app v0.19.1.
+- grafana-community/loki Chart.yaml — 17.3.4 (Loki 3.7.2); grafana/alloy 1.10.0 (v1.17.0).
+- https://docs.k3s.io/networking/networking-services — embedded NetworkPolicy controller confirmed.
+- https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/ — eviction/QoS.
+- https://github.com/k3s-io/k3s/issues/12677 — pods ignore swap on k3s (NodeSwap).
+- https://prometheus.io/docs/prometheus/latest/storage/ + issue #11112 — retention/compaction overflow.
+- https://www.rabbitmq.com/docs/prometheus — RabbitMQ 4 native plugin, port 15692.
+- https://github.com/prometheus-community/helm-charts/issues/3038 — kube-prometheus-stack CRDs vs `kubectl apply`.
 
 ### Secondary (MEDIUM confidence)
-- `niklaskeerl/easy-wireguard-action@v2` (GitHub Marketplace, not GitHub-certified — pin commit SHA).
-- Timeweb S3 bucket management — confirms lifecycle/versioning exist but not full AWS feature parity.
-- `k3s` token docs — k3s tracks upstream SA behavior.
+- ArtifactHub: glitchtip 8.2.0 (app v6.1.4), grafana-community/grafana 12.4.4.
+- https://glitchtip.com/blog/2025-11-13-glitchtip-5-2-released/ — PostgreSQL-only mode, 256 MB min RAM.
+- https://www.suse.com/c/rancher_blog/k3s-network-policy/ — kube-router firewall-only mode.
+- Grafana docs: Alloy logs-in-kubernetes, Loki retention; Grafana provisioning via ConfigMaps.
+- Grafana dashboard IDs 1860 / 7249 / 21742 / 14114 / 10991.
+- https://gitlab.com/glitchtip/glitchtip-helm-chart — GlitchTip chart.
+- https://letsencrypt.org/docs/rate-limits/ — certbot/Let's Encrypt limits.
 
-### Tertiary (LOW confidence)
-- None.
+### Tertiary (LOW confidence — validate during planning)
+- https://blog.devops.dev/setup-glitchtip-with-k8s-... — community GlitchTip-on-k8s guide.
+- https://gitlab.com/gitlab-org/omnibus-gitlab/-/issues/8292 — postgres-exporter v0.14.0 connection leak.
 
 ---
-*Research completed: 2026-06-11*
+*Research completed: 2026-06-13*
 *Ready for roadmap: yes*

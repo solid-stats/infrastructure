@@ -1,0 +1,141 @@
+# Requirements: Solid Stats Infrastructure — v3.0 Staging Observability Stack
+
+**Defined:** 2026-06-13
+**Core Value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics. (v3.0 focus: make the staging runtime observable — metrics, logs, and errors — without destabilizing the workloads it observes.)
+
+## v1 Requirements
+
+Requirements for this milestone. Each maps to a roadmap phase. Scope is staging-only; the
+production mirror (decision D2) is a later milestone. Resource strategy is locked: host swap +
+a trimmed, single-replica footprint (no VPS resize).
+
+### Preflight & Resource Protection (PREP)
+
+- [ ] **PREP-01**: Operator can re-run a resource preflight that snapshots node CPU/memory/disk and existing allocations before any observability workload is applied.
+- [ ] **PREP-02**: Host swap (persistent) is configured on the staging node for host-process relief, documented as NOT a substitute for pod memory limits.
+- [ ] **PREP-03**: PriorityClasses (`app-critical` ≫ `obs-background`) exist so the scheduler evicts observability pods before postgres/server-2 under memory pressure.
+- [ ] **PREP-04**: The app workloads (postgres, server-2) run at Guaranteed QoS (requests == limits) so they are last to be evicted.
+- [ ] **PREP-05**: Two namespaces (`monitoring`, `error-tracking`) exist, each with a non-default ServiceAccount and least-privilege RBAC, separate from the runtime `ci-deployer`.
+
+### Metrics & Dashboards (MET)
+
+- [ ] **MET-01**: Prometheus runs from standalone rendered manifests (no operator/CRDs), with tuned scrape interval and bounded retention sized to its PVC.
+- [ ] **MET-02**: kube-state-metrics and node-exporter run and are scraped (cluster + host metrics).
+- [ ] **MET-03**: postgres-exporter (app ≥ v0.15.0, non-superuser `pg_monitor` role) exposes PostgreSQL metrics to Prometheus.
+- [ ] **MET-04**: RabbitMQ metrics are scraped via the native `rabbitmq_prometheus` plugin (port 15692) — no separate exporter.
+- [ ] **MET-05**: Grafana runs with Prometheus provisioned as a healthy datasource (provisioned as code).
+- [ ] **MET-06**: Standard dashboards are provisioned as code (node-exporter, kube-state/cluster, PostgreSQL, RabbitMQ) and render live data.
+- [ ] **MET-07**: Operator can reach Grafana at the public staging URL behind local-user auth.
+
+### Logs (LOG)
+
+- [ ] **LOG-01**: Loki runs in monolithic/filesystem mode with compactor-driven ~7-day retention on a right-sized PVC.
+- [ ] **LOG-02**: A Grafana Alloy DaemonSet collects cluster logs conservatively (labels limited to namespace/pod/container/app/job; no request bodies, no secrets).
+- [ ] **LOG-03**: Loki is a healthy Grafana datasource and a LogQL query returns recent `server-2` log lines.
+
+### Error Tracking (ERR)
+
+- [ ] **ERR-01**: GlitchTip runs with its own PostgreSQL (PostgreSQL-only mode, Valkey/Redis disabled) following the strict first-run order (migrate → close registration → create superuser).
+- [ ] **ERR-02**: Self-registration is disabled; only the seeded local superuser can log in.
+- [ ] **ERR-03**: A project + DSN exist, and a deliberately forced staging test error appears in GlitchTip.
+
+### Public Edge & TLS (EDGE)
+
+- [ ] **EDGE-01**: DNS A records for `grafana.stats-staging.solid-stats.ru` and `errors.stats-staging.solid-stats.ru` resolve to the staging host.
+- [ ] **EDGE-02**: Host nginx vhosts proxy each public host to its ClusterIP Service, reusing the v2.0 Phase 07 edge pattern via an independent obs-edge bootstrap.
+- [ ] **EDGE-03**: Valid certbot TLS certificates are issued and served for both public hosts.
+
+### Deploy Pipeline & Secrets (DEP)
+
+- [ ] **DEP-01**: Observability manifests are rendered with `helm template` and committed under `k8s/observability/` (git as source of truth; no in-cluster helm).
+- [ ] **DEP-02**: A separate `deploy-observability.yml` CI workflow applies them over the existing WireGuard + SA-token path, with its own concurrency group, independent of runtime CD.
+- [ ] **DEP-03**: The runtime deploy path does not depend on the observability deploy succeeding.
+- [ ] **DEP-04**: All observability secrets (Grafana admin, GlitchTip secret-key/superuser/DB, exporter DSNs) are rendered from GitHub environment secrets into k8s Secrets — no secret values in git.
+
+### Network Isolation (NET)
+
+- [ ] **NET-01**: NetworkPolicy enforcement under k3s/kube-router is confirmed before relying on it.
+- [ ] **NET-02**: Default-deny + minimal allow NetworkPolicies isolate `monitoring` and `error-tracking`, including an allow-prometheus-scrape rule into `solid-stats-staging`, applied only after scraping/datasources are validated.
+
+### App-side Error SDK (SDK)
+
+- [ ] **SDK-01**: Errors-only Sentry SDK integration is prepared as separate app-repo PRs for server-2, replay-parser-2, and replays-fetcher (tracked here, owned in those repos), using the GlitchTip DSN.
+
+### Validation (VAL)
+
+- [ ] **VAL-01**: A re-runnable validation script verifies the full stack on any fresh staging deploy: Prometheus target health, Grafana datasource health, a Loki query, and a forced GlitchTip test event.
+
+## v2 Requirements
+
+Deferred — tracked, not in this roadmap.
+
+### Production mirror (PROD)
+
+- **PROD-01**: Mirror the validated staging stack into a production namespace with prod sizing/retention/obs-data-backup before the backend takes production traffic (decision D2).
+
+### Differentiators (DIFF)
+
+- **DIFF-01**: Solid-specific dashboards (workloads, rollouts, queues, DB health, backups, CronJobs).
+- **DIFF-02**: postgres-exporter pointed at the GlitchTip database in addition to the app database.
+
+## Out of Scope
+
+Explicitly excluded for v3.0 to prevent scope creep.
+
+| Feature | Reason |
+|---------|--------|
+| Production observability rollout / prod namespace | Staging-first; mirror is a later milestone (D2). |
+| Traces / APM / session replay | Errors-only scope; heavy, not needed for staging visibility. |
+| External alert delivery (Telegram/Discord/Slack/email) | Deferred to a later milestone. |
+| OAuth / SSO for Grafana or GlitchTip | Local users only in v1. |
+| GlitchTip application-log ingestion | Errors only; logs live in Loki. |
+| kube-prometheus-stack / Prometheus Operator | CRDs break the render-then-apply / git-as-source-of-truth model. |
+| Separate prometheus-rabbitmq-exporter | Deprecated and unsupported on RabbitMQ 4; native plugin used instead. |
+| VPS resize for headroom | Declined as too costly; swap + trimmed footprint now, more RAM after legacy is decommissioned. |
+
+## Traceability
+
+Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to exactly one phase.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| PREP-01 | Phase 12 | Pending |
+| PREP-02 | Phase 12 | Pending |
+| PREP-03 | Phase 12 | Pending |
+| PREP-04 | Phase 12 | Pending |
+| PREP-05 | Phase 12 | Pending |
+| DEP-01 | Phase 13 | Pending |
+| DEP-02 | Phase 13 | Pending |
+| DEP-03 | Phase 13 | Pending |
+| DEP-04 | Phase 13 | Pending |
+| MET-01 | Phase 13 | Pending |
+| MET-02 | Phase 13 | Pending |
+| MET-03 | Phase 13 | Pending |
+| MET-04 | Phase 13 | Pending |
+| MET-05 | Phase 13 | Pending |
+| MET-06 | Phase 13 | Pending |
+| EDGE-01 | Phase 14 | Pending |
+| EDGE-02 | Phase 14 | Pending |
+| EDGE-03 | Phase 14 | Pending |
+| MET-07 | Phase 14 | Pending |
+| LOG-01 | Phase 15 | Pending |
+| LOG-02 | Phase 15 | Pending |
+| LOG-03 | Phase 15 | Pending |
+| ERR-01 | Phase 16 | Pending |
+| ERR-02 | Phase 16 | Pending |
+| ERR-03 | Phase 16 | Pending |
+| NET-01 | Phase 17 | Pending |
+| NET-02 | Phase 17 | Pending |
+| VAL-01 | Phase 17 | Pending |
+| SDK-01 | Phase 18 | Pending |
+
+**Coverage:**
+- v1 requirements: 28 total
+- Mapped to phases: 28 (Phases 12-18)
+- Unmapped: 0 ✓
+
+**Per-phase counts:** Phase 12 = 5 (PREP), Phase 13 = 10 (DEP + MET-01..06), Phase 14 = 4 (EDGE + MET-07), Phase 15 = 3 (LOG), Phase 16 = 3 (ERR), Phase 17 = 3 (NET + VAL), Phase 18 = 1 (SDK).
+
+---
+*Requirements defined: 2026-06-13*
+*Last updated: 2026-06-13 after roadmap granularity revision (Phase 13 split into 13 + 14; phases renumbered to 12-18)*

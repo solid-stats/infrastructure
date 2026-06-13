@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: Production-Ready Infra & kubectl-native CD
-status: Awaiting next milestone
-stopped_at: "v2.0 SHIPPED 2026-06-13 — 6/6 phases complete (06/07/08 live-verified; 09 web slot; 10 retention applied live; 11 cutover mechanism live-verified, prod flip deferred by scope). Archived to .planning/milestones/v2.0-*."
-last_updated: "2026-06-13T06:57:37.672Z"
-last_activity: 2026-06-13 — Milestone v2.0 completed and archived
+milestone: v3.0
+milestone_name: Staging Observability Stack
+status: planning
+last_updated: "2026-06-13T14:15:00.000Z"
+last_activity: 2026-06-13
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 21
-  completed_plans: 21
-  percent: 100
+  total_phases: 7
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -21,14 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** v2.0 milestone — IN-SCOPE COMPLETE (6/6 phases; 10 applied live, 11 mechanism live-verified). Only the Phase 11 live production flip is deferred by scope. Close-out: push .planning commits, file 2 v2.x follow-ups, optional /gsd-complete-milestone.
+**Current focus:** v3.0 — Staging Observability Stack. Roadmap created and granularity-revised (Phases 12-18, 7 phases; old heavy Phase 13 split into Deploy Pipeline & Metrics (13) + Public Edge & Grafana TLS (14); 28 v1 requirements mapped, 100% coverage). Next: plan Phase 12 (Resource Protection & Obs Foundation).
 
 ## Current Position
 
-Phase: Milestone v2.0 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-13 — Milestone v2.0 completed and archived
+Phase: 12 of 18 (Resource Protection & Obs Foundation) — first v3.0 phase
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-06-13 — v3.0 roadmap granularity-revised: Phase 13 split into 13 (Deploy Pipeline & Metrics) + 14 (Public Edge & Grafana TLS); phases renumbered to 12-18 (7 phases); traceability re-confirmed (28/28 mapped)
+
+Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 
 ## Performance Metrics
 
@@ -74,6 +75,10 @@ Last activity: 2026-06-13 — Milestone v2.0 completed and archived
 
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
+
+- [Phase 12-17 roadmap]: v3.0 ordering invariants — resource protection (swap + PriorityClass/QoS + ns/RBAC) FIRST; metrics before logs/errors; obs deploy pipeline lands with metrics (P13) so metrics can deploy without widening runtime CD; edge (DNS→HTTP vhost→certbot→TLS) sequenced inside the UI-exposing phase; NetworkPolicy LAST (P16) after scraping/datasources proven; SDK track (P17) after the GlitchTip DSN exists.
+- [Phase 12-17 roadmap]: swap does NOT protect pods on k3s (NoSwap default + issue #12677) — pod OOM protection is PriorityClass/QoS, not swap; swap is host-process relief only.
+- [Phase 13/14 split]: metrics validated INTERNALLY in P13 (port-forward / ClusterIP, no public edge); the public obs-edge (DNS → HTTP vhost → certbot → TLS) is its own P14 that puts Grafana online. EDGE-01/02/03 + MET-07 → P14. Both grafana. + errors. certs issued in one P14 obs-edge bootstrap run (Pitfall 9 rate-limit avoidance); GlitchTip (P16) reuses that edge by filling in its ClusterIP.
 
 - CD first / cutover last is the only hard ordering; Phases 7-10 are independent and sequenced by capacity.
 - Edge (7) and restore drill (8) must land before cutover (11): the cutover lever IS the nginx upstream and must be proven reversible, and production is never flipped without proven recoverability.

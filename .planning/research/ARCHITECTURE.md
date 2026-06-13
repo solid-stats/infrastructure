@@ -1,411 +1,774 @@
-# Architecture Research
+# Architecture Research: v3.0 Observability Integration
 
-**Domain:** k3s-on-VPS infrastructure CD — v2.0 production-readiness features
-**Researched:** 2026-06-11
-**Confidence:** HIGH (grounded in the actual repo; external facts on k3s SA tokens / RBAC are standard Kubernetes behavior)
+**Domain:** Self-hosted observability stack integration into existing k3s staging cluster
+**Researched:** 2026-06-13
+**Confidence:** HIGH
 
 ## Standard Architecture
 
-This research answers how the six v2.0 features integrate with the existing
-repo, what is **new** vs **modified**, the data-flow changes, and a
-dependency-aware build order. The settled, highest-priority slice is
-**kubectl-native CD**; everything else sequences after or beside it.
-
-### Current vs Target System Overview
+### System Overview
 
 ```
-CURRENT (v1)
-┌──────────────────────────────────────────────────────────────────────┐
-│ GitHub Actions: validate → deploy                                      │
-│   deploy: Install-SSH-key → Trust-host → deploy-staging.sh             │
-└───────────────┬──────────────────────────────────────────────────────┘
-                │ ssh/scp (CD_SSH_* secrets)
-                ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│ VPS (Timeweb)                                                          │
-│  host nginx (manual) ──► server-2 Service (k8s)                        │
-│  k3s API 127.0.0.1:6443 (local kubectl invoked over SSH)              │
-│  ns solid-stats-staging: postgres, rabbitmq, server-2,                 │
-│    replay-parser-2, replays-fetcher(suspended), postgres-backup        │
-│  WireGuard wg0 10.8.0.1 (operator workstation access only)            │
-└───────────────┬──────────────────────────────────────────────────────┘
-                ▼  backups/postgres/  ──►  Timeweb S3
+PUBLIC INTERNET
+        │ DNS A records:
+        │   grafana.stats-staging.solid-stats.ru → VPS IP
+        │   errors.stats-staging.solid-stats.ru  → VPS IP
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  HOST nginx (80/443) + certbot                                  │
+│                                                                 │
+│  vhost: stats-staging-solid-stats.conf  → upstream :3000       │
+│  vhost: grafana-stats-staging.conf      → upstream :3000 (grafana ClusterIP) │
+│  vhost: errors-stats-staging.conf       → upstream :8000 (glitchtip ClusterIP) │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │ proxy_pass to ClusterIP (host-routable via k3s)
+        ┌──────────────┼──────────────────────────┐
+        ▼              ▼                           ▼
+┌───────────────┐ ┌────────────────────┐ ┌────────────────────┐
+│ solid-stats-  │ │ monitoring          │ │ error-tracking     │
+│ staging ns    │ │ namespace           │ │ namespace          │
+│               │ │                     │ │                     │
+│ postgres      │ │ prometheus          │ │ glitchtip-web      │
+│ rabbitmq      │ │ grafana             │ │ glitchtip-worker   │
+│ server-2      │ │ loki                │ │ glitchtip-pg       │
+│ replay-       │ │ alloy (DaemonSet)   │ │ glitchtip-redis    │
+│  parser-2     │ │ kube-state-metrics  │ │                     │
+│ replays-      │ │ node-exporter       │ │                     │
+│  fetcher      │ │  (DaemonSet)        │ │                     │
+│ postgres-     │ │ postgres-exporter   │ │                     │
+│  backup       │ │ rabbitmq-exporter   │ │                     │
+└───────────────┘ └────────────────────┘ └────────────────────┘
+        ▲                  │ scrape /metrics cross-namespace
+        └──────────────────┘ (Prometheus → solid-stats-staging pods)
 ```
 
+### Component Responsibilities
+
+| Component | Namespace | Responsibility | Service Type |
+|-----------|-----------|----------------|--------------|
+| prometheus | monitoring | Metrics scrape, TSDB, alerting rules | ClusterIP |
+| grafana | monitoring | Dashboard UI, datasource broker | ClusterIP (proxied via host nginx) |
+| loki | monitoring | Log storage + query API | ClusterIP |
+| alloy | monitoring | Log/metric collection agent (DaemonSet) | None (pushes out) |
+| kube-state-metrics | monitoring | Kubernetes object metrics | ClusterIP |
+| node-exporter | monitoring | Host/node metrics (DaemonSet, hostNetwork) | ClusterIP |
+| postgres-exporter | monitoring | App postgres metrics → Prometheus | ClusterIP |
+| rabbitmq-exporter | monitoring | RabbitMQ metrics → Prometheus | ClusterIP |
+| glitchtip-web | error-tracking | GlitchTip web app + API (Django) | ClusterIP (proxied via host nginx) |
+| glitchtip-worker | error-tracking | Celery async worker | None (no inbound) |
+| glitchtip-pg | error-tracking | Dedicated PostgreSQL for GlitchTip | ClusterIP (internal only) |
+| glitchtip-redis | error-tracking | Redis for Celery broker + cache | ClusterIP (internal only) |
+
+---
+
+## 1. EXPOSURE — How Grafana and GlitchTip Get Public TLS
+
+### Decision: ClusterIP + host nginx proxy_pass (not NodePort)
+
+**Rationale:** The v2.0 Phase 07 edge pattern is already proven: host nginx terminates TLS via certbot; k3s ClusterIP addresses are routable from the VPS host node because k3s configures them on the host IP stack. NodePort would expose a random high port on the public interface, require ufw rules for that port, and complicate vhost routing — unnecessary given the existing pattern works.
+
+**Concrete mechanism:**
+- Grafana ClusterIP Service on port 3000 → host nginx upstream `grafana_obs`
+- GlitchTip ClusterIP Service on port 8000 → host nginx upstream `glitchtip_obs`
+- Two new vhost files added to `config/nginx/sites-available/`:
+  - `grafana-stats-staging-solid-stats.conf`
+  - `errors-stats-staging-solid-stats.conf`
+- Each vhost: HTTP 80 → ACME challenge path + redirect; HTTPS 443 → proxy_pass to ClusterIP
+
+**New vhost structure (mirrors existing `stats-staging-solid-stats.conf` exactly):**
+```nginx
+upstream grafana_obs {
+    server <grafana-ClusterIP>:3000;
+    keepalive 4;
+}
+
+server {
+    listen 80;
+    server_name grafana.stats-staging.solid-stats.ru;
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name grafana.stats-staging.solid-stats.ru;
+    ssl_certificate /etc/letsencrypt/live/grafana.stats-staging.solid-stats.ru/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/grafana.stats-staging.solid-stats.ru/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    location / {
+        proxy_pass http://grafana_obs;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+}
 ```
-TARGET (v2)
-┌──────────────────────────────────────────────────────────────────────┐
-│ GitHub Actions: validate → deploy                                      │
-│   deploy: wg-up(WG_* secrets) → assemble kubeconfig(SA token+CA+      │
-│           https://10.8.0.1:6443) → render secrets → kubectl apply      │
-│           (no ssh, no scp, no CD_SSH_*)                                │
-└───────────────┬──────────────────────────────────────────────────────┘
-                │ WireGuard UDP 51820  → tunnel 10.8.0.1
-                ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│ VPS (Timeweb)                                                         │
-│  edge: host nginx (now repo-managed config + cert renewal + ufw)      │
-│        ──► server-2 Service  (+ later: web Service)                   │
-│  k3s API 10.8.0.1:6443  ← scoped SA `infra-deployer` (RBAC)           │
-│  ns solid-stats-staging: …existing… + web Deployment/Service/CM       │
-│  scratch ns solid-stats-restore-drill: restore Job (reads S3)         │
-└───────────────┬──────────────────────────────────────────────────────┘
-                ▼  S3 lifecycle rules on backups/replay/artifact prefixes
+
+**DNS → cert → vhost sequencing (hard dependency order):**
+1. Create DNS A records: `grafana.stats-staging.solid-stats.ru` → VPS IP and `errors.stats-staging.solid-stats.ru` → VPS IP. Wait for propagation (check with `dig`).
+2. Install the HTTP-only vhosts first (no SSL directives) so ACME webroot challenges can be served. Reload nginx.
+3. Run `certbot certonly --webroot -d grafana.stats-staging.solid-stats.ru -d errors.stats-staging.solid-stats.ru` (or two separate runs). Certbot issues against the webroot `/var/www/html`.
+4. Update vhosts to add the `ssl_certificate` lines. Reload nginx.
+5. Smoke-test: `curl -I https://grafana.stats-staging.solid-stats.ru/`.
+
+**cert-manager boundary:** cert-manager exists in-cluster but is NOT used here. Public TLS lives on the host via certbot, same as v2.0. cert-manager is for in-cluster workloads — do not cross this boundary.
+
+**Extend `bootstrap-edge.sh` or write `bootstrap-obs-edge.sh`:** The v2.0 script is idempotent and domain-parameterised. A dedicated `scripts/bootstrap-obs-edge.sh` is cleaner than modifying the runtime script, preserving the rule that runtime and obs deploy paths are independent. The obs edge script follows the exact same adopt-reconcile pattern (backup → install vhost → nginx -t → reload → certbot → deploy hook).
+
+**ClusterIP address:** ClusterIPs are assigned at Service creation time. The vhost upstream address must be filled in after apply. Three options:
+- Write the vhost with the ClusterIP (operator looks it up after apply, then restarts nginx). Simplest.
+- Use the cluster DNS from the host (requires `/etc/hosts` or local resolver pointing at the cluster DNS — not standard for host nginx). Avoid.
+- Use a fixed NodePort and configure nginx to `localhost:NodePort`. Works but adds the ufw rule complexity. Avoid.
+
+**Decision:** Use ClusterIP. Add a step in the obs bootstrap runbook: `kubectl -n monitoring get svc grafana -o jsonpath='{.spec.clusterIP}'` to retrieve the address post-apply.
+
+---
+
+## 2. NAMESPACE LAYOUT
+
+### Two-namespace split
+
+| Resource | Namespace | Reason |
+|----------|-----------|--------|
+| Namespace manifest | monitoring | Metrics + logging stack |
+| Namespace manifest | error-tracking | Error tracking — separate blast radius, separate lifecycle |
+| Prometheus | monitoring | Owns TSDB; scrapes all targets |
+| Grafana | monitoring | Datasources: Prometheus + Loki |
+| Loki | monitoring | Log store |
+| Alloy (DaemonSet) | monitoring | Collects logs from all pods, pushes to Loki |
+| kube-state-metrics | monitoring | Cluster-state metrics |
+| node-exporter (DaemonSet) | monitoring | Node metrics |
+| postgres-exporter | monitoring | Scrapes app postgres in solid-stats-staging |
+| rabbitmq-exporter | monitoring | Scrapes RabbitMQ in solid-stats-staging |
+| GlitchTip web | error-tracking | Sentry-compatible HTTP API + UI |
+| GlitchTip worker | error-tracking | Celery worker |
+| GlitchTip postgres | error-tracking | Dedicated PostgreSQL; NOT the app postgres |
+| GlitchTip redis | error-tracking | Celery broker |
+
+### ServiceAccounts (no default SA rule maintained)
+
+Every workload gets its own SA with `automountServiceAccountToken: false`. Explicit SAs per component:
+
+| SA Name | Namespace | Used By |
+|---------|-----------|---------|
+| prometheus | monitoring | Prometheus pod (needs cluster-level read for scraping) |
+| grafana | monitoring | Grafana pod |
+| loki | monitoring | Loki pod |
+| alloy | monitoring | Alloy DaemonSet (needs pod/node read for log metadata) |
+| kube-state-metrics | monitoring | kube-state-metrics (ClusterRole, reads all namespaces) |
+| node-exporter | monitoring | node-exporter DaemonSet |
+| postgres-exporter | monitoring | postgres-exporter |
+| rabbitmq-exporter | monitoring | rabbitmq-exporter |
+| glitchtip | error-tracking | GlitchTip web + worker |
+| glitchtip-postgres | error-tracking | GlitchTip postgres |
+| glitchtip-redis | error-tracking | GlitchTip redis |
+
+### Cross-namespace scraping (Prometheus → solid-stats-staging)
+
+Prometheus needs to scrape pods in `solid-stats-staging` (and `kube-system` for kubelet). This requires a ClusterRole, not a namespace Role:
+
+```yaml
+# ClusterRole for Prometheus — read-only across all namespaces
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-scraper
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "nodes/metrics", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-scraper
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: prometheus-scraper
+  apiGroup: rbac.authorization.k8s.io
 ```
 
-### Component Responsibilities (new + changed only)
+kube-state-metrics also needs a ClusterRole (it reads all resource types). Its Helm chart generates this automatically — include in rendered output.
 
-| Component | Responsibility | New / Modified |
-|-----------|----------------|----------------|
-| CI `deploy` job | Bring up WG, build kubeconfig from SA token, run `kubectl apply` directly | **Modified** (replaces SSH steps) |
-| `wg0` client config in CI | Ephemeral tunnel from the runner to `10.8.0.1` | **New** (CI-side; server already has wg0) |
-| `infra-deployer` SA + RBAC | Identity CI authenticates as; least-privilege to deploy ns resources | **New** (`05-ci-rbac.yaml`) |
-| `deploy-staging.sh` (or replacement) | Render secrets locally → pipe `kubectl apply -f -`, no ssh/scp wrappers | **Modified / largely rewritten** |
-| host nginx config + cert + firewall | Edge config becomes repo-managed and automated (renewal, ufw) | **New** (out-of-cluster automation) |
-| S3 lifecycle policy | Retention rules per prefix on the Timeweb bucket | **New** (one-time/idempotent apply) |
-| restore-drill Job + scratch ns | Automated `pg_restore` validation reading a dump from S3 | **New** (`k8s/restore-drill/` or scratch manifest) |
-| `web` Deployment/Service/ConfigMap | Future `web` app runtime wiring | **New** (`45-web-*.yaml`) |
+Alloy (DaemonSet for log collection) needs a ClusterRole to read pod metadata for log labels:
+- `pods`, `nodes`, `namespaces` — get/list/watch
 
-## Recommended Project Structure
+**NetworkPolicy implication for cross-namespace scraping:** A NetworkPolicy on `solid-stats-staging` pods that blocks ingress must explicitly allow Prometheus pods from the `monitoring` namespace. If default-deny is applied to `solid-stats-staging` before the allow rule exists, Prometheus loses targets. See section 6 for sequencing.
+
+---
+
+## 3. RENDER-THEN-APPLY PIPELINE
+
+### Separate obs deploy path
 
 ```
 k8s/
-├── staging/                 # existing apply-ordered runtime (numeric prefixes)
+├── staging/          # existing runtime manifests (deploy-staging.yml owns this)
 │   ├── 00-namespace.yaml
-│   ├── 05-ci-rbac.yaml      # NEW: infra-deployer SA + Role + RoleBinding
-│   ├── 10-postgres.yaml
-│   ├── 20-rabbitmq.yaml
-│   ├── 30-server-2.yaml
-│   ├── 35-server-2-deployment.yaml
-│   ├── 40-replay-parser-2.yaml
-│   ├── 45-web-config.yaml   # NEW: web ConfigMap + Service
-│   ├── 46-web-deployment.yaml  # NEW: web Deployment (split like server-2 30/35)
-│   ├── 50-replays-fetcher.yaml
-│   └── 60-postgres-backup.yaml
-├── restore-drill/           # NEW: scratch-namespace restore Job (NOT in staging/)
-│   ├── 00-namespace.yaml    #   ns solid-stats-restore-drill
-│   └── 10-restore-job.yaml  #   Job: pulls dump from S3 → ephemeral pg → pg_restore
-edge/                        # NEW: out-of-cluster host edge automation
-│   ├── nginx/               #   server-2 / web vhost templates
-│   ├── renew-certs.sh       #   cert renewal (certbot or acme.sh) + reload
-│   └── firewall.sh          #   ufw rules (keep 6443 tunnel-only, 80/443 public)
-s3/                          # NEW: bucket lifecycle policy JSON + apply script
+│   ├── 01-ci-rbac.yaml
+│   └── ...
+└── observability/    # new obs manifests (deploy-observability.yml owns this)
+    ├── 00-namespaces.yaml          # monitoring + error-tracking Namespace
+    ├── 01-obs-ci-rbac.yaml         # obs-ci-deployer SA + RBAC (operator-applied, excluded from CI)
+    ├── 10-monitoring-namespace-config.yaml
+    ├── 20-prometheus/              # rendered from helm template
+    │   └── *.yaml
+    ├── 30-grafana/
+    │   └── *.yaml
+    ├── 40-loki/
+    │   └── *.yaml
+    ├── 50-alloy/
+    │   └── *.yaml
+    ├── 60-kube-state-metrics/
+    │   └── *.yaml
+    ├── 70-node-exporter/
+    │   └── *.yaml
+    ├── 80-exporters/
+    │   └── *.yaml
+    └── 90-error-tracking/          # GlitchTip stack
+        └── *.yaml
+```
+
+**Why a directory per component:** `helm template` output for kube-prometheus-stack is large (~50+ resources). Keeping per-component directories makes diffs readable and lets phases apply subsets.
+
+**Helm rendering workflow:**
+```bash
+# Render kube-prometheus-stack (Prometheus + Grafana + kube-state-metrics + node-exporter)
+helm template monitoring prometheus-community/kube-prometheus-stack \
+  -n monitoring \
+  -f k8s/observability/values/kube-prometheus-stack.yaml \
+  > k8s/observability/20-prometheus-grafana-rendered.yaml
+
+# Render Loki
+helm template loki grafana/loki \
+  -n monitoring \
+  -f k8s/observability/values/loki.yaml \
+  > k8s/observability/40-loki-rendered.yaml
+
+# Render Alloy
+helm template alloy grafana/alloy \
+  -n monitoring \
+  -f k8s/observability/values/alloy.yaml \
+  > k8s/observability/50-alloy-rendered.yaml
+
+# GlitchTip: render or write hand-crafted manifests
+# (GlitchTip Helm chart at gitlab.com/glitchtip/glitchtip-helm-chart — evaluate before use;
+#  hand-crafted manifests may be simpler for the small footprint required)
+```
+
+**Rendered manifests committed to git** — same philosophy as runtime manifests. Values files live in `k8s/observability/values/`. Rendering happens locally or in a pre-deploy CI step, and the output is committed. This means `git diff` shows exactly what will be applied.
+
+**Apply ordering:**
+1. `00-namespaces.yaml` — must be applied first (operator-applied, not CI)
+2. `01-obs-ci-rbac.yaml` — operator-applied, excluded from CI glob
+3. All others via sorted glob: `find k8s/observability -name '*.yaml' ! -name '00-*' ! -name '01-*' | sort`
+
+### Separate CI workflow: `.github/workflows/deploy-observability.yml`
+
+Fork from `deploy-staging.yml`. Key differences:
+- Trigger: `workflow_dispatch` only (manual), or on push to `k8s/observability/**` path filter
+- Concurrency group: `infrastructure-obs-deploy` (independent from runtime deploy)
+- No interdependency with runtime deploy — either can run independently
+- Secrets: same WG tunnel secrets (reuse), same kubeconfig secrets (reuse), PLUS obs-specific secrets (GRAFANA_ADMIN_PASSWORD, GLITCHTIP_SECRET_KEY, etc.)
+- Namespace variable: `OBS_MONITORING_NS=monitoring OBS_ERROR_NS=error-tracking`
+- Validate step: checks `k8s/observability/` directory + obs-specific script exists
+- Dry-run: `kubectl apply -n monitoring --dry-run=server -f k8s/observability/...`
+- Deploy: render secrets → apply namespaced secrets → apply manifests → rollout status checks
+
+### RBAC extension — obs-ci-deployer
+
+The existing `ci-deployer` SA and Role are scoped to `solid-stats-staging` only. Do NOT extend them to cover obs namespaces — that would break the independence guarantee.
+
+Create a separate `obs-ci-deployer` SA in the `monitoring` namespace:
+```yaml
+# k8s/observability/01-obs-ci-rbac.yaml — operator-applied ONLY
+# Two SAs: one in monitoring, one in error-tracking
+# Each with a Role in their own namespace
+# PLUS ClusterRoles for: Prometheus scraper (cluster-wide read), kube-state-metrics (cluster-wide read)
+```
+
+The obs CI token (`OBS_K8S_TOKEN`) is a separate GitHub secret pointing to `obs-ci-deployer` in `monitoring`. The kubeconfig script is reused with `K8S_NAMESPACE=monitoring K8S_USER_NAME=obs-ci-deployer`.
+
+**What obs-ci-deployer needs:**
+- Role in `monitoring`: full apply RBAC (same verbs as ci-deployer Role)
+- Role in `error-tracking`: full apply RBAC
+- ClusterRole (operator-applied, non-CI): `prometheus-scraper` ClusterRoleBinding
+- ClusterRole (operator-applied, non-CI): `kube-state-metrics` ClusterRoleBinding
+
+The ClusterRoles are workload RBAC (for Prometheus and kube-state-metrics pods at runtime), not CI deployer RBAC. The CI deployer needs namespace-scoped apply rights in `monitoring` and `error-tracking`. If the ClusterRoles for Prometheus/ksm are pre-rendered in the manifests, the obs-ci-deployer needs `clusterroles` and `clusterrolebindings` create/patch rights — or those are applied once by the operator and excluded from the CI glob.
+
+**Simplest safe approach:** Operator applies all ClusterRoles/ClusterRoleBindings once (like `00-namespaces.yaml` and `01-obs-ci-rbac.yaml`). CI only applies namespace-scoped resources. Helm renders ClusterRole manifests into a separate file excluded from the CI deploy glob.
+
+---
+
+## 4. STORAGE
+
+### Constraint recap
+- local-path StorageClass: no expansion, Delete reclaim, single-node
+- 31 GB free disk
+- Existing PVCs: postgres-data 20Gi + rabbitmq-data 5Gi (not from free disk — they were allocated earlier; 31 GB is the remaining free space)
+
+### PVC layout
+
+| PVC Name | Namespace | Size | Component | Rationale |
+|----------|-----------|------|-----------|-----------|
+| prometheus-data | monitoring | 10Gi | Prometheus TSDB | 15-day retention, ~6 GB/day for a small cluster is far too much; for a single-node k3s with ~8 workloads scraping every 15s, expect ~100-200 MB/day. 10 Gi = 50-100 days of headroom at that rate. |
+| loki-data | monitoring | 5Gi | Loki log chunks | 7-day retention on a low-traffic staging cluster. Typical compressed log volume: ~50-200 MB/day. 5 Gi = 25-100 days. |
+| grafana-data | monitoring | 1Gi | Grafana dashboards + SQLite | Config only; data is disposable but useful to persist dashboards. |
+| glitchtip-pg-data | error-tracking | 5Gi | GlitchTip PostgreSQL | Error events only, no app data here. GlitchTip retention policy prunes old events. |
+| glitchtip-redis-data | error-tracking | 1Gi | Redis AOF | Optional persistence; Redis for Celery can be ephemeral. Consider emptyDir instead. |
+
+**Total new PVC allocation: 22Gi** against 31 GB free. Leaves ~9 GB buffer. This is tight but workable given:
+- Prometheus and Loki sizes are generous for actual staging throughput
+- GlitchTip Postgres will stay small (errors only, auto-prune)
+- local-path does NOT support expansion — right-sizing up front is mandatory
+
+**Redis PVC decision:** Use 1Gi PVC (not emptyDir) so Celery tasks survive a Redis pod restart. If Redis is emptyDir, in-flight error events can be lost on pod reschedule.
+
+**node-exporter and kube-state-metrics:** No PVCs needed — stateless.
+
+**Alloy:** No PVC needed — stateless log forwarder (positions tracked in emptyDir or not at all for simplicity).
+
+---
+
+## 5. SECRETS
+
+All secrets follow the established model: GitHub environment secrets → rendered at deploy time → `kubectl apply` as k8s Secrets. No secret values in git.
+
+### New secrets required
+
+**Obs CI workflow secrets (GitHub environment: staging):**
+
+| GitHub Secret | k8s Secret Name | Namespace | Key | Used By |
+|---------------|----------------|-----------|-----|---------|
+| OBS_K8S_TOKEN | (CI token, not in-cluster) | — | — | obs-ci-deployer kubeconfig |
+| GRAFANA_ADMIN_USER | grafana-admin | monitoring | admin-user | Grafana |
+| GRAFANA_ADMIN_PASSWORD | grafana-admin | monitoring | admin-password | Grafana |
+| GLITCHTIP_SECRET_KEY | glitchtip-secrets | error-tracking | SECRET_KEY | GlitchTip Django |
+| GLITCHTIP_DB_PASSWORD | glitchtip-secrets | error-tracking | DATABASE_URL (full DSN) | GlitchTip → its own postgres |
+| GLITCHTIP_SUPERUSER_EMAIL | glitchtip-secrets | error-tracking | GLITCHTIP_SUPERUSER_EMAIL | GlitchTip init |
+| GLITCHTIP_SUPERUSER_PASSWORD | glitchtip-secrets | error-tracking | GLITCHTIP_SUPERUSER_PASSWORD | GlitchTip init |
+| GLITCHTIP_PG_PASSWORD | glitchtip-pg-auth | error-tracking | POSTGRES_PASSWORD | GlitchTip's PostgreSQL |
+| POSTGRES_EXPORTER_DSN | postgres-exporter-secrets | monitoring | DATA_SOURCE_NAME | postgres-exporter → app postgres |
+| RABBITMQ_EXPORTER_URL | rabbitmq-exporter-secrets | monitoring | RABBITMQ_URL | rabbitmq-exporter → app RabbitMQ |
+
+**Secret rendering:** Extend `scripts/render-staging-secrets.py` with a separate function/mode for obs secrets, or write `scripts/render-obs-secrets.py`. The latter is cleaner (one file per deploy path, independent invocations).
+
+**GlitchTip DSN for app SDK:** The Sentry DSN (project DSN from GlitchTip) is generated post-deploy when a GlitchTip project is created. It cannot be pre-rendered as a GitHub secret. Workflow: GlitchTip admin creates project → copies DSN → operator adds `GLITCHTIP_DSN` to app repo secrets → app repo PR adds `SENTRY_DSN` env var. This is inherently a manual step after GlitchTip is live.
+
+---
+
+## 6. NETWORKPOLICY
+
+### k3s NetworkPolicy enforcement confirmed
+
+k3s ships an embedded kube-router netpol controller in firewall-only mode (no kube-router routing). This enforces `networking.k8s.io/v1` NetworkPolicy objects via iptables chains + ipsets. Flannel handles pod networking; kube-router handles policy enforcement. **NetworkPolicy IS supported and enforced on k3s with default Flannel.** No CNI replacement needed.
+
+Confirmed from k3s docs: "K3s includes an embedded network policy controller" using "kube-router's netpol controller library."
+
+### Ordering rule (critical)
+
+**Apply NetworkPolicies ONLY after scraping/connectivity is confirmed working without them.** A wrong default-deny applied to `solid-stats-staging` before the Prometheus allow rule is in place will silently break metrics scraping (targets show as DOWN, but the root cause is not obvious). The sequencing is:
+
+1. Deploy obs stack without any NetworkPolicies
+2. Confirm: Prometheus targets healthy, Grafana datasources green, Loki queries return logs
+3. Apply default-deny to `monitoring` namespace
+4. Confirm: internal obs comms still work (Grafana → Prometheus, Alloy → Loki, etc.)
+5. Apply default-deny to `error-tracking` namespace
+6. Confirm: GlitchTip web → its postgres + redis, test error ingestion works
+7. Apply allow-from-monitoring to `solid-stats-staging` namespace (for Prometheus scraping app targets)
+8. Confirm: Prometheus targets healthy again
+
+### NetworkPolicy design
+
+**monitoring namespace — default deny + allow:**
+
+```yaml
+# 1. Default deny all ingress + egress in monitoring
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# 2. Allow Grafana inbound from host nginx (source: host node IP, not a pod)
+# Host nginx is NOT a pod — it originates from the node's host network.
+# Flannel/kube-router treats host-originating traffic as coming from the node IP.
+# The correct selector is ipBlock with the VPS host IP (e.g., 10.43.0.1 is the
+# k3s bridge gateway; the node's main interface IP must be used).
+# Use ipBlock: cidr: 0.0.0.0/0 for host nginx ingress (acceptable for a staging
+# single-node; tighten to node IP in production).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-hostnginx-to-grafana
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 0.0.0.0/0   # host nginx is not a pod; tighten to node CIDR if needed
+    ports:
+    - protocol: TCP
+      port: 3000
+---
+# 3. Allow Grafana → Prometheus (egress from Grafana, ingress to Prometheus)
+# 4. Allow Grafana → Loki (egress from Grafana, ingress to Loki)
+# 5. Allow Prometheus → scrape targets in monitoring + solid-stats-staging
+# 6. Allow Alloy → Loki (push logs)
+# 7. Allow all monitoring pods → kube-dns (UDP 53)
+# 8. Allow Prometheus → kubelet/cadvisor on host network (hostPath scrape needs egress to node IPs)
+```
+
+**error-tracking namespace — default deny + allow:**
+
+```yaml
+# 1. Default deny all
+# 2. Allow host nginx → GlitchTip web (same ipBlock pattern as Grafana)
+# 3. Allow GlitchTip web → its postgres (TCP 5432)
+# 4. Allow GlitchTip web → its redis (TCP 6379)
+# 5. Allow GlitchTip worker → its postgres + redis (same)
+# 6. Allow all error-tracking pods → kube-dns (UDP 53)
+# 7. Allow GlitchTip web egress for outbound (email, etc.) — defer if no external alerts
+# 8. Allow app pods (solid-stats-staging) → GlitchTip web on port 8000 (Sentry SDK)
+```
+
+**solid-stats-staging namespace — add allow-from-monitoring:**
+
+```yaml
+# Do NOT apply default-deny to solid-stats-staging in v3.0.
+# The runtime namespace currently has no NetworkPolicies.
+# Only add the minimal allow-from-monitoring rule for Prometheus scraping:
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: solid-stats-staging
+spec:
+  podSelector: {}  # all pods in this namespace
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+    ports:
+    - protocol: TCP
+      port: 3000   # server-2 metrics
+    - protocol: TCP
+      port: 9187   # postgres-exporter (if co-located) — OR allow from monitoring NS generally
+```
+
+**Important:** Adding a NetworkPolicy to `solid-stats-staging` (even an allow-only) changes the namespace from "no policy = allow all" to "has policy = apply policy logic." Be explicit about what else needs ingress (e.g., internal app → postgres connections are within the same namespace and covered by same-namespace allows). Full default-deny for `solid-stats-staging` is out of scope for v3.0 — defer to a hardening phase.
+
+---
+
+## Data Flow Changes in v3.0
+
+### New flows added
+
+```
+Prometheus ──scrape──→ server-2:3000/metrics (if /metrics exposed)
+Prometheus ──scrape──→ postgres-exporter:9187 → app postgres:5432
+Prometheus ──scrape──→ rabbitmq-exporter:9419 → rabbitmq:15672
+Prometheus ──scrape──→ kube-state-metrics:8080
+Prometheus ──scrape──→ node-exporter:9100 (hostNetwork DaemonSet)
+Prometheus ──scrape──→ alloy:12345/metrics
+Alloy ──tail logs──→  pod log files on host
+Alloy ──push──→       Loki:3100 (HTTP)
+Grafana ──query──→    Prometheus:9090
+Grafana ──query──→    Loki:3100
+host nginx ──proxy──→ Grafana ClusterIP:3000
+host nginx ──proxy──→ GlitchTip ClusterIP:8000
+app SDK (server-2, replay-parser-2, replays-fetcher) ──HTTP POST──→ GlitchTip web:8000/api/
+GlitchTip web ──DB──→ glitchtip-postgres:5432
+GlitchTip web ──Celery──→ glitchtip-redis:6379
+GlitchTip worker ──Celery consume──→ glitchtip-redis:6379
+GlitchTip worker ──DB──→ glitchtip-postgres:5432
+```
+
+### Unchanged flows
+
+```
+host nginx → server-2 ClusterIP:3000  (existing runtime path, unaffected)
+server-2 → postgres:5432              (unchanged)
+server-2 → rabbitmq:5672              (unchanged)
+replay-parser-2 → postgres:5432       (unchanged)
+postgres-backup → S3                  (unchanged)
+```
+
+---
+
+## New vs Modified Components
+
+### New components (net-new in v3.0)
+
+| Component | Type | Where |
+|-----------|------|-------|
+| `monitoring` Namespace | k8s resource | operator-applied |
+| `error-tracking` Namespace | k8s resource | operator-applied |
+| `obs-ci-deployer` SA + RBAC | k8s resource | operator-applied |
+| Prometheus | Deployment + PVC | monitoring |
+| Grafana | Deployment + PVC | monitoring |
+| Loki | StatefulSet + PVC | monitoring |
+| Alloy | DaemonSet | monitoring |
+| kube-state-metrics | Deployment | monitoring |
+| node-exporter | DaemonSet | monitoring |
+| postgres-exporter | Deployment | monitoring |
+| rabbitmq-exporter | Deployment | monitoring |
+| GlitchTip web | Deployment | error-tracking |
+| GlitchTip worker | Deployment | error-tracking |
+| GlitchTip postgres | StatefulSet + PVC | error-tracking |
+| GlitchTip redis | Deployment + PVC | error-tracking |
+| `grafana-stats-staging-solid-stats.conf` | host nginx vhost | VPS host |
+| `errors-stats-staging-solid-stats.conf` | host nginx vhost | VPS host |
+| `scripts/bootstrap-obs-edge.sh` | operator script | repo |
+| `scripts/render-obs-secrets.py` | CI script | repo |
+| `.github/workflows/deploy-observability.yml` | CI workflow | repo |
+| `k8s/observability/values/*.yaml` | Helm values | repo |
+| `k8s/observability/**/*.yaml` | rendered manifests | repo |
+
+### Modified components (existing, changed in v3.0)
+
+| Component | Change |
+|-----------|--------|
+| `config/nginx/sites-available/` | Two new vhost files added |
+| GitHub staging environment | New secrets added (OBS_K8S_TOKEN, GRAFANA_ADMIN_*, GLITCHTIP_*, exporter DSNs) |
+| Possibly `server-2` app config | Add `SENTRY_DSN` env var (separate app repo PR, not this repo) |
+| Possibly `replay-parser-2` | Same: add `SENTRY_DSN` (app repo PR) |
+
+### NOT modified (runtime isolation guarantee)
+
+| Component | Status |
+|-----------|--------|
+| `deploy-staging.yml` | Untouched |
+| `k8s/staging/*.yaml` | Untouched (except optional allow-prometheus-scrape NetworkPolicy) |
+| `scripts/render-staging-secrets.py` | Untouched |
+| `ci-deployer` SA | Untouched — no new permissions |
+
+---
+
+## Recommended Project Structure (repo layout)
+
+```
+k8s/
+├── staging/                        # existing — unchanged
+└── observability/
+    ├── values/
+    │   ├── kube-prometheus-stack.yaml   # Prometheus + Grafana values
+    │   ├── loki.yaml
+    │   ├── alloy.yaml
+    │   └── glitchtip.yaml               # if using GlitchTip helm chart
+    ├── 00-namespaces.yaml              # monitoring + error-tracking (operator-applied)
+    ├── 01-obs-ci-rbac.yaml             # obs-ci-deployer + ClusterRoles (operator-applied)
+    ├── 20-prometheus-grafana.yaml      # helm template output
+    ├── 30-loki.yaml                    # helm template output
+    ├── 40-alloy.yaml                   # helm template output
+    ├── 50-kube-state-metrics.yaml      # helm template output (or bundled in kube-prometheus-stack)
+    ├── 60-node-exporter.yaml           # helm template output (or bundled)
+    ├── 70-exporters.yaml               # hand-crafted: postgres-exporter + rabbitmq-exporter
+    └── 80-glitchtip.yaml               # hand-crafted or helm template output
+
+config/nginx/sites-available/
+├── stats-staging-solid-stats.conf      # existing — unchanged
+├── grafana-stats-staging-solid-stats.conf   # new
+└── errors-stats-staging-solid-stats.conf    # new
+
 scripts/
-├── deploy-staging.sh        # MODIFIED: drop ssh/scp, kubectl direct
-├── ci-kubeconfig.sh         # NEW: assemble kubeconfig from SA token + CA
-├── restore-drill.sh         # NEW: drive the restore Job + assert success
-├── render-staging-secrets.py
-└── validate-staging.py      # MODIFIED: add new files to EXPECTED_MANIFESTS
+├── bootstrap-edge.sh               # existing — unchanged
+├── bootstrap-obs-edge.sh           # new: installs obs vhosts + certbot for two new domains
+├── render-staging-secrets.py       # existing — unchanged
+└── render-obs-secrets.py           # new: renders obs-specific secrets
+
+.github/workflows/
+├── deploy-staging.yml              # existing — unchanged
+└── deploy-observability.yml        # new: obs-specific CI workflow
 ```
 
-### Structure Rationale
-
-- **`05-ci-rbac.yaml` sits right after `00-namespace.yaml`:** the SA must exist
-  inside the namespace before anything else, and `05` matches the existing
-  numeric-prefix convention with room left below `10`. (Confidence: HIGH)
-- **`restore-drill/` is a separate directory, not in `staging/`:** the drill
-  uses its own scratch namespace and must never be in the set that
-  `deploy-staging.sh` globs and applies. Keeping it out of `k8s/staging/*.yaml`
-  prevents accidental scheduling on every deploy. (Confidence: HIGH)
-- **`edge/` and `s3/` are out-of-cluster:** they configure the host and the
-  Timeweb bucket, not k3s objects, so they live outside `k8s/`. (Confidence: HIGH)
-- **`web` split into config+service / deployment** mirrors the existing
-  `30-server-2.yaml` (ConfigMap+Service) and `35-server-2-deployment.yaml`
-  split, so image bumps touch one file. (Confidence: HIGH)
-
-## Architectural Patterns
-
-### Pattern 1: WireGuard-in-CI + kubeconfig-from-SA-token (the CD replacement)
-
-**What:** Replace the three SSH-era steps (`Install SSH key`, `Trust deploy
-host`, `Apply staging manifests` via `deploy-staging.sh` over ssh) with: bring
-up a WireGuard interface on the runner, then build a kubeconfig that targets
-`https://10.8.0.1:6443` and authenticates as the scoped SA bearer token.
-
-**When to use:** This is the settled foundation — do it first.
-
-**Trade-offs:** Runner needs `wireguard-tools` + `NET_ADMIN` (available on
-`ubuntu-latest` via `sudo wg-quick`/`ip`). The handshake is UDP to
-`<VPS_PUBLIC_IP>:51820`, already open at the Timeweb perimeter. The SA token is
-long-lived unless you mint a short-lived one; a bound token via
-`kubectl create token` is better but requires bootstrap access, so a stored
-token Secret is the pragmatic v2 default.
-
-**Example (new CI deploy steps, replacing lines 50–82 of the workflow):**
-```yaml
-- name: Bring up WireGuard
-  env:
-    WG_PRIVATE_KEY:  ${{ secrets.CD_WG_PRIVATE_KEY }}   # runner's own /32
-    WG_SERVER_PUBKEY: ${{ secrets.CD_WG_SERVER_PUBLIC_KEY }}
-    WG_ENDPOINT:     ${{ secrets.CD_WG_ENDPOINT }}      # <VPS_PUBLIC_IP>:51820
-    WG_ADDRESS:      ${{ secrets.CD_WG_ADDRESS }}       # 10.8.0.<N>/32
-  run: |
-    sudo apt-get update && sudo apt-get install -y wireguard-tools
-    umask 077
-    cat >wg0.conf <<EOF
-    [Interface]
-    Address = ${WG_ADDRESS}
-    PrivateKey = ${WG_PRIVATE_KEY}
-    [Peer]
-    PublicKey = ${WG_SERVER_PUBKEY}
-    Endpoint = ${WG_ENDPOINT}
-    AllowedIPs = 10.8.0.1/32
-    PersistentKeepalive = 25
-    EOF
-    sudo wg-quick up ./wg0.conf
-    ping -c1 -W5 10.8.0.1
-
-- name: Assemble kubeconfig
-  env:
-    K8S_SA_TOKEN: ${{ secrets.CD_K8S_SA_TOKEN }}
-    K8S_CA_CERT:  ${{ secrets.CD_K8S_CA_CERT }}   # base64 of the API CA
-  run: ./scripts/ci-kubeconfig.sh   # writes $KUBECONFIG → server https://10.8.0.1:6443
-
-- name: Deploy
-  env: { ...same app/secret env as today... }
-  run: ./scripts/deploy-staging.sh   # now kubectl-direct, no ssh
-
-- name: Tear down WireGuard
-  if: always()
-  run: sudo wg-quick down ./wg0.conf || true
-```
-The server already advertises `10.8.0.1` in the k3s cert SANs
-(`tls-san: 10.8.0.1`), so TLS verification against the tunnel IP works.
-(Confidence: HIGH — repo doc confirms the SAN; the CI mechanics are standard.)
-
-### Pattern 2: Scoped SA + namespace RBAC, with the namespace-create boundary
-
-**What:** `05-ci-rbac.yaml` defines a `ServiceAccount infra-deployer` plus a
-namespaced `Role` granting only the verbs/resources the deploy needs
-(`get/list/create/update/patch` on `secrets, configmaps, services,
-serviceaccounts, deployments, statefulsets, cronjobs, jobs, persistentvolume
-claims, pods` within the namespace) and a `RoleBinding`.
-
-**The namespace-create boundary (the key design decision):**
-`Namespace` is **cluster-scoped** — a namespaced `Role` *cannot* grant
-`create namespace`. Today `deploy-staging.sh` runs
-`kubectl create namespace ... || true` as cluster-admin over SSH. Once CI
-authenticates as a least-privilege SA, that line will fail with a forbidden
-error. Three options:
-
-| Option | What it means | Verdict |
-|--------|---------------|---------|
-| **A. Bootstrap the namespace once** (manual/admin) and remove the create line from CI | CI never creates namespaces; the SA + Role + namespace are seeded once out-of-band, CI only applies into an existing ns | **Recommended.** Smallest blast radius; matches "git is source of truth for what *ships*", and the ns rarely changes. (Confidence: HIGH) |
-| **B. Narrow ClusterRole** granting `get;create` on `namespaces` (optionally name-restricted via admission, not RBAC) | CI can self-heal the namespace | More privilege than needed; RBAC can't restrict to one namespace name, so it's `create any namespace`. Avoid unless self-bootstrap is required. |
-| **C. Keep a tiny admin bootstrap path** for ns + RBAC, separate from the CD SA | A one-time `kubectl apply` of `00-namespace.yaml` + `05-ci-rbac.yaml` by an operator (over the workstation WG kubeconfig), CD SA owns everything `>=10` | **Recommended companion to A.** This is the chicken-and-egg resolution: the SA that CI uses can't create the namespace it lives in, so an operator seeds `00`+`05` once. (Confidence: HIGH) |
-
-Practical resolution: **A + C.** Operator applies `00-namespace.yaml` and
-`05-ci-rbac.yaml` once via their personal WG kubeconfig (cluster-admin).
-Thereafter CI's SA applies `10..60` and future `45/46`. Remove the
-`kubectl create namespace` line from the deploy script (or guard it so it's a
-no-op the SA never reaches).
-
-**Example RBAC skeleton (`05-ci-rbac.yaml`):**
-```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata: { name: infra-deployer, namespace: solid-stats-staging }
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata: { name: infra-deployer, namespace: solid-stats-staging }
-rules:
-  - apiGroups: [""]
-    resources: [secrets, configmaps, services, serviceaccounts, persistentvolumeclaims, pods]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: ["apps"]
-    resources: [deployments, statefulsets]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: ["batch"]
-    resources: [cronjobs, jobs]
-    verbs: [get, list, watch, create, update, patch]
-  # rollout status needs get on deployments/statefulsets (covered above)
+
+## Suggested Build Order (Phase Sequence)
+
+Dependencies flow strictly downward — each step requires the previous.
+
+### Step 0: Preflight (prerequisite, not a deploy step)
+- Resource snapshot: free RAM, disk, CPU on the VPS
+- Confirm 31 GB free is accurate (`df -h`)
+- Confirm k3s version (`kubectl version`)
+- Confirm kube-router netpol is active (`kubectl get pods -n kube-system | grep kube-router` or check if netpol enforcement works with a test policy)
+- Confirm local-path StorageClass is default
+- **Gate:** If free RAM after host swap is insufficient for the trimmed obs stack, stop and resize (out of scope for this research)
+
+### Step 1: Namespaces + RBAC (operator-applied, one-time)
+- Apply `00-namespaces.yaml` (monitoring, error-tracking)
+- Apply `01-obs-ci-rbac.yaml` (obs-ci-deployer SA + Roles + ClusterRoles)
+- Extract and store `OBS_K8S_TOKEN` → GitHub staging environment secret
+- **Why first:** Everything else depends on the namespaces existing
+
+### Step 2: DNS A records (prerequisite for TLS)
+- Create `grafana.stats-staging.solid-stats.ru` → VPS IP
+- Create `errors.stats-staging.solid-stats.ru` → VPS IP
+- Verify propagation: `dig +short grafana.stats-staging.solid-stats.ru`
+- **Why here:** certbot requires DNS to resolve before it can issue certificates
+
+### Step 3: Obs CI workflow + secret rendering
+- Write `scripts/render-obs-secrets.py`
+- Write `.github/workflows/deploy-observability.yml` (validate + dry-run jobs; deploy job held until manifests exist)
+- Add obs secrets to GitHub staging environment
+- **Why before manifests:** The workflow needs to be in place to validate and dry-run rendered manifests
+
+### Step 4: Metrics stack (Prometheus + Grafana + kube-state-metrics + node-exporter)
+- Render `kube-prometheus-stack` with staging-trimmed values (reduced resource requests, PVC sizes, 15-day Prometheus retention)
+- Write PVC manifests (prometheus-data 10Gi, grafana-data 1Gi)
+- Apply via obs CI workflow (or manually with `kubectl apply`)
+- Verify: Prometheus targets page shows kube-state-metrics + node-exporter as UP
+- **Why before Loki:** Grafana is the query UI; get it working first so Loki datasource can be verified visually
+
+### Step 5: Host nginx obs vhosts + TLS (depends on Step 2 DNS propagation)
+- Run `scripts/bootstrap-obs-edge.sh` on the VPS
+- HTTP-only vhosts first → certbot issue → add SSL directives → nginx reload
+- Look up Grafana ClusterIP: `kubectl -n monitoring get svc grafana -o jsonpath='{.spec.clusterIP}'`
+- Update vhost upstream with actual ClusterIP
+- Smoke-test: `curl -I https://grafana.stats-staging.solid-stats.ru/`
+- **Dependency:** Step 4 must have applied Grafana Service (ClusterIP exists); Step 2 DNS must be live
+
+### Step 6: Loki + Alloy
+- Render Loki (SingleBinary mode, 7-day retention, 5Gi PVC)
+- Render Alloy DaemonSet (pod log collection → push to Loki)
+- Apply via obs CI workflow
+- Add Loki datasource in Grafana
+- Verify: Explore → Loki → query shows recent logs from `solid-stats-staging`
+
+### Step 7: Exporters + dashboards
+- Write postgres-exporter Deployment (points to app postgres in solid-stats-staging, DSN from secret)
+- Write rabbitmq-exporter Deployment (points to rabbitmq management port)
+- Apply
+- Add Prometheus scrape configs for exporter endpoints (via ServiceMonitor or static scrape in values)
+- Verify: Prometheus targets show postgres-exporter + rabbitmq-exporter as UP
+- Import/configure Grafana dashboards: Kubernetes cluster, PostgreSQL, RabbitMQ
+
+### Step 8: GlitchTip stack
+- Write GlitchTip manifests (web Deployment, worker Deployment, glitchtip-postgres StatefulSet, glitchtip-redis Deployment, PVCs)
+- Apply via obs CI workflow
+- Look up GlitchTip ClusterIP, update errors vhost in `bootstrap-obs-edge.sh` (or update and re-run)
+- Smoke-test `https://errors.stats-staging.solid-stats.ru/`
+- Create GlitchTip project → copy DSN
+- Send deliberate test error to verify ingestion
+
+### Step 9: NetworkPolicies (LAST — after all connectivity verified)
+- Apply default-deny to `monitoring` namespace
+- Confirm Grafana datasources still green (if not, the allow rules are incomplete)
+- Apply default-deny to `error-tracking` namespace
+- Confirm GlitchTip still functional
+- Apply `allow-prometheus-scrape` NetworkPolicy to `solid-stats-staging`
+- Confirm Prometheus targets in solid-stats-staging still UP
+- **Why last:** Wrong policies silently break scraping; only apply once baseline is confirmed
+
+### Step 10: App SDK integration (separate app repo PRs, not this repo)
+- Add `SENTRY_DSN` env var to server-2, replay-parser-2, replays-fetcher
+- Errors-only SDK init (no traces, no performance monitoring)
+- Verify GlitchTip receives events from each workload
+
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata: { name: infra-deployer, namespace: solid-stats-staging }
-subjects: [{ kind: ServiceAccount, name: infra-deployer, namespace: solid-stats-staging }]
-roleRef: { kind: Role, name: infra-deployer, apiGroup: rbac.authorization.k8s.io }
-```
-Note: no `delete`, no `namespaces`, no cluster scope. The CI token comes from a
-manually-created `kubernetes.io/service-account-token` Secret bound to this SA
-(k3s/k8s ≥1.24 no longer auto-creates SA token Secrets), stored as
-`CD_K8S_SA_TOKEN`. (Confidence: HIGH)
 
-### Pattern 3: Restore drill as an isolated scratch-namespace Job (data flow change)
+## Anti-Patterns to Avoid
 
-**What:** Today the restore drill is a **manual runbook** (`docs/backup-restore.md`):
-operator `createdb` in the live `postgres-0` pod, `kubectl cp` a dump, `pg_restore`
-into `solid_stats_restore_drill`, then `dropdb`. v2 automates it as a **Job in a
-scratch namespace** that reads the dump **directly from S3** rather than touching
-the production pod.
+### Anti-Pattern 1: Extending ci-deployer to cover obs namespaces
 
-**When to use:** Independent of CD — can be built in parallel with everything
-once the CD foundation exists to apply it.
+**What:** Adding `monitoring` and `error-tracking` to the existing `ci-deployer` ClusterRole or adding new RoleBindings for `ci-deployer` in the new namespaces.
 
-**Trade-offs:** Running pg inside the Job (ephemeral `postgres:17-alpine`
-sidecar or initdb) keeps the live database untouched (the runbook's "do not
-restore over the active staging database" rule, now enforced structurally).
-Reuses the backup Job's exact S3 access pattern (path-style, `AWS_*` from the
-`server-2-runtime` Secret, `S3_ENDPOINT=https://s3.twcstorage.ru`,
-`AWS_EC2_METADATA_DISABLED=true`). Needs read of the latest `manifest.json` to
-resolve the newest `backups/postgres/<id>/solid_stats.dump`.
+**Why wrong:** Couples runtime and obs deploy paths. If the obs CI breaks or the ClusterRole gets too broad, it risks the runtime deploy. The independence guarantee requires separate SAs.
 
-**Data flow (new):**
-```
-S3 backups/postgres/<latest>/solid_stats.dump
-      │ aws s3 cp (path-style, creds from secret)
-      ▼
-restore-drill ns ── Job: ephemeral postgres ── pg_restore --list (gate)
-                                              └─ pg_restore into scratch db
-                                              └─ smoke: select current_database()
-      ▼ assert exit 0, then namespace torn down (ttlSecondsAfterFinished)
-```
-(Confidence: HIGH — mirrors existing backup Job and runbook.)
+**Instead:** Create `obs-ci-deployer` SA in `monitoring` with its own Roles in both obs namespaces.
 
-### Pattern 4: `web` runtime wiring + edge routing (cutover question)
+### Anti-Pattern 2: Applying default-deny NetworkPolicy before verifying connectivity
 
-**What:** `web` slots into `k8s/staging/` between `replay-parser-2` (40) and
-`replays-fetcher` (50) as `45-web-config.yaml` (ConfigMap+Service) and
-`46-web-deployment.yaml`, mirroring the server-2 30/35 split. Its Service is
-then routed by the **host nginx edge**, exactly as `server-2` is today.
+**What:** Adding `default-deny-all` to `solid-stats-staging` or `monitoring` as part of the initial obs deploy, before confirming Prometheus scraping works.
 
-**Cutover decision — host-nginx vs k8s ingress/cert-manager:**
-The current edge is host-level nginx → server-2 Service, with **no ingress and
-no cert-manager** (PROJECT.md and staging.md both state this explicitly). For
-v2, **keep host-nginx and automate it** (feature 3: repo-managed vhosts + cert
-renewal + ufw). Reasons: (1) single-node k3s with an already-working host edge —
-introducing ingress-nginx + cert-manager is net-new operational surface for no
-traffic-scaling benefit; (2) the milestone scopes "edge automation: host nginx,
-cert renewal, firewall," not an ingress migration; (3) production cutover here
-means *pointing the host nginx vhost at the new runtime Service(s) and flipping
-DNS/traffic*, not adopting a new ingress stack. **Verdict: host-nginx, automated;
-do not adopt ingress/cert-manager in v2.** (Confidence: HIGH — directly from
-PROJECT scope.)
+**Why wrong:** Prometheus targets go DOWN silently. The namespace is isolated, but the operator doesn't notice until checking target health — and debugging iptables rules under kube-router is non-trivial.
 
-## Data Flow
+**Instead:** Verify all scrape targets are UP, then add NetworkPolicies in the order specified in Step 9 above, confirming after each apply.
 
-### Deploy flow change
+### Anti-Pattern 3: Using NodePort for Grafana/GlitchTip Services
 
-```
-v1:  CI ──ssh──► VPS: kubectl create ns; scp secrets; kubectl apply *.yaml
-v2:  CI ──WG──► API 10.8.0.1:6443 (as infra-deployer SA):
-        render-staging-secrets.py | kubectl apply -f -        (secrets)
-        kubectl apply -f k8s/staging/  (ns assumed pre-seeded; SA can't create it)
-        kubectl rollout status …  (Role grants get on deploy/statefulset)
-```
+**What:** Setting service type to NodePort for the obs UI services so host nginx can reach them at `localhost:<nodePort>`.
 
-### Key Data Flows
+**Why wrong:** Adds a ufw rule for a high port on the public interface, or requires careful `in on lo` rules. ClusterIPs are already host-routable in k3s single-node — NodePort adds complexity for no benefit.
 
-1. **CD auth:** runner → WG tunnel → API with SA bearer token; TLS verified via
-   `10.8.0.1` SAN; authorization via namespaced Role.
-2. **Secrets:** unchanged render path (`render-staging-secrets.py`), but piped
-   to `kubectl apply -f -` locally on the runner instead of `scp` + remote apply.
-3. **Restore drill:** S3 → scratch-ns Job → ephemeral pg → assert. No path
-   through `postgres-0`.
-4. **S3 lifecycle:** applied once to the bucket; governs expiry of
-   `backups/postgres/`, raw replay, and artifact prefixes independently.
+**Instead:** ClusterIP Services + `proxy_pass http://<ClusterIP>:<port>` in host nginx.
 
-## Scaling Considerations
+### Anti-Pattern 4: Storing rendered manifests outside git
 
-| Scale | Architecture Adjustments |
-|-------|--------------------------|
-| current (single-node staging) | Host-nginx edge + single SA CD is sufficient; no ingress needed |
-| add production node/cluster | Reuse the same SA+RBAC + WG-in-CI pattern per environment dir (`k8s/prod/`); only then reconsider ingress/cert-manager |
-| multi-operator / token rotation | Move from stored SA token to short-lived `kubectl create token` minted by a bootstrap step, or OIDC |
+**What:** Rendering Helm charts in CI and applying them without committing the rendered output to git.
 
-### Scaling Priorities
+**Why wrong:** Breaks the `git as source of truth` invariant established in v2.0. There is no way to audit what was applied, and `kubectl diff` comparisons become impossible.
 
-1. **First concern:** SA token lifetime/rotation — a stored long-lived token is
-   the weakest link; plan rotation early.
-2. **Second concern:** WG key management in CI (one `/32` per runner identity);
-   reuse the existing peer-provisioning process from `wireguard-access.md`.
+**Instead:** Render locally, commit the output to `k8s/observability/`, and CI applies what is in git.
 
-## Anti-Patterns
+### Anti-Pattern 5: GlitchTip sharing the app PostgreSQL
 
-### Anti-Pattern 1: Granting the CD SA cluster-admin or `namespaces:create`
+**What:** Pointing GlitchTip at the existing app `postgres` StatefulSet.
 
-**What people do:** Bind the CI SA to `cluster-admin` so `kubectl create
-namespace` keeps working.
-**Why it's wrong:** Defeats the entire least-privilege point of moving off SSH;
-a leaked CI token becomes cluster takeover.
-**Do this instead:** Bootstrap `00`+`05` once as an operator; scope the SA to a
-namespaced Role (Pattern 2, option A+C).
+**Why wrong:** Error events from a GlitchTip write surge could exhaust connections or disk on the app database. GlitchTip schema lives alongside app schema — restoring the app database from backup also restores GlitchTip state (confusing). The plan explicitly requires separate GlitchTip postgres.
 
-### Anti-Pattern 2: Putting the restore-drill manifest in `k8s/staging/`
+**Instead:** Dedicated `glitchtip-postgres` StatefulSet in `error-tracking` namespace.
 
-**What people do:** Drop `restore-job.yaml` into `k8s/staging/` so it deploys
-with everything else.
-**Why it's wrong:** `deploy-staging.sh` globs `k8s/staging/*.yaml`; the drill
-would run on every deploy and its scratch namespace would be created in the
-deploy path the SA isn't scoped for.
-**Do this instead:** Separate `k8s/restore-drill/` directory + its own script;
-keep it out of the deploy glob.
+---
 
-### Anti-Pattern 3: Migrating to ingress/cert-manager during cutover
+## Integration Points Summary
 
-**What people do:** Treat "production cutover" as a reason to adopt
-ingress-nginx + cert-manager.
-**Why it's wrong:** Adds two new controllers and a cert-issuance dependency to a
-single-node edge that already works; out of milestone scope.
-**Do this instead:** Automate the existing host nginx (vhost templates, cert
-renewal, ufw) and cut over by repointing the vhost/DNS.
+| Point | From | To | New/Modified |
+|-------|------|----|--------------|
+| Host nginx proxy | VPS host | Grafana ClusterIP:3000 | New vhost |
+| Host nginx proxy | VPS host | GlitchTip ClusterIP:8000 | New vhost |
+| Prometheus scrape | monitoring | solid-stats-staging pods /metrics | New cross-NS scrape |
+| Prometheus scrape | monitoring | postgres-exporter:9187 | New exporter |
+| Prometheus scrape | monitoring | rabbitmq-exporter:9419 | New exporter |
+| Alloy log tail | monitoring (DaemonSet) | All pod logs on host | New DaemonSet |
+| Alloy push | monitoring | Loki:3100 | New internal flow |
+| Grafana query | monitoring | Prometheus:9090 | New datasource |
+| Grafana query | monitoring | Loki:3100 | New datasource |
+| SDK error POST | solid-stats-staging apps | GlitchTip:8000 (cross-NS) | App repo PRs |
+| GlitchTip → DB | error-tracking | glitchtip-postgres:5432 | New internal flow |
+| GlitchTip → cache | error-tracking | glitchtip-redis:6379 | New internal flow |
+| certbot | VPS host | LE ACME for 2 new domains | New cert lineages |
+| CI deploy | GitHub Actions | monitoring + error-tracking | New workflow + SA |
 
-### Anti-Pattern 4: Forgetting `validate-staging.py` is a gate
-
-**What people do:** Add `05-ci-rbac.yaml` / `45-web-*.yaml` but not update
-`EXPECTED_MANIFESTS` (and `EXPECTED_WORKLOADS`/`APP_IMAGES` for `web`).
-**Why it's wrong:** The `validate` job hard-codes the expected manifest list
-(scripts/validate-staging.py lines 17–60); new files either fail validation or
-go unchecked.
-**Do this instead:** Update the validator alongside every new manifest.
-
-## Integration Points
-
-### External Services
-
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| k3s API `10.8.0.1:6443` | WG tunnel + SA bearer token kubeconfig | SAN already includes `10.8.0.1`; API closed publicly |
-| Timeweb S3 `s3.twcstorage.ru` | path-style aws-cli, creds from `server-2-runtime` Secret | reused by backup Job and restore-drill Job; lifecycle rules applied at bucket level |
-| GHCR | `ghcr-pull` dockerconfigjson Secret | unchanged; `web` Deployment reuses it |
-| Let's Encrypt / ACME (edge) | host certbot/acme.sh renewal + nginx reload | **new**, out-of-cluster |
-
-### Internal Boundaries
-
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| CI ↔ cluster | WG + RBAC-scoped SA | replaces SSH; namespace pre-seeded by operator |
-| host nginx ↔ k8s Services | proxy_pass to NodePort/ClusterIP of server-2 (+ web) | cutover = repoint vhost |
-| deploy path ↔ restore drill | none (separate ns, separate script) | drill independent of CD |
-| operator bootstrap ↔ CI SA | operator applies `00`+`05`, CI applies `>=10` | resolves namespace-create chicken-and-egg |
-
-## Suggested Build Order (dependency-aware, across the 6 areas)
-
-| Order | Area | Depends on | Why here |
-|-------|------|-----------|----------|
-| **1** | **kubectl-native CD** (WG-in-CI, `05-ci-rbac.yaml`, SA token, rewrite deploy script, drop SSH) | operator bootstrap of `00`+`05` | Settled foundation; everything else deploys *through* it. Resolve namespace-create boundary here (operator seeds ns+RBAC once). |
-| **2** | **Restore drill** (`k8s/restore-drill/`, `restore-drill.sh`) | CD (1) to apply it; existing backups in S3 | Independent of edge/web/cutover; high recovery value; can run in parallel with 3 once CD lands. |
-| **3** | **`web` runtime wiring** (`45/46-web-*.yaml`, validator update) | CD (1) | Manifests + image pin; no traffic yet. Orderable with 2 and 4. |
-| **4** | **Edge automation** (`edge/` nginx + cert renewal + ufw) | none on CD; needs `web` Service to route it | Prereq for cutover; can start beside 3. |
-| **5** | **S3 lifecycle** (`s3/` policy) | none (touches bucket only) | Fully independent; schedule anytime, but after restore drill confirms retention assumptions are safe. |
-| **6** | **Production cutover** | 1–5 (esp. web=3, edge=4) | Last: repoint host-nginx/DNS to the new runtime once CD, web, edge, and recovery confidence exist. |
-
-**Critical-path note:** 1 → (2,3,4,5 in parallel) → 6. The only hard ordering
-is CD first and cutover last; the restore drill, web, edge, and S3 lifecycle are
-otherwise independent and can be sequenced by capacity.
+---
 
 ## Sources
 
-- Repo files: `.planning/PROJECT.md`, `docs/staging.md`, `docs/wireguard-access.md`,
-  `docs/backup-restore.md`, `.github/workflows/deploy-staging.yml`,
-  `scripts/deploy-staging.sh`, `scripts/render-staging-secrets.py`,
-  `scripts/validate-staging.py`, `k8s/staging/*.yaml` (HIGH confidence, primary source)
-- `.agents/skills/kubernetes-specialist/SKILL.md` — RBAC least-privilege baseline
-- Standard Kubernetes behavior: Namespace is cluster-scoped (a namespaced Role
-  cannot grant namespace create); SA token Secrets are no longer auto-created
-  since k8s 1.24 (must be created explicitly or minted via `kubectl create token`)
+- [k3s Networking Services docs — embedded netpol controller confirmed](https://docs.k3s.io/networking/networking-services)
+- [SUSE k3s Network Policy blog — kube-router in firewall-only mode](https://www.suse.com/c/rancher_blog/k3s-network-policy/)
+- [GlitchTip Helm chart (GitLab)](https://gitlab.com/glitchtip/glitchtip-helm-chart)
+- [kube-prometheus-stack Helm chart](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)
+- Existing codebase: `k8s/staging/01-ci-rbac.yaml`, `scripts/bootstrap-edge.sh`, `config/nginx/sites-available/stats-staging-solid-stats.conf`, `.github/workflows/deploy-staging.yml`
+- Milestone context: `.planning/PROJECT.md`, `plans/infrastructure/briefs/observability-plan.md`
 
 ---
-*Architecture research for: k3s-on-VPS infrastructure CD, v2.0 production-readiness*
-*Researched: 2026-06-11*
+*Architecture research for: v3.0 Staging Observability Stack integration*
+*Researched: 2026-06-13*
