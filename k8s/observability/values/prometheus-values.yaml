@@ -130,3 +130,19 @@ scrapeConfigs:
     static_configs:
       - targets:
           - rabbitmq.solid-stats-staging.svc:15692
+
+  # Loki metrics endpoint — fullnameOverride: loki → Service loki:3100 (15-01, LOG-01).
+  # Scrapes loki_boltdb_shipper_compactor_running, loki_compactor_apply_retention_operation_total.
+  loki:
+    enabled: true
+    static_configs:
+      - targets:
+          - loki.monitoring.svc:3100
+
+  # Alloy metrics endpoint — fullnameOverride: alloy → Service alloy:12345 (15-02, LOG-02).
+  # Scrapes loki_write_sent_entries_total (entries pushed from Alloy to Loki).
+  alloy:
+    enabled: true
+    static_configs:
+      - targets:
+          - alloy.monitoring.svc:12345

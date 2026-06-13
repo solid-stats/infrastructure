@@ -24,10 +24,18 @@ data:
       scrape_interval: 30s
       scrape_timeout: 10s
     scrape_configs:
+    - job_name: alloy
+      static_configs:
+      - targets:
+        - alloy.monitoring.svc:12345
     - job_name: kube-state-metrics
       static_configs:
       - targets:
         - kube-state-metrics.monitoring.svc:8080
+    - job_name: loki
+      static_configs:
+      - targets:
+        - loki.monitoring.svc:3100
     - job_name: node-exporter
       static_configs:
       - targets:
