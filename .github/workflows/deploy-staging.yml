@@ -67,8 +67,8 @@ jobs:
         run: |
           set -euo pipefail
           # Exclude 01-ci-rbac.yaml — operator-bootstrapped, not CI-managed
-          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '01-ci-rbac.yaml' | sort | \
-            xargs kubectl apply -n "$K8S_NAMESPACE" --dry-run=server -f
+          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '01-ci-rbac.yaml' | sort | sed 's/^/-f /' | \
+            xargs kubectl apply -n "$K8S_NAMESPACE" --dry-run=server
 
   deploy:
     name: Deploy to k3s
@@ -123,8 +123,8 @@ jobs:
         run: |
           set -euo pipefail
           # Exclude 01-ci-rbac.yaml — operator-bootstrapped, not CI-managed
-          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '01-ci-rbac.yaml' | sort | \
-            xargs kubectl apply -n "$K8S_NAMESPACE" -f
+          find k8s/staging -maxdepth 1 -name '*.yaml' ! -name '01-ci-rbac.yaml' | sort | sed 's/^/-f /' | \
+            xargs kubectl apply -n "$K8S_NAMESPACE"
 
       - name: Verify rollouts
         run: |
