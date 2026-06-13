@@ -1,0 +1,128 @@
+# k8s/observability/values/alloy-values.yaml
+# Rendered via: helm template alloy grafana/alloy --version 1.10.0 \
+#   --namespace monitoring --values k8s/observability/values/alloy-values.yaml \
+#   > k8s/observability/80-alloy.yaml
+#
+# Security: rbac.create:false — ClusterRole/ClusterRoleBinding are hand-authored
+# in k8s/staging/03-alloy-rbac.yaml (operator-applied bootstrap). obs-ci-deployer
+# is namespace-scoped and cannot create cluster-scoped resources (T-15-07, Pitfall 4).
+#
+# LOG-02: The River pipeline keeps ONLY 5 labels (namespace/pod/container/app/job).
+# All other pod metadata labels are dropped before loki.write — no request bodies,
+# no high-cardinality labels, no secret-bearing meta labels reach Loki.
+
+fullnameOverride: alloy   # Service named 'alloy'; scraped at alloy.monitoring.svc:12345
+
+controller:
+  type: daemonset
+  priorityClassName: obs-background
+
+alloy:
+  resources:
+    requests:
+      cpu: 30m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+  # Alloy HTTP server on port 12345 — used for Prometheus metrics scrape
+  listenPort: 12345
+  enableReporting: false
+
+  # Conservative log collection pipeline (LOG-02):
+  # - Discovers pods via k8s API (no hostPath required — Pitfall 8)
+  # - Drops monitoring namespace to prevent Alloy log self-loop (Pitfall 7, T-15-06)
+  # - Keeps ONLY 5 labels: namespace, pod, container, app, job
+  # - Drops all other meta-labels (no request bodies, no secrets — T-15-05)
+  # - Pushes to Loki at loki.monitoring.svc:3100
+  configMap:
+    content: |
+      // Discover all pods in the cluster via Kubernetes API
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      // Relabel: keep ONLY namespace/pod/container/app/job; drop everything else
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+
+        // Drop monitoring namespace — prevents Alloy log self-loop (T-15-06)
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          regex         = "monitoring"
+          action        = "drop"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          action        = "replace"
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          action        = "replace"
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          action        = "replace"
+          target_label  = "container"
+        }
+        // app label: prefer app.kubernetes.io/name, fallback to app label
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+          action        = "replace"
+          target_label  = "app"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app"]
+          regex         = "(.+)"
+          target_label  = "app"
+          action        = "replace"
+        }
+        // job = namespace/container (standard Loki convention)
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_name"]
+          separator     = "/"
+          target_label  = "job"
+          action        = "replace"
+        }
+      }
+
+      // Tail logs via Kubernetes API (no host filesystem mount needed — Pitfall 8)
+      loki.source.kubernetes "pod_logs" {
+        targets    = discovery.relabel.pod_logs.output
+        forward_to = [loki.process.drop_extra_labels.receiver]
+      }
+
+      // Drop any remaining labels not in the 5-key allowlist (LOG-02, T-15-05)
+      loki.process "drop_extra_labels" {
+        stage.label_keep {
+          values = ["namespace", "pod", "container", "app", "job"]
+        }
+        forward_to = [loki.write.loki.receiver]
+      }
+
+      // Write to Loki push API
+      loki.write "loki" {
+        endpoint {
+          url = "http://loki.monitoring.svc:3100/loki/api/v1/push"
+        }
+      }
+
+# rbac.create: false — ClusterRole extracted to k8s/staging/03-alloy-rbac.yaml.
+# obs-ci-deployer is namespace-scoped and cannot create ClusterRole (Pitfall 4).
+rbac:
+  create: false
+
+serviceAccount:
+  create: true
+
+service:
+  enabled: true
+  type: ClusterIP
+
+# No ingress, no extra volumes (loki.source.kubernetes does not need /var/log)
+ingress:
+  enabled: false
