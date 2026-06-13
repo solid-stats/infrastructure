@@ -1,0 +1,27 @@
+# node-exporter values for prometheus-community/prometheus-node-exporter chart v4.55.0
+# Rendered with: helm template node-exporter prometheus-community/prometheus-node-exporter \
+#   --version 4.55.0 --namespace monitoring \
+#   --values k8s/observability/values/node-exporter-values.yaml \
+#   > k8s/observability/30-node-exporter.yaml
+#
+# No secret values in this file.
+
+# Produce clean service name: node-exporter (matches scrapeConfig FQDN).
+fullnameOverride: node-exporter
+
+# Evictable before app-critical pods under node memory pressure.
+priorityClassName: obs-background
+
+# Resource budget per research sizing table.
+resources:
+  requests:
+    cpu: 10m
+    memory: 20Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi
+
+service:
+  type: ClusterIP
+  port: 9100
+  targetPort: 9100

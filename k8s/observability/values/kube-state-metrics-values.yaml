@@ -1,0 +1,26 @@
+# kube-state-metrics values for prometheus-community/kube-state-metrics chart v7.4.1
+# Rendered with: helm template kube-state-metrics prometheus-community/kube-state-metrics \
+#   --version 7.4.1 --namespace monitoring \
+#   --values k8s/observability/values/kube-state-metrics-values.yaml \
+#   > k8s/observability/20-kube-state-metrics.yaml
+#
+# No secret values in this file.
+
+# Produce clean service name: kube-state-metrics (matches scrapeConfig FQDN).
+fullnameOverride: kube-state-metrics
+
+# Evictable before app-critical pods under node memory pressure.
+priorityClassName: obs-background
+
+# Resource budget per research sizing table.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+service:
+  type: ClusterIP
+  port: 8080

@@ -1,0 +1,38 @@
+# postgres-exporter values for prometheus-community/prometheus-postgres-exporter chart v8.0.0
+# App version: v0.19.1 (≥ v0.15.0 required by MET-03; pg_monitor role supported)
+# Rendered with: helm template postgres-exporter prometheus-community/prometheus-postgres-exporter \
+#   --version 8.0.0 --namespace monitoring \
+#   --values k8s/observability/values/postgres-exporter-values.yaml \
+#   > k8s/observability/40-postgres-exporter.yaml
+#
+# No secret values in this file (T-13-04 / T-13-06 mitigation).
+# DSN is loaded from postgres-monitor-secret at runtime — never inline.
+
+# Produce clean service name: postgres-exporter (matches scrapeConfig FQDN).
+fullnameOverride: postgres-exporter
+
+# Evictable before app-critical pods under node memory pressure.
+priorityClassName: obs-background
+
+# Resource budget per research sizing table.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 50m
+    memory: 64Mi
+
+config:
+  # Use existingSecret so no DSN value appears in git (T-13-04 mitigation).
+  # postgres-monitor-secret is rendered by scripts/render-obs-secrets.py from
+  # PG_MONITOR_PASSWORD GitHub secret; DSN uses pg_monitor (non-superuser) role.
+  # Secret key: dsn — contains the full connection string.
+  datasourceSecret:
+    name: postgres-monitor-secret
+    key: dsn
+
+service:
+  type: ClusterIP
+  port: 9187
+  targetPort: 9187

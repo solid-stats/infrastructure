@@ -1,0 +1,107 @@
+# Prometheus server values for prometheus-community/prometheus chart v29.11.0
+# Rendered with: helm template prometheus prometheus-community/prometheus \
+#   --version 29.11.0 --namespace monitoring \
+#   --values k8s/observability/values/prometheus-values.yaml \
+#   > k8s/observability/10-prometheus.yaml
+#
+# No secret values in this file (T-13-06 / validate-obs-manifests.py gate).
+
+# Disable sub-charts — deployed separately for tighter control.
+alertmanager:
+  enabled: false
+
+kube-state-metrics:
+  enabled: false
+
+prometheus-node-exporter:
+  enabled: false
+
+pushgateway:
+  enabled: false
+
+# Use the pre-created prometheus SA (ClusterRole defined in 01-obs-rbac.yaml,
+# operator-applied; obs-ci-deployer cannot create ClusterRole).
+# A8: server.serviceAccount.create=false / server.serviceAccount.name=prometheus
+serviceAccounts:
+  server:
+    create: false
+    name: prometheus
+
+server:
+  # Retention: 15d time-based + 5GB size-based safety cap (MET-01).
+  retention: "15d"
+  retentionSize: "5GB"
+
+  # PVC: 8Gi on k3s default local-path StorageClass.
+  # With ~50k series at 30s scrape → ~4.3 GB; 8Gi leaves ~3.7 GB slack.
+  persistentVolume:
+    enabled: true
+    size: 8Gi
+    storageClass: ""  # use cluster default (local-path on k3s)
+
+  # Evictable before app-critical pods under node memory pressure (Phase 12 constraint).
+  priorityClassName: obs-background
+
+  # Resource budget (Phase 12: ~2.5Gi available; obs total request ≤ 1.5Gi).
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Run as nobody (65534) — non-root.
+  securityContext:
+    runAsUser: 65534
+    runAsNonRoot: true
+    runAsGroup: 65534
+    fsGroup: 65534
+
+  service:
+    type: ClusterIP
+    servicePort: 80
+    targetPort: 9090
+
+  # Override to produce a clean Service name: prometheus-server
+  # (matches FQDN used by Grafana datasource provisioning).
+  fullnameOverride: ""
+
+# Global scrape interval: 30s (sufficient for all 4 targets; see A9).
+serverFiles:
+  prometheus.yml:
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+
+    scrape_configs:
+      # Prometheus self-scrape (always keep).
+      - job_name: prometheus
+        static_configs:
+          - targets:
+              - localhost:9090
+
+      # kube-state-metrics — static ClusterIP (MET-02).
+      - job_name: kube-state-metrics
+        static_configs:
+          - targets:
+              - kube-state-metrics.monitoring.svc:8080
+
+      # node-exporter — static ClusterIP (MET-02).
+      - job_name: node-exporter
+        static_configs:
+          - targets:
+              - node-exporter.monitoring.svc:9100
+
+      # postgres-exporter — static ClusterIP (MET-03).
+      - job_name: postgres-exporter
+        static_configs:
+          - targets:
+              - postgres-exporter.monitoring.svc:9187
+
+      # RabbitMQ native prometheus plugin — cross-namespace FQDN (MET-04).
+      # Phase 17 NetworkPolicy will add the explicit allow-prometheus-scrape rule.
+      - job_name: rabbitmq
+        static_configs:
+          - targets:
+              - rabbitmq.solid-stats-staging.svc:15692
