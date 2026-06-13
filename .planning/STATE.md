@@ -4,12 +4,12 @@ milestone: v3.0
 milestone_name: Staging Observability Stack
 status: executing
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-13T18:36:11.897Z"
-last_activity: 2026-06-13 -- Phase 12 marked complete
+last_updated: "2026-06-13T18:42:22.797Z"
+last_activity: 2026-06-13 -- Phase 13 execution started
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 5
+  total_plans: 11
   completed_plans: 5
   percent: 14
 ---
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 12 — Resource Protection & Obs Foundation
+**Current focus:** Phase 13 — Deploy Pipeline & Metrics Stack
 
 ## Current Position
 
-Phase: 12 — COMPLETE
-Plan: 4 of 5
-Status: Ready to execute
-Last activity: 2026-06-13 -- Phase 12 marked complete
+Phase: 13 (Deploy Pipeline & Metrics Stack) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 13
+Last activity: 2026-06-13 -- Phase 13 execution started
 
 Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 
