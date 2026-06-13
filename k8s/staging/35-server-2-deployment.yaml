@@ -26,6 +26,7 @@ spec:
         app.kubernetes.io/name: server-2
         app.kubernetes.io/part-of: solid-stats
     spec:
+      priorityClassName: app-critical  # PREP-03: evict after obs-background under node pressure
       serviceAccountName: server-2
       automountServiceAccountToken: false
       imagePullSecrets:
@@ -38,6 +39,14 @@ spec:
             - sh
             - -c
             - until nc -z postgres 5432; do sleep 2; done
+          resources:
+            # PREP-04: initContainers must have requests==limits for Guaranteed QoS pod class.
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 10m
+              memory: 16Mi
         - name: wait-for-rabbitmq
           image: busybox:1.37
           imagePullPolicy: IfNotPresent
@@ -45,6 +54,14 @@ spec:
             - sh
             - -c
             - until nc -z rabbitmq 5672; do sleep 2; done
+          resources:
+            # PREP-04: initContainers must have requests==limits for Guaranteed QoS pod class.
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 10m
+              memory: 16Mi
       containers:
         - name: server-2
           image: ghcr.io/solid-stats/server-2:3866f6b422c506a429e12658aaaedb0dd5c16b8e
@@ -70,12 +87,16 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 20
           resources:
+            # PREP-04: Guaranteed QoS — requests == limits on all containers.
+            # ASSUMED values (A2 from 12-RESEARCH.md) — Plan 05 MUST confirm against
+            # live `kubectl top pods` P95 before rollout. Limits MUST be >= P95 to
+            # avoid CFS throttle (Pitfall 1) or OOM.
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 250m    # raised from 100m; ASSUMED — verify vs live P95
+              memory: 512Mi  # raised from 256Mi; ASSUMED — verify vs live P95
             limits:
-              cpu: "1"
-              memory: 1Gi
+              cpu: 250m    # lowered from "1"; ASSUMED — MUST be >= observed P95
+              memory: 512Mi  # lowered from 1Gi; ASSUMED — MUST be >= observed P95
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

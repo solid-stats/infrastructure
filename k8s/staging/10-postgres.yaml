@@ -43,6 +43,7 @@ spec:
         app.kubernetes.io/name: postgres
         app.kubernetes.io/part-of: solid-stats
     spec:
+      priorityClassName: app-critical  # PREP-03: evict after obs-background under node pressure
       serviceAccountName: postgres
       automountServiceAccountToken: false
       containers:
@@ -73,12 +74,16 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 20
           resources:
+            # PREP-04: Guaranteed QoS — requests == limits on all containers.
+            # ASSUMED values (A1 from 12-RESEARCH.md) — Plan 05 MUST confirm against
+            # live `kubectl top pods` P95 before rollout. Limits MUST be >= P95 to
+            # avoid CFS throttle (Pitfall 1) or OOM (Pitfall 1/3).
             requests:
-              cpu: 250m
-              memory: 512Mi
+              cpu: 500m    # raised from 250m; ASSUMED — verify vs live P95
+              memory: 1Gi  # raised from 512Mi; ASSUMED — verify vs live P95
             limits:
-              cpu: "1"
-              memory: 2Gi
+              cpu: 500m    # lowered from "1"; ASSUMED — MUST be >= observed P95
+              memory: 1Gi  # lowered from 2Gi; ASSUMED — MUST be >= observed P95
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
