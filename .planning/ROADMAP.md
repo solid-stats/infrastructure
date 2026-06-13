@@ -189,11 +189,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. `monitoring` and `error-tracking` namespaces exist, each with a non-default ServiceAccount and least-privilege RBAC (`obs-ci-deployer`), kept separate from the runtime `ci-deployer`.
 
 **Plans**: 5 plans
-
 Plans:
+**Wave 1**
+
 - [ ] 12-01-PLAN.md — Validation harness: resource-preflight.sh + validate-phase-12.sh + validate-staging.py registration (PREP-01) [wave 1]
 - [ ] 12-02-PLAN.md — Bootstrap manifests: 01-obs-rbac.yaml (ns + obs-ci-deployer RBAC) + 02-priority-classes.yaml + CI glob exclusion (PREP-03, PREP-05) [wave 1]
 - [ ] 12-03-PLAN.md — Workload patches: priorityClassName app-critical on all 6 + Guaranteed QoS on postgres/server-2 (PREP-03, PREP-04) [wave 1]
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 12-04-PLAN.md — Host swap + kubelet NoSwap drop-in over SSH + docs/resource-protection.md (PREP-02) [wave 2, operator-gated]
 - [ ] 12-05-PLAN.md — Live apply: preflight sizing + bootstrap apply + QoS rollout + validate-phase-12.sh (PREP-01/03/04/05) [wave 2, operator-gated]
 
