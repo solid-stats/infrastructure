@@ -15,7 +15,7 @@ project owns how those images are composed into a reliable Solid Stats runtime.
 Staging must be reproducible, backed up, and safe to run end-to-end before it is
 used to produce or compare new statistics.
 
-## Current Milestone: v2.0 — Production-Ready Infra & kubectl-native CD
+## Shipped Milestone: v2.0 — Production-Ready Infra & kubectl-native CD (✅ 2026-06-13)
 
 **Goal:** Deploy staging with direct `kubectl` from CI over WireGuard (no SSH),
 make git the source of truth for what ships, and close the remaining
@@ -43,8 +43,17 @@ automated restore drill, the `web` runtime, and a controlled production cutover.
   current repository state
 - ✓ Initial operational runbooks exist for staging and backup/restore — current
   repository state
+- ✓ kubectl-native CD over WireGuard (scoped ServiceAccount, SSH/scp removed) — v2.0 (live-verified end-to-end on real runners)
+- ✓ Edge automation: host nginx/certbot/ufw via idempotent adopt-reconcile bootstrap + reversible teardown — v2.0 (live-verified)
+- ✓ Automated PostgreSQL restore drill in an ephemeral scratch DB — v2.0 (live-verified, PASS on cluster)
+- ✓ `web` runtime slot wired into runtime + CD path — v2.0
+- ✓ S3 lifecycle: 30-day retention on `backups/postgres/` + abort-multipart — v2.0 (applied live; Timeweb lifecycle API empirically proven)
+- ✓ Production cutover mechanism: 4-gate reversible nginx-upstream switch — v2.0 (mechanism live-verified; live prod flip deferred by scope)
 
 ### Active
+
+_v1/v2 items below are SHIPPED; Active requirements are re-scoped at the next milestone via `/gsd-new-milestone`._
+
 
 - [ ] Make `infrastructure` the deploy source of truth for staging shared
   resources and app runtime wiring.
@@ -135,28 +144,37 @@ exceptions for any workload that must run outside those defaults.
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| v1 is staging-first | Staging must be stable before full ingest or production traffic decisions | — Pending |
-| Move app deploy ownership gradually | Existing app CD works and should not be broken before infra CD is proven | — Pending |
-| Backup gate is manual backup plus `pg_restore --list` before full-run | Gives a concrete recovery point without blocking on a full restore drill | — Pending |
-| `replays-fetcher` remains suspended initially | Prevents uncontrolled S3/database writes before backup confidence exists | — Pending |
-| Infra repo owns shared runtime wiring | Backups, namespace, storage, and cross-app wiring do not belong to one app repo | — Pending |
-| `kubernetes-specialist` is the infra planning baseline | Kubernetes work needs security, networking, workload, and storage guardrails from the local skill | — Pending |
+| v1/v2 are staging-first; production cutover deferred | Staging must be reproducible/backed-up/recoverable before any prod traffic decision | ✓ Good — held through v2.0; cutover mechanism built but flip deferred by scope |
+| Move app deploy ownership gradually | Existing app CD works and should not be broken before infra CD is proven | ✓ Good — v2.0 shipped kubectl-native infra CD, app repos still build images |
+| Backup gate is manual backup plus `pg_restore --list` before full-run | Gives a concrete recovery point without blocking on a full restore drill | ✓ Good — extended in v2.0 by an automated restore drill (live PASS) |
+| `replays-fetcher` remains suspended initially | Prevents uncontrolled S3/database writes before backup confidence exists | ✓ Good — still suspended |
+| Infra repo owns shared runtime wiring | Backups, namespace, storage, and cross-app wiring do not belong to one app repo | ✓ Good |
+| `kubernetes-specialist` is the infra planning baseline | Kubernetes work needs security/networking/workload/storage guardrails | ✓ Good |
+| kubectl-native CD over WireGuard (not SSH/scp) | A scoped SA + closed k3s API is safer + git-as-source-of-truth than SSH deploy | ✓ Good (v2.0) — live-verified; surfaced 6 latent script bugs only a real run could catch |
+| Cutover lever IS the nginx upstream; edge + restore drill land before cutover | Production is never flipped without a proven-reversible lever + recoverability | ✓ Good (v2.0) — mechanism live-verified, reversible; flip deferred by scope |
+| Apply S3 retention to live backups after empirical Timeweb proof | Timeweb lifecycle parity was MEDIUM-confidence — prove GET/PUT/expiry before relying on it | ✓ Good (v2.0) — proven + applied; found `delete-bucket-lifecycle` is a no-op (replace-only) |
 
 ## Evolution
 
 ## Current State
 
-v1.0 is complete. Staging infrastructure can be deployed from this repository,
-the PostgreSQL backup gate has a verified backup point, app image/build
-ownership is separated from infra-owned staging wiring, a controlled full-run
-command is available behind the backup gate, and diff readiness keeps
-production cutover blocked pending review.
+v2.0 is shipped (2026-06-13). Staging deploys via kubectl-native CD over a
+WireGuard tunnel (SSH/scp removed, git as source of truth), with edge automation,
+an automated restore drill, the `web` runtime slot, applied 30-day S3 retention,
+and a live-verified reversible production-cutover mechanism. CD and the
+edge/restore/retention paths were all exercised live on the staging cluster/VPS
+(6 latent CD bugs surfaced and fixed only because the path was finally run for
+real). The one production-readiness item left by design is the actual production
+traffic flip — deferred by scope (AGENTS.md). v2.x follow-ups are tracked in
+STATE.md "Deferred Items".
 
 ## Next Milestone Goals
 
-- Decide whether to execute the controlled full run now or keep it operator-run.
-- Use full-run evidence to drive old-vs-new statistics comparison.
-- Plan production/edge work only after diff review is clean enough.
+- Production traffic cutover (when production enters scope): run the green-diff
+  full-run, review the diff, then the gated reversible flip via scripts/cutover.sh.
+- Clear v2.x follow-ups: Phase 6 doc-drift cleanup; the clean-bucket aws-cli guard
+  fix; deferred S3-04 / CD-10 / DRILL-05 / CUT-05 enhancements.
+- Drive old-vs-new statistics comparison off controlled full-run evidence.
 
 This document evolves at phase transitions and milestone boundaries.
 
@@ -174,4 +192,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state.
 
 ---
-*Last updated: 2026-06-11 — milestone v2.0 started*
+*Last updated: 2026-06-13 — milestone v2.0 shipped*
