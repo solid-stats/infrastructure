@@ -175,7 +175,7 @@ VHOST
 fi
 
 # ---------------------------------------------------------------------------
-echo "=== 4. TLS certificate (per-domain certbot certonly; never full-renew) ==="
+echo "=== 4. TLS certificate (per-domain certbot certonly -d; never certbot renew for new issuance) ==="
 
 CERT_INSTALLED=0
 
