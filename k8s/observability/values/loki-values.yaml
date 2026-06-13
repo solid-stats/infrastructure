@@ -1,0 +1,114 @@
+# k8s/observability/values/loki-values.yaml
+# Rendered via: helm template loki grafana/loki --version 7.0.0 \
+#   --namespace monitoring --values k8s/observability/values/loki-values.yaml \
+#   > k8s/observability/70-loki.yaml
+#
+# Key constraints:
+#   - deploymentMode: SingleBinary (NOT the chart default which is SimpleScalable)
+#   - replication_factor: 1 (REQUIRED — writes fail with quorum errors otherwise)
+#   - index.period: 24h + TSDB store + schema v13 (REQUIRED for retention to work)
+#   - filesystem storage on 10Gi PVC (local-path, k3s default)
+#   - compactor retention_enabled + retention_period 168h (~7-day retention, LOG-01)
+#   - fullnameOverride: loki → Service named 'loki'; push URL: loki.monitoring.svc:3100
+#   - priorityClassName: obs-background (evictable before app pods)
+#   - Tight resources: request 128Mi/50m, limit 256Mi/200m
+#   - All microservice replicas set to 0 (belt-and-suspenders against mode mis-detection)
+#   - PVC whenScaled/whenDeleted: Retain (data safety on accidental scale-down)
+#
+# No secret values in this file (validate-obs-manifests.py gate).
+
+fullnameOverride: loki   # Service named 'loki'; URL: loki.monitoring.svc:3100
+
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false
+
+  commonConfig:
+    replication_factor: 1   # REQUIRED for single replica — writes fail without this
+    path_prefix: /var/loki
+
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h   # REQUIRED for compactor retention to work (Pitfall 5)
+
+  storage:
+    type: filesystem
+    filesystem:
+      chunks_directory: /var/loki/chunks
+      rules_directory:  /var/loki/rules
+
+  compactor:
+    working_directory: /var/loki/retention
+    retention_enabled: true
+    retention_delete_delay: 2h
+    retention_delete_worker_count: 150
+    delete_request_store: filesystem
+
+  limits_config:
+    retention_period: 168h   # 7 days (LOG-01)
+
+singleBinary:
+  replicas: 1
+  image:
+    tag: "3.6.11"   # pin to latest patch; chart appVersion is 3.6.7
+  priorityClassName: obs-background
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: ""   # k3s local-path default
+    whenScaled: Retain     # prevent data loss on accidental scale-down (Pitfall 9)
+    whenDeleted: Retain
+
+# Disable all microservice replicas (chart default mode is SimpleScalable — must override)
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+ingester:
+  replicas: 0
+querier:
+  replicas: 0
+queryFrontend:
+  replicas: 0
+queryScheduler:
+  replicas: 0
+distributor:
+  replicas: 0
+compactor:
+  replicas: 0
+indexGateway:
+  replicas: 0
+bloomCompactor:
+  replicas: 0
+bloomGateway:
+  replicas: 0
+
+# Disable gateway (nginx proxy — not needed for internal ClusterIP access)
+gateway:
+  enabled: false
+
+# Disable self-monitoring (adds overhead; Prometheus scrapes loki:3100/metrics instead)
+monitoring:
+  selfMonitoring:
+    enabled: false
+  lokiCanary:
+    enabled: false
+
+test:
+  enabled: false
