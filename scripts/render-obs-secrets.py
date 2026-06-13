@@ -59,10 +59,14 @@ grafana_secret = secret(
 
 # postgres-exporter DSN Secret — consumed by DATA_SOURCE_NAME env var in postgres-exporter.
 # Uses the pg_monitor built-in non-superuser role (available since PostgreSQL 10).
+# sslmode=prefer: negotiate TLS opportunistically (use it if the server offers it), instead of
+# hard-disabling it. The staging postgres does not currently serve TLS, so `require`/`verify-full`
+# would break the exporter; enforcing them is a follow-up gated on configuring postgres server-side
+# TLS. Traffic is intra-cluster pod-to-pod and gets default-deny NetworkPolicy isolation in Phase 17.
 pg_dsn = (
     "postgresql://solid_monitor:"
     + quote(pg_monitor_password, safe="")
-    + "@postgres.solid-stats-staging.svc:5432/solid_stats?sslmode=disable"
+    + "@postgres.solid-stats-staging.svc:5432/solid_stats?sslmode=prefer"
 )
 pg_secret = secret(
     "postgres-monitor-secret",
