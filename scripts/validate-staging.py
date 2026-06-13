@@ -206,6 +206,8 @@ def validate_scripts() -> None:
         "scripts/restore-drill.sh",
         "scripts/apply-s3-lifecycle.sh",
         "scripts/cutover.sh",
+        "scripts/resource-preflight.sh",
+        "scripts/validate-phase-12.sh",
     ]:
         result = run(["bash", "-n", script])
         require(result.returncode == 0, f"{script} failed bash syntax check: {result.stderr.strip()}")
