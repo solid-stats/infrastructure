@@ -82,8 +82,12 @@ jobs:
           # Apply top-level k8s/observability/*.yaml only.
           # values/ and dashboards/ are inputs to helm template; they are not applied directly.
           # 60-grafana-dashboards.yaml ships dashboard ConfigMaps (vendored JSONs).
+          # --server-side: the node-exporter/rabbitmq dashboard JSONs exceed the 256KB
+          # last-applied-configuration annotation that client-side apply writes; server-side
+          # apply stores no such annotation. --force-conflicts claims field ownership
+          # idempotently across re-runs.
           find k8s/observability -maxdepth 1 -name '*.yaml' | sort \
-            | sed 's/^/-f /' | xargs kubectl apply -n monitoring
+            | sed 's/^/-f /' | xargs kubectl apply --server-side --force-conflicts -n monitoring
 
       - name: Verify rollouts
         run: |

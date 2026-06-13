@@ -52,6 +52,11 @@ service:
   port: 80
   targetPort: 3000
 
+# No helm test hooks in the rendered manifest — `helm test` resources (grafana-test
+# Pod/ServiceAccount/ConfigMap) have no place in a render-then-apply deploy.
+testFramework:
+  enabled: false
+
 # Sidecar — auto-discovers dashboard ConfigMaps labelled grafana_dashboard=1 (MET-06).
 sidecar:
   dashboards:
