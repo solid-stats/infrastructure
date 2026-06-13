@@ -23,8 +23,8 @@ a trimmed, single-replica footprint (no VPS resize).
 - [x] **MET-02**: kube-state-metrics and node-exporter run and are scraped (cluster + host metrics).
 - [x] **MET-03**: postgres-exporter (app ≥ v0.15.0, non-superuser `pg_monitor` role) exposes PostgreSQL metrics to Prometheus.
 - [ ] **MET-04**: RabbitMQ metrics are scraped via the native `rabbitmq_prometheus` plugin (port 15692) — no separate exporter.
-- [ ] **MET-05**: Grafana runs with Prometheus provisioned as a healthy datasource (provisioned as code).
-- [ ] **MET-06**: Standard dashboards are provisioned as code (node-exporter, kube-state/cluster, PostgreSQL, RabbitMQ) and render live data.
+- [x] **MET-05**: Grafana runs with Prometheus provisioned as a healthy datasource (provisioned as code).
+- [x] **MET-06**: Standard dashboards are provisioned as code (node-exporter, kube-state/cluster, PostgreSQL, RabbitMQ) and render live data.
 - [ ] **MET-07**: Operator can reach Grafana at the public staging URL behind local-user auth.
 
 ### Logs (LOG)
@@ -112,8 +112,8 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 | MET-02 | Phase 13 | Complete |
 | MET-03 | Phase 13 | Complete |
 | MET-04 | Phase 13 | Pending |
-| MET-05 | Phase 13 | Pending |
-| MET-06 | Phase 13 | Pending |
+| MET-05 | Phase 13 | Complete |
+| MET-06 | Phase 13 | Complete |
 | EDGE-01 | Phase 14 | Pending |
 | EDGE-02 | Phase 14 | Pending |
 | EDGE-03 | Phase 14 | Pending |

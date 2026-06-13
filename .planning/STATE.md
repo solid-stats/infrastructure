@@ -4,13 +4,13 @@ milestone: v3.0
 milestone_name: Staging Observability Stack
 status: executing
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-13T19:20:17.030Z"
+last_updated: "2026-06-13T19:39:41.354Z"
 last_activity: 2026-06-13 -- Phase 13 execution started
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 11
-  completed_plans: 7
+  completed_plans: 8
   percent: 14
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 13 (Deploy Pipeline & Metrics Stack) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-06-13 -- Phase 13 execution started
 
@@ -74,6 +74,7 @@ Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 | Phase 12 P03 | 273 | 3 tasks | 6 files |
 | Phase 13 P01 | 5 | 3 tasks | 3 files |
 | Phase 13-deploy-pipeline-metrics-stack P02 | 35 | 2 tasks | 8 files |
+| Phase 13-deploy-pipeline-metrics-stack P03 | 20 | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -114,6 +115,9 @@ Recent decisions affecting current work:
 - [Phase ?]: rbac.create=false: Prometheus ClusterRole deferred to 01-obs-rbac.yaml operator-applied bootstrap
 - [Phase ?]: scrapeConfigs static_configs for all 4 targets: avoids kubernetes_sd ClusterRole on single-node cluster
 - [Phase ?]: postgres-exporter DSN via config.datasourceSecret existingSecret (postgres-monitor-secret/dsn)
+- [Phase ?]: admin.existingSecret key correction (chart v10.5.15 nested key, not top-level adminExistingSecret)
+- [Phase ?]: fullnameOverride: grafana — stable Service name for port-forward in 13-06 validation
+- [Phase ?]: 4 dashboard ConfigMaps as separate YAML documents (Pitfall 8: one-per-JSON avoids 1 MiB k8s object limit)
 
 ### Pending Todos
 
@@ -194,7 +198,7 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-13T19:17:29.045Z
+Last session: 2026-06-13T19:38:02.608Z
 Stopped at: Completed 12-02-PLAN.md
 Resume file: None
 
