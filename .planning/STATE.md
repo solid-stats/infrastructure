@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 Phase: Milestone v3.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-14 — Milestone v3.0 completed and archived
+Last activity: 2026-06-14 — Completed quick task 260614-hvq: obs CD RBAC fix (namespaced Role/RoleBinding → operator-bootstrap)
 
 ## Performance Metrics
 
@@ -196,6 +196,12 @@ Recent decisions affecting current work:
 - Phase 6 (CD): RBAC must be namespace-scoped yet still cover `rollout status`; verify with `auth can-i --list` and an SA-impersonated dry-run.
 - Phase 8 (DRILL): the drill must run in an ephemeral scratch PostgreSQL with a guarded target DB name — never live `postgres-0` / `postgres-data`.
 - Phase 10 (S3) — ✓ RESOLVED 2026-06-13: Timeweb lifecycle parity proven via a live put-then-get round-trip + observed x-amz-expiration. NEW finding: `delete-bucket-lifecycle` is a NO-OP (replace-only); rollback = PUT a new config.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260614-hvq | Fix obs CD: move empty namespaced Role+RoleBinding out of obs manifests into operator-bootstrap RBAC and forbid them in validator | 2026-06-14 | 36b03fc | [260614-hvq-fix-obs-cd-move-empty-namespaced-role-ro](./quick/260614-hvq-fix-obs-cd-move-empty-namespaced-role-ro/) |
 
 ## Deferred Items
 
