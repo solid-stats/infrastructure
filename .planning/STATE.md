@@ -4,13 +4,13 @@ milestone: v3.0
 milestone_name: Staging Observability Stack
 status: verifying
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-14T03:07:37.724Z"
+last_updated: "2026-06-14T03:11:24.906Z"
 last_activity: 2026-06-14 -- Phase 16 complete
 progress:
   total_phases: 7
   completed_phases: 5
   total_plans: 27
-  completed_plans: 25
+  completed_plans: 26
   percent: 71
 ---
 
@@ -83,6 +83,7 @@ Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 | Phase 15-log-stack P03 | 20 | 2 tasks | 4 files |
 | Phase 16-error-tracking-glitchtip P01 | 3m | 2 tasks | 2 files |
 | Phase 16-error-tracking-glitchtip P02 | 6 | 2 tasks | 3 files |
+| Phase 17 P01 | 5 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -138,6 +139,7 @@ Recent decisions affecting current work:
 - [Phase ?]: DB-poll migrate gate (showmigrations) instead of kubectl wait — no extra RBAC on glitchtip SA (T-16-08, 16-02)
 - [Phase ?]: validate-obs-manifests.py accepts error-tracking alongside monitoring (Pitfall 5, 16-02)
 - [Phase ?]: RBAC gap: obs-ci-deployer in error-tracking needs batch/jobs verb before 16-04 — operator action (16-02)
+- [Phase ?]: PLACEHOLDER tokens (NODE_IP_PLACEHOLDER, K8S_API_EGRESS_PLACEHOLDER) in netpol manifests for 17-03 NET-01 probe resolution
 
 ### Pending Todos
 
@@ -218,7 +220,7 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-14T00:58:32.939Z
+Last session: 2026-06-14T03:10:56.994Z
 Stopped at: Completed 12-02-PLAN.md
 Resume file: None
 

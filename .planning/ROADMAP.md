@@ -328,7 +328,7 @@ Plans:
 **Plans**: 3 plans
 **Wave 1** *(authoring — autonomous)*
 
-- [ ] 17-01-PLAN.md — Author 95-/96- netpol manifests (default-deny + minimal-allow) + networkpolicies RBAC verb + deploy-workflow netpol routing (NET-02) [wave 1]
+- [x] 17-01-PLAN.md — Author 95-/96- netpol manifests (default-deny + minimal-allow) + networkpolicies RBAC verb + deploy-workflow netpol routing (NET-02) [wave 1]
 - [x] 17-02-PLAN.md — Author scripts/validate-stack.sh composing validate-phase-13/15/16.sh, fail-loud + --quick/--public (VAL-01) [wave 1]
 
 **Wave 2** *(live apply + validation — operator-gated, autonomous:false)*
@@ -371,5 +371,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 14. Public Edge & Grafana TLS | v3.0 | 3/4 | In Progress|  |
 | 15. Log Stack | v3.0 | 4/4 | Complete   | 2026-06-13 |
 | 16. Error Tracking (GlitchTip) | v3.0 | 5/5 | Complete   | 2026-06-14 |
-| 17. Network Isolation & Stack Validation | v3.0 | 1/3 | In Progress|  |
+| 17. Network Isolation & Stack Validation | v3.0 | 2/3 | In Progress|  |
 | 18. App-side Error SDK | v3.0 | 0/TBD | Not started | - |
