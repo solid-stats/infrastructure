@@ -1,0 +1,118 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: glitchtip-postgres
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: glitchtip-postgres
+    app.kubernetes.io/part-of: solid-stats
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: glitchtip-postgres
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: glitchtip-postgres
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  clusterIP: None
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+  selector:
+    app.kubernetes.io/name: glitchtip-postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: glitchtip-postgres
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: glitchtip-postgres
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  serviceName: glitchtip-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: glitchtip-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: glitchtip-postgres
+        app.kubernetes.io/part-of: solid-stats
+    spec:
+      # obs-background: evicted before app-critical workloads under node pressure (PREP-03).
+      # Static gate (validate-obs-manifests.py) requires this on every pod-bearing kind.
+      priorityClassName: obs-background
+      serviceAccountName: glitchtip-postgres
+      automountServiceAccountToken: false
+      # postgres:17-alpine runs as uid/gid 70 (the postgres system user in Alpine).
+      # fsGroup 70 ensures the PVC mount is owned by that user on first bind.
+      # readOnlyRootFilesystem is NOT set — postgres writes sockets and pidfile to its data dir.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: glitchtip
+            - name: POSTGRES_USER
+              value: glitchtip
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  # Secret rendered by plan 16-03 render-obs-secrets.py extension.
+                  # Never inline a value here — T-16-02 enforcement.
+                  name: glitchtip-postgres-auth
+                  key: POSTGRES_PASSWORD
+            # postgres:17-alpine writes data here; path must match volumeMount below.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "glitchtip", "-d", "glitchtip"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "glitchtip", "-d", "glitchtip"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            # ASSUMED values (A2 from 16-RESEARCH.md) — plan 16-04 MUST verify vs
+            # `kubectl top pods -n error-tracking` after warm-up and tune before Phase 16 complete.
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            # readOnlyRootFilesystem intentionally omitted: postgres writes data dir + sockets.
+          volumeMounts:
+            - name: glitchtip-postgres-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: glitchtip-postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            # ASSUMED — staging error volume only; resize after 30 days if needed (A6).
+            storage: 5Gi
