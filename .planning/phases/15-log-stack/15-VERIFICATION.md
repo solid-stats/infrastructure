@@ -1,12 +1,13 @@
 ---
 phase: 15-log-stack
 verified: 2026-06-14T07:10:00Z
-status: gaps_found
-score: 11/12 must-haves verified
+status: passed
+resolved: "2026-06-14 (v3.0 audit): the single gap below is CLOSED — deploy-observability.yml now carries the loki statefulset (~line 156) + alloy daemonset (~line 157) rollout-status checks (added in a later workflow re-render). LOG-01/02/03 are live-verified (validate-stack.sh green). No remaining gap."
+score: 12/12 must-haves verified (gap resolved)
 overrides_applied: 0
 gaps:
   - truth: "deploy-observability.yml rollout verification extended with loki statefulset + alloy daemonset (15-04 must-have artifact)"
-    status: failed
+    status: resolved
     reason: >-
       The 15-04 plan declared artifact .github/workflows/deploy-observability.yml with
       provides "rollout verification extended with loki statefulset + alloy daemonset"
