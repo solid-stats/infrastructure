@@ -48,6 +48,11 @@ spec:
       priorityClassName: obs-background
       securityContext:
         runAsNonRoot: true
+        # glitchtip image's `app` user is uid/gid 5000 (verified live, 16-04).
+        # Both the wait-for-migrate initContainer and the seed container use the
+        # glitchtip image, so the pod-level uid applies to both.
+        runAsUser: 5000
+        runAsGroup: 5000
         fsGroup: 1000
       initContainers:
         # T-16-07 / Pitfall 2 / T-16-08 mitigation:
@@ -60,7 +65,7 @@ spec:
         # are [ ]. A missing table (pre-migrate) causes showmigrations to fail entirely
         # (non-zero exit) and the loop keeps retrying.
         - name: wait-for-migrate
-          image: glitchtip/glitchtip:v6.1.8
+          image: glitchtip/glitchtip:6.1.8
           imagePullPolicy: IfNotPresent
           command:
             - sh
@@ -91,7 +96,7 @@ spec:
                 - ALL
       containers:
         - name: seed
-          image: glitchtip/glitchtip:v6.1.8
+          image: glitchtip/glitchtip:6.1.8
           imagePullPolicy: IfNotPresent
           # Standard Django createsuperuser --noinput reads DJANGO_SUPERUSER_EMAIL
           # and DJANGO_SUPERUSER_PASSWORD (Assumption A4 — standard Django pattern;

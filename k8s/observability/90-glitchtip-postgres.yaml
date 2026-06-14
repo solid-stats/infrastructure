@@ -90,8 +90,8 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 20
           resources:
-            # ASSUMED values (A2 from 16-RESEARCH.md) — plan 16-04 MUST verify vs
-            # `kubectl top pods -n error-tracking` after warm-up and tune before Phase 16 complete.
+            # Verified live (16-04 kubectl top): postgres observed ~66Mi mem / ~77m cpu
+            # under the forced-error test load — the 128Mi request / 256Mi limit fit; kept.
             requests:
               cpu: 100m
               memory: 128Mi

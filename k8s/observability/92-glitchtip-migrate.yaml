@@ -35,6 +35,10 @@ spec:
       priorityClassName: obs-background
       securityContext:
         runAsNonRoot: true
+        # glitchtip image's `app` user is uid/gid 5000 (verified live, 16-04);
+        # the wait-for-postgres initContainer overrides this to uid 70 (postgres).
+        runAsUser: 5000
+        runAsGroup: 5000
         fsGroup: 1000
       initContainers:
         # Pitfall 2 / Pattern 3: never migrate before postgres is ready.
@@ -50,19 +54,30 @@ spec:
                 echo "waiting for glitchtip-postgres..."; sleep 2
               done
           securityContext:
+            # postgres:17-alpine defaults to root; the pod enforces runAsNonRoot,
+            # so pin the postgres system user (uid/gid 70) for this client probe.
+            runAsUser: 70
+            runAsGroup: 70
             allowPrivilegeEscalation: false
             capabilities:
               drop:
                 - ALL
       containers:
         - name: migrate
-          image: glitchtip/glitchtip:v6.1.8
+          image: glitchtip/glitchtip:6.1.8
           imagePullPolicy: IfNotPresent
-          # manage.py migrate --noinput applies all pending Django migrations.
-          # Does NOT depend on SERVER_ROLE / bin/start.sh — called directly.
-          # (SERVER_ROLE finding and bin/start.sh verification deferred to 16-04
-          # live-apply step where docker/kubectl exec inspection is available.)
-          command: ["./manage.py", "migrate", "--noinput"]
+          # migrate applies all pending Django migrations; createcachetable creates
+          # the `django_cache` DB table that GlitchTip's database cache backend needs
+          # in PostgreSQL-only mode (no Valkey/Redis) — without it, any cache write
+          # (e.g. org/project creation) fails with relation "django_cache" does not
+          # exist (verified live, 16-04). createcachetable is idempotent.
+          # Neither command depends on SERVER_ROLE / bin/start.sh — called directly.
+          command:
+            - sh
+            - -c
+            - |
+              ./manage.py migrate --noinput
+              ./manage.py createcachetable
           env:
             # Pitfall 3: explicit empty string — absent VALKEY_URL defaults to
             # redis://valkey:6379/0, causing ConnectionError in postgres-only mode.

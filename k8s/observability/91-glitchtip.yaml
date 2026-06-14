@@ -1,8 +1,10 @@
 # GlitchTip web + worker Deployments + ClusterIP Service
 #
-# Image: glitchtip/glitchtip:v6.1.8 — pinned tag per AGENTS.md convention.
-# v6.1.8 (pushed 2026-06-06) is the current stable release using Granian ASGI
+# Image: glitchtip/glitchtip:6.1.8 — pinned tag per AGENTS.md convention.
+# 6.1.8 (pushed 2026-06-05) is the current stable release using Granian ASGI
 # + django-vtasks (no Celery/Redis dependency). Tag pinned; IfNotPresent pull.
+# NOTE: tag has NO `v` prefix — glitchtip/glitchtip dropped it after v6.0.3
+# (verified live in 16-04: `v6.1.8` is a Docker Hub 404).
 # ASSUMPTION (A1): ./bin/start.sh dispatches on SERVER_ROLE env var.
 # Plan 16-02 confirms dispatch by inspecting bin/start.sh inside the container.
 # Fallback commands are documented below on the respective Deployments.
@@ -72,10 +74,15 @@ spec:
       # readOnlyRootFilesystem intentionally omitted: GlitchTip writes temp files.
       securityContext:
         runAsNonRoot: true
+        # glitchtip image's `app` user is uid/gid 5000 (verified live, 16-04).
+        # runAsNonRoot requires a numeric uid to verify; the image declares the
+        # user by name, so pin it explicitly or kubelet fails CreateContainerConfig.
+        runAsUser: 5000
+        runAsGroup: 5000
         fsGroup: 1000
       containers:
         - name: glitchtip-web
-          image: glitchtip/glitchtip:v6.1.8
+          image: glitchtip/glitchtip:6.1.8
           imagePullPolicy: IfNotPresent
           # ASSUMPTION (A1): bin/start.sh + SERVER_ROLE=web starts Granian ASGI.
           # Fallback if bin/start.sh does not dispatch on SERVER_ROLE:
@@ -107,7 +114,7 @@ spec:
                   key: SECRET_KEY
             # --- Application config ---
             - name: GLITCHTIP_DOMAIN
-              value: "https://errors.stats-staging.solid-stats.ru"
+              value: "https://errors.solid-stats.ru"
             # T-16-01 / ERR-01: closed from first boot. v6 name is ENABLE_USER_REGISTRATION
             # (NOT the old v3/v4 ENABLE_OPEN_USER_REGISTRATION which v6 silently ignores — Pitfall 1).
             - name: ENABLE_USER_REGISTRATION
@@ -115,7 +122,7 @@ spec:
             - name: EMAIL_BACKEND
               value: "django.core.mail.backends.console.EmailBackend"
             - name: DEFAULT_FROM_EMAIL
-              value: "glitchtip@stats-staging.solid-stats.ru"
+              value: "glitchtip@solid-stats.ru"
             # Required behind nginx reverse proxy (Granian TRUSTED_PROXIES — v6 release notes).
             - name: TRUSTED_PROXIES
               value: "*"
@@ -126,25 +133,27 @@ spec:
               value: "2"
             - name: DATABASE_POOL_MAX_SIZE
               value: "5"
-          # readiness: /api/0/config/ returns 200 without auth and proves app + DB are up.
-          # ERR-02: response body contains "user_registration_enabled":false to verify T-16-01.
+          # readiness/liveness: /_health/ returns 200 "ok" and exercises the DB —
+          # the v6 health endpoint (verified live in 16-04). The old /api/0/config/
+          # path is a 404 in v6; the public config is /api/settings/ (ERR-02 checks
+          # enableUserRegistration there, not the probe).
           readinessProbe:
             httpGet:
-              path: /api/0/config/
+              path: /_health/
               port: 8000
             initialDelaySeconds: 20
             periodSeconds: 10
             failureThreshold: 5
           livenessProbe:
             httpGet:
-              path: /
+              path: /_health/
               port: 8000
             initialDelaySeconds: 60
             periodSeconds: 30
             failureThreshold: 5
           resources:
-            # ASSUMED (A2 from 16-RESEARCH.md) — plan 16-04 MUST verify vs kubectl top.
-            # Granian single-worker; OOMKill risk — monitor and tune upward if needed (Pitfall 7).
+            # Verified live (16-04 kubectl top): web observed ~198Mi mem / ~57m cpu
+            # at idle+ingest — the 192Mi request / 384Mi limit fit with headroom; kept.
             requests:
               cpu: 100m
               memory: 192Mi
@@ -185,10 +194,15 @@ spec:
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
+        # glitchtip image's `app` user is uid/gid 5000 (verified live, 16-04).
+        # runAsNonRoot requires a numeric uid to verify; the image declares the
+        # user by name, so pin it explicitly or kubelet fails CreateContainerConfig.
+        runAsUser: 5000
+        runAsGroup: 5000
         fsGroup: 1000
       containers:
         - name: glitchtip-worker
-          image: glitchtip/glitchtip:v6.1.8
+          image: glitchtip/glitchtip:6.1.8
           imagePullPolicy: IfNotPresent
           # ASSUMPTION (A1): bin/start.sh + SERVER_ROLE=worker dispatches to manage.py runworker --scheduler.
           # Fallback if bin/start.sh does not dispatch on SERVER_ROLE (Pitfall 4):
@@ -215,13 +229,13 @@ spec:
                   key: SECRET_KEY
             # --- Application config (same as web) ---
             - name: GLITCHTIP_DOMAIN
-              value: "https://errors.stats-staging.solid-stats.ru"
+              value: "https://errors.solid-stats.ru"
             - name: ENABLE_USER_REGISTRATION
               value: "False"
             - name: EMAIL_BACKEND
               value: "django.core.mail.backends.console.EmailBackend"
             - name: DEFAULT_FROM_EMAIL
-              value: "glitchtip@stats-staging.solid-stats.ru"
+              value: "glitchtip@solid-stats.ru"
             - name: TRUSTED_PROXIES
               value: "*"
             - name: GRANIAN_WORKERS
@@ -231,12 +245,15 @@ spec:
             - name: DATABASE_POOL_MAX_SIZE
               value: "5"
           resources:
-            # ASSUMED (A2 from 16-RESEARCH.md) — tune in plan 16-04.
+            # Tuned from kubectl top (16-04 live): worker observed ~118Mi mem (256Mi
+            # limit kept) but CPU pegged exactly at the old 200m limit during event
+            # ingest + maintenance batches → throttled. Node has CPU headroom (~31%
+            # idle), so raise the CPU ceiling to 500m so ingest isn't throttled.
             requests:
-              cpu: 50m
+              cpu: 100m
               memory: 128Mi
             limits:
-              cpu: 200m
+              cpu: 500m
               memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
