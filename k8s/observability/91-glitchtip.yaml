@@ -123,6 +123,12 @@ spec:
               value: "django.core.mail.backends.console.EmailBackend"
             - name: DEFAULT_FROM_EMAIL
               value: "glitchtip@solid-stats.ru"
+            # Native MCP server at /mcp (Streamable HTTP, GlitchTip API-token auth).
+            # Gated behind GLITCHTIP_ENABLE_MCP (default False → /mcp 404). Enabled on
+            # the web container only (the worker serves no HTTP) so agents can read
+            # issues/events over MCP. See plans agent-mcp-access brief.
+            - name: GLITCHTIP_ENABLE_MCP
+              value: "True"
             # Required behind nginx reverse proxy (Granian TRUSTED_PROXIES — v6 release notes).
             - name: TRUSTED_PROXIES
               value: "*"
