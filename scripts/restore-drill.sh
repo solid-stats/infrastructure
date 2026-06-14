@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Usage: K8S_NAMESPACE=solid-stats-staging bash scripts/restore-drill.sh
 # Applies the restore drill Job, tails logs, confirms PASS/FAIL evidence, then cleans up.
-# Requires: kubectl in PATH, WireGuard tunnel up (if running against remote cluster).
+# Requires: kubectl in PATH and reachable (SSH local-forward up if running against the remote cluster).
 
 namespace="${K8S_NAMESPACE:-solid-stats-staging}"
 timeout="${DRILL_TIMEOUT:-900s}"

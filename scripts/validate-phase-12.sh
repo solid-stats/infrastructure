@@ -8,7 +8,7 @@ set -euo pipefail
 #   bash scripts/validate-phase-12.sh
 #
 # Requires: kubectl configured and pointing at solid-stats-staging cluster
-#           (WireGuard tunnel up from operator workstation or CI).
+#           (kubectl reachable — SSH local-forward up from operator workstation or CI, or run on the staging node over SSH).
 #
 # PREP-02 (host swap) cannot be checked from kubectl context — a note is
 # printed directing the operator to the manual SSH verification step.

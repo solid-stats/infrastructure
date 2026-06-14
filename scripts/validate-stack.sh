@@ -81,7 +81,8 @@ echo "Checking cluster reachability..."
 
 if ! kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
   echo "FATAL: kubectl cluster-info failed — cluster is unreachable or kubectl is not configured." >&2
-  echo "       Ensure the WireGuard tunnel is up and KUBECONFIG points at the staging cluster." >&2
+  echo "       Ensure the SSH local-forward to the k3s API is up (scripts/ssh-tunnel-up.sh, or" >&2
+  echo "       an operator 'ssh -L 16443:127.0.0.1:6443') and KUBECONFIG points at the staging cluster." >&2
   exit 1
 fi
 echo "ok: cluster is reachable"

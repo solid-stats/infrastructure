@@ -4,8 +4,8 @@ set -euo pipefail
 # Phase 16 live assertion harness — covers ERR-01, ERR-02, ERR-03.
 # Exits 1 on first failure.
 #
-# Run after all Phase 16 manifests have been applied (WireGuard tunnel up or
-# kubectl configured against staging cluster):
+# Run after all Phase 16 manifests have been applied (kubectl configured against
+# staging cluster — via the SSH local-forward, or on the staging node):
 #   bash scripts/validate-phase-16.sh
 #
 # Flags:
