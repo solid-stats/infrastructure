@@ -4,14 +4,14 @@ milestone: v3.0
 milestone_name: Staging Observability Stack
 status: completed
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-14T01:39:16.372Z"
-last_activity: 2026-06-14 -- Phase 14 marked complete
+last_updated: "2026-06-14T09:55:00.000Z"
+last_activity: 2026-06-14 -- Phase 16 complete (GlitchTip live + public TLS cutover)
 progress:
   total_phases: 7
-  completed_phases: 4
-  total_plans: 24
-  completed_plans: 22
-  percent: 57
+  completed_phases: 5
+  total_plans: 26
+  completed_plans: 26
+  percent: 71
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 16 — Error Tracking (GlitchTip)
+**Current focus:** Phase 17 — Network Isolation & Stack Validation
 
 ## Current Position
 
-Phase: 14 — COMPLETE
-Plan: 4 of 5
-Status: Phase 14 complete
-Last activity: 2026-06-14 -- Phase 14 marked complete
+Phase: 16 — COMPLETE
+Plan: 5 of 5
+Status: Phase 16 complete (GlitchTip live; errors.solid-stats.ru public TLS)
+Last activity: 2026-06-14 -- Phase 16 complete
 
 Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 
