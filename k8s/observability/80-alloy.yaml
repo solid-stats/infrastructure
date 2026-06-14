@@ -89,8 +89,37 @@ data:
       forward_to = [loki.process.drop_extra_labels.receiver]
     }
     
-    // Drop any remaining labels not in the 5-key allowlist (LOG-02, T-15-05)
+    // Normalize server-2's pino NUMERIC level into a real ordered level, exposed
+    // as STRUCTURED METADATA (not a label — keep the 5-key label allowlist below to
+    // avoid stream cardinality blow-up, LOG-02). Loki's query-time detected_level
+    // already gives a real level to the text-format apps (rabbitmq/postgres/glitchtip)
+    // but maps pino's numeric "level":30/40/50 to `unknown`, hiding server-2 under a
+    // level filter. This stage fixes that. See plans logs-level-filtering-todo brief.
     loki.process "drop_extra_labels" {
+      // Scope to server-2 only; other apps keep their query-time detected_level.
+      stage.match {
+        selector = "{app=\"server-2\"}"
+
+        // Pino logs JSON; pull the numeric level out of the line into `level`.
+        stage.json {
+          expressions = { "level" = "level" }
+        }
+
+        // Map pino numeric severity -> normalized text level, overwriting `level`.
+        // Pino: trace=10 debug=20 info=30 warn=40 error=50 fatal=60. `.Value` is the
+        // current `level` value; the result is written back to the `level` key.
+        stage.template {
+          source   = "level"
+          template = "{{ if eq .Value \"60\" }}fatal{{ else if eq .Value \"50\" }}error{{ else if eq .Value \"40\" }}warn{{ else if eq .Value \"30\" }}info{{ else if eq .Value \"20\" }}debug{{ else if eq .Value \"10\" }}trace{{ else }}unknown{{ end }}"
+        }
+
+        // Expose as structured metadata named `level` (queryable, not a stream label).
+        stage.structured_metadata {
+          values = { "level" = "" }
+        }
+      }
+
+      // Drop any remaining labels not in the 5-key allowlist (LOG-02, T-15-05)
       stage.label_keep {
         values = ["namespace", "pod", "container", "app", "job"]
       }
