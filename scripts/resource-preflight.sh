@@ -41,8 +41,8 @@ out_file="${OUTPUT_DIR}/resource-preflight-${snapshot_ts}.txt"
     || echo "(pod query failed)"
   echo ""
   # NOTE: df -h / free -h report the host *where this script runs*. Run it ON the
-  # k3s node (e.g. over SSH) for the node's real disk/memory; run from a WireGuard
-  # operator workstation and these reflect the workstation, not the node.
+  # k3s node (e.g. over SSH) for the node's real disk/memory; run from an operator
+  # workstation (even with the SSH local-forward up) and these reflect the workstation.
   echo "--- Disk usage (host running this script) ---"
   df -h
   echo ""
