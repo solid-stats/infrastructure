@@ -1,0 +1,330 @@
+# ---------------------------------------------------------------
+# monitoring namespace — NetworkPolicies (NET-02)
+# Applied via deploy-observability.yml (obs-ci-deployer, obs-k3s-staging context).
+# Default-deny ingress + egress on all pods, then additive minimal-allow layers.
+#
+# NOTE: node-exporter runs hostNetwork=true (see 30-node-exporter.yaml).
+# Its scrape path is host-network traffic and bypasses CNI netpol entirely.
+# No NetworkPolicy rule is required for node-exporter scrape.
+#
+# PLACEHOLDER tokens:
+#   NODE_IP_PLACEHOLDER — the node's real IP (89.223.124.200 assumed; confirmed
+#     during plan 17-03 NET-01 probe: verify the source IP grafana pod actually
+#     sees from host nginx). Replace before applying default-deny policies.
+#   K8S_API_EGRESS_PLACEHOLDER — Alloy API server address (see allow-alloy-egress
+#     below). Plan 17-03 resolves via: kubectl exec -n monitoring ds/alloy -- env
+#     | grep KUBERNETES_SERVICE_HOST. Uncomment the correct candidate block.
+# ---------------------------------------------------------------
+
+# Policy 1: Allow DNS egress (must come first — never shadow by a deny).
+# All pods in monitoring need DNS to coredns in kube-system.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# Policy 2: Default deny all ingress traffic.
+# Additive allow-* policies below open specific ingress flows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# Policy 3: Default deny all egress traffic.
+# allow-dns-egress (above) and specific allow-* policies open needed egress flows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+---
+# Policy 4: Allow Grafana ingress on :3000.
+# Sources:
+#   (a) ipBlock NODE_IP_PLACEHOLDER/32 — host nginx on the node proxies
+#       grafana.solid-stats.ru to the grafana ClusterIP. The source IP seen by
+#       the pod is the node's IP. PLACEHOLDER: plan 17-03 NET-01 confirms the
+#       actual node IP and substitutes NODE_IP_PLACEHOLDER before applying.
+#   (b) podSelector {} intra-ns — any monitoring pod (future kubectl port-forward,
+#       Prometheus alert manager, etc.).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    # (a) Host nginx edge — node IP (resolved in 17-03 NET-01 probe; A1/A2)
+    - from:
+        - ipBlock:
+            cidr: NODE_IP_PLACEHOLDER/32
+      ports:
+        - port: 3000
+          protocol: TCP
+    # (b) Intra-namespace pods (grafana←prometheus, port-forward, etc.)
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 3000
+          protocol: TCP
+---
+# Policy 5: Allow Grafana egress to its datasources (Prometheus + Loki).
+# Both are intra-namespace podSelector rules.
+# Prometheus service port is :80 (ClusterIP) and direct :9090.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-grafana-egress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 80
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - port: 3100
+          protocol: TCP
+---
+# Policy 6: Allow Prometheus ingress on :9090 and :80.
+# Grafana and other intra-ns pods query Prometheus via these ports.
+# podSelector matches prometheus-server pod (component=server).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 9090
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+---
+# Policy 7: Allow Prometheus scrape egress.
+# Intra-namespace targets: kube-state-metrics :8080, node-exporter svc :9100
+# (note: actual node-exporter scrape is host-network traffic that bypasses netpol;
+# the :9100 rule is a no-op in practice but present for clarity), postgres-exporter
+# :9187, loki :3100, alloy :12345.
+# Cross-namespace: rabbitmq :15692 in solid-stats-staging.
+# postgres :5432 is NOT scraped by prometheus directly; postgres-exporter connects
+# out (see allow-postgres-exporter-egress below).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape-egress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Egress
+  egress:
+    # Intra-monitoring scrape targets
+    - to:
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+        - port: 9100
+          protocol: TCP
+        - port: 9187
+          protocol: TCP
+        - port: 3100
+          protocol: TCP
+        - port: 12345
+          protocol: TCP
+    # Cross-namespace: rabbitmq metrics in solid-stats-staging
+    # namespaceSelector + podSelector must both match for AND semantics.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: solid-stats-staging
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rabbitmq
+      ports:
+        - port: 15692
+          protocol: TCP
+---
+# Policy 8: Allow postgres-exporter egress to postgres in solid-stats-staging.
+# The exporter pod connects directly to postgres :5432 (not prometheus).
+# podSelector matches app.kubernetes.io/name=prometheus-postgres-exporter (A4).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-exporter-egress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-postgres-exporter
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: solid-stats-staging
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+# Policy 9: Allow Loki ingress on :3100 (write) and :9095 (gRPC / prometheus scrape).
+# Alloy pushes logs on :3100; Prometheus scrapes Loki metrics on :3100/:9095.
+# Both are intra-namespace — podSelector {} covers alloy and prometheus pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-loki-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 3100
+          protocol: TCP
+        - port: 9095
+          protocol: TCP
+---
+# Policy 10: Allow Alloy egress to Loki (intra-ns) + Kubernetes API server.
+#
+# K8S API EGRESS — K8S_API_EGRESS_PLACEHOLDER:
+# Alloy uses discovery.kubernetes (pod discovery) and loki.source.kubernetes
+# (log tailing) — both require the k8s API server. Two candidate targets:
+#
+#   Candidate A: node IP :6443 (k3s API server bound to the node's real IP)
+#     ipBlock: cidr: NODE_IP_PLACEHOLDER/32  port: 6443
+#
+#   Candidate B: kubernetes.default.svc ClusterIP :443 (in-cluster service IP,
+#     typically 10.43.0.1 — KUBERNETES_SERVICE_HOST env inside the alloy pod)
+#     ipBlock: cidr: 10.43.0.1/32  port: 443
+#
+# Plan 17-03 NET-01 step resolves A3:
+#   kubectl exec -n monitoring ds/alloy -- env | grep KUBERNETES_SERVICE_HOST
+# Uncomment the correct candidate below before applying this policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alloy-egress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  policyTypes:
+    - Egress
+  egress:
+    # Loki write endpoint (intra-ns)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - port: 3100
+          protocol: TCP
+    # K8S_API_EGRESS_PLACEHOLDER — uncomment the correct block after 17-03 A3 probe:
+    #
+    # Candidate A — node IP :6443 (k3s binds API on node's primary IP):
+    # - to:
+    #     - ipBlock:
+    #         cidr: NODE_IP_PLACEHOLDER/32
+    #   ports:
+    #     - port: 6443
+    #       protocol: TCP
+    #
+    # Candidate B — kubernetes.default.svc ClusterIP :443 (typical in-cluster path):
+    # - to:
+    #     - ipBlock:
+    #         cidr: 10.43.0.1/32
+    #   ports:
+    #     - port: 443
+    #       protocol: TCP
