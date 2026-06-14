@@ -133,9 +133,12 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
-  # CronJobs: apply (rollout status not applicable)
+  # CronJobs + Jobs: apply and wait for completion.
+  # Jobs (batch/jobs) are required for kubectl apply of the glitchtip-migrate and
+  # glitchtip-seed Jobs (92-93 manifests) and for kubectl wait --for=condition=complete
+  # job/glitchtip-migrate in CI (16-02 RBAC gap — operator-bootstrap action).
   - apiGroups: ["batch"]
-    resources: ["cronjobs"]
+    resources: ["cronjobs", "jobs"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
   # Pods: needed for kubectl rollout status --watch
   - apiGroups: [""]
