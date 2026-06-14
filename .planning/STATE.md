@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 Phase: Milestone v3.0 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-14 — Completed quick task 260614-ij3: GlitchTip migrate/seed Job netpol fix (pod-template labels)
+Last activity: 2026-06-14 — Completed quick task 260614-tvy: migrate CD from WireGuard to SSH tunnel (Timeweb blocks inbound UDP)
 
 ## Performance Metrics
 
@@ -203,6 +203,7 @@ Recent decisions affecting current work:
 |---|-------------|------|--------|-----------|
 | 260614-hvq | Fix obs CD: move empty namespaced Role+RoleBinding out of obs manifests into operator-bootstrap RBAC and forbid them in validator | 2026-06-14 | 36b03fc | [260614-hvq-fix-obs-cd-move-empty-namespaced-role-ro](./quick/260614-hvq-fix-obs-cd-move-empty-namespaced-role-ro/) |
 | 260614-ij3 | Fix GlitchTip migrate/seed Jobs blocked by NetworkPolicy — add app.kubernetes.io/name=glitchtip pod-template labels so allow-glitchtip-db-egress selects them | 2026-06-14 | 08da0aa | [260614-ij3-fix-glitchtip-migrate-seed-jobs-blocked-](./quick/260614-ij3-fix-glitchtip-migrate-seed-jobs-blocked-/) |
+| 260614-tvy | Migrate CD from WireGuard to SSH tunnel for k3s access (Timeweb blocks inbound UDP at the hypervisor — WG dead; TCP/SSH works). New ssh-tunnel-up.sh + kubeconfig 127.0.0.1:16443 with tls-server-name; both workflows swap WG→SSH. wg-tunnel-up.sh + WG secrets retained for future restore | 2026-06-14 | 1bade73 | [260614-tvy-migrate-cd-from-wireguard-to-ssh-tunnel-](./quick/260614-tvy-migrate-cd-from-wireguard-to-ssh-tunnel-/) |
 
 ## Deferred Items
 
