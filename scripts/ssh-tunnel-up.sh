@@ -7,8 +7,8 @@ set -euo pipefail
 # Opens a background SSH local-forward (LOCAL_PORT -> REMOTE_API_HOST:REMOTE_API_PORT)
 # and fail-closed verifies TCP reachability of the forwarded port.  Exits 64 on
 # missing required configuration; exits 1 if the forward is not reachable within
-# REACHABILITY_TIMEOUT_SECS (fail-closed gate — analogous to wg-tunnel-up.sh's
-# handshake-timeout gate — no kubectl runs without a confirmed reachable port).
+# REACHABILITY_TIMEOUT_SECS (fail-closed gate — no kubectl runs without a
+# confirmed reachable port).
 #
 # Usage (called from GitHub Actions step with env vars from secrets):
 #   DEPLOY_SSH_PRIVATE_KEY=<key> DEPLOY_SSH_KNOWN_HOSTS=<known_hosts> \
@@ -44,8 +44,7 @@ echo "=== SSH Tunnel Pre-flight Gate ==="
 
 # --- 1. Write key and known_hosts to secure temp files ---------------------
 # ssh requires the identity file on disk; a chmod-600 temp file removed on EXIT
-# is the closest analogue to wg-tunnel-up.sh's /dev/stdin discipline — the
-# key is on disk only for the lifetime of this script and never printed.
+# keeps the key on disk only for the lifetime of this script and never printed.
 key_file=$(mktemp)
 known_hosts_file=$(mktemp)
 trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
