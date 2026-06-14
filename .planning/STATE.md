@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Staging Observability Stack
 status: in-progress
-stopped_at: Completed 17-03-PLAN.md
-last_updated: "2026-06-14T10:30:00.000Z"
-last_activity: 2026-06-14 -- Phase 17 complete (NetworkPolicies live, stack validated)
+stopped_at: Completed 18-01 (infra wiring + briefs)
+last_updated: "2026-06-14T10:50:00.000Z"
+last_activity: 2026-06-14 -- Phase 18 complete (SENTRY_DSN wiring + per-app briefs)
 progress:
   total_phases: 7
-  completed_phases: 6
-  total_plans: 29
-  completed_plans: 29
-  percent: 86
+  completed_phases: 7
+  total_plans: 30
+  completed_plans: 30
+  percent: 100
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 18 — App-side Error SDK (cross-repo)
+**Current focus:** v3.0 milestone — all 7 phases complete; ready for milestone audit/close
 
 ## Current Position
 
-Phase: 17 — COMPLETE
-Plan: 3 of 3
-Status: Phase 17 complete (17 NetworkPolicies live; validate-stack green before/after)
-Last activity: 2026-06-14 -- Phase 17 complete
+Phase: 18 — COMPLETE
+Plan: 1 of 1
+Status: Phase 18 complete (SENTRY_DSN infra wiring + per-app wire briefs). v3.0 phases 12–18 all done.
+Last activity: 2026-06-14 -- Phase 18 complete
 
 Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 

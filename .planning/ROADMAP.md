@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 15: Log Stack** - Loki + Alloy collect cluster logs with ~7-day retention and a LogQL query returns recent `server-2` lines in Grafana.
 - [x] **Phase 16: Error Tracking (GlitchTip)** - GlitchTip runs with its own PostgreSQL, closed registration, and a public TLS URL on the reused obs-edge; a forced test error appears and a project DSN exists.
 - [x] **Phase 17: Network Isolation & Stack Validation** - NetworkPolicies isolate the obs namespaces without breaking scraping, and one re-runnable script validates the whole stack on any fresh deploy.
-- [ ] **Phase 18: App-side Error SDK** - Errors-only Sentry SDK integration is prepared as separate app-repo PRs for server-2, replay-parser-2, and replays-fetcher using the GlitchTip DSN.
+- [x] **Phase 18: App-side Error SDK** - Errors-only Sentry SDK integration is prepared as separate app-repo PRs for server-2, replay-parser-2, and replays-fetcher using the GlitchTip DSN. *(operator-scoped: infra wiring + per-app wire briefs in the plans repo; app-repo PRs + e2e deferred to app owners.)*
 
 ## Phase Details
 
@@ -372,4 +372,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 15. Log Stack | v3.0 | 4/4 | Complete   | 2026-06-13 |
 | 16. Error Tracking (GlitchTip) | v3.0 | 5/5 | Complete   | 2026-06-14 |
 | 17. Network Isolation & Stack Validation | v3.0 | 3/3 | Complete   | 2026-06-14 |
-| 18. App-side Error SDK | v3.0 | 0/TBD | Not started | - |
+| 18. App-side Error SDK | v3.0 | 1/1 | Complete   | 2026-06-14 |
