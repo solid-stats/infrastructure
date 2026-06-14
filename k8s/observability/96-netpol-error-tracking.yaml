@@ -1,0 +1,161 @@
+# ---------------------------------------------------------------
+# error-tracking namespace — NetworkPolicies (NET-02)
+# Applied via deploy-observability.yml (obs-ci-deployer, obs-et-k3s-staging context).
+# Default-deny ingress + egress on all pods, then additive minimal-allow layers.
+#
+# GlitchTip NOTE: GlitchTip does NOT expose Prometheus metrics
+# (ENABLE_OBSERVABILITY_API is off). There is NO cross-namespace scrape ingress
+# into this namespace. Only edge ingress + intra-namespace DB flows are opened.
+#
+# Phase 18 NOTE: A from-solid-stats-staging rule for SDK DSN ingest (Sentry protocol)
+# will be added to allow-glitchtip-web-ingress in Phase 18. It is out of scope here.
+#
+# PLACEHOLDER token:
+#   NODE_IP_PLACEHOLDER — the node's real IP (89.223.124.200 assumed; confirmed
+#     during plan 17-03 NET-01 probe: same token as 95-netpol-monitoring.yaml;
+#     17-03 substitutes once). Replace before applying default-deny policies.
+# ---------------------------------------------------------------
+
+# Policy 1: Allow DNS egress — MUST be first so kube-system DNS is never blocked.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# Policy 2: Default deny all ingress traffic.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# Policy 3: Default deny all egress traffic.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+---
+# Policy 4: Allow GlitchTip web ingress on :8000.
+# Sources:
+#   (a) ipBlock NODE_IP_PLACEHOLDER/32 — host nginx proxies errors.solid-stats.ru
+#       to the glitchtip-web ClusterIP. Source IP seen by the pod is the node IP.
+#       PLACEHOLDER: plan 17-03 NET-01 confirms and substitutes before applying.
+#       Same token as 95-netpol-monitoring.yaml (resolved once in 17-03).
+#   (b) podSelector {} intra-ns — worker may call web admin flows intra-namespace.
+#
+# Phase 18 will add a from-solid-stats-staging selector for SDK DSN ingest.
+# That rule is out of scope in this phase.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-glitchtip-web-ingress
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: glitchtip
+      app.kubernetes.io/component: web
+  policyTypes:
+    - Ingress
+  ingress:
+    # (a) Host nginx edge — node IP (resolved in 17-03 NET-01 probe)
+    - from:
+        - ipBlock:
+            cidr: NODE_IP_PLACEHOLDER/32
+      ports:
+        - port: 8000
+          protocol: TCP
+    # (b) Intra-namespace pods (worker → web, etc.)
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8000
+          protocol: TCP
+---
+# Policy 5: Allow GlitchTip web + worker egress to glitchtip-postgres.
+# podSelector app.kubernetes.io/name=glitchtip matches BOTH web and worker pods
+# (both carry this label; they are distinguished additionally by component=web/worker).
+# A single broad selector here is correct — both components need DB access.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-glitchtip-db-egress
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: glitchtip
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip-postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+# Policy 6: Allow glitchtip-postgres ingress only from web + worker.
+# podSelector app.kubernetes.io/name=glitchtip covers both components (web + worker).
+# Label confirmed: app.kubernetes.io/name=glitchtip-postgres (90-glitchtip-postgres.yaml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-glitchtip-postgres-ingress
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: glitchtip-postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+      ports:
+        - port: 5432
+          protocol: TCP
