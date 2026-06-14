@@ -1,0 +1,245 @@
+# GlitchTip web + worker Deployments + ClusterIP Service
+#
+# Image: glitchtip/glitchtip:v6.1.8 — pinned tag per AGENTS.md convention.
+# v6.1.8 (pushed 2026-06-06) is the current stable release using Granian ASGI
+# + django-vtasks (no Celery/Redis dependency). Tag pinned; IfNotPresent pull.
+# ASSUMPTION (A1): ./bin/start.sh dispatches on SERVER_ROLE env var.
+# Plan 16-02 confirms dispatch by inspecting bin/start.sh inside the container.
+# Fallback commands are documented below on the respective Deployments.
+#
+# PostgreSQL-only mode: VALKEY_URL="" (explicit empty string) disables Valkey/Redis.
+# Pitfall 3: absent VALKEY_URL defaults to redis://valkey:6379/0 → worker ConnectionError.
+# All containers set VALKEY_URL="" explicitly to prevent this.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: glitchtip
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: glitchtip
+    app.kubernetes.io/part-of: solid-stats
+---
+# ClusterIP — internal only. Public path is operator-gated (plan 16-05).
+# Port 8000: v6 changed from 8080 to 8000 (Pitfall 6). Use this port everywhere.
+apiVersion: v1
+kind: Service
+metadata:
+  name: glitchtip-web
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: glitchtip
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: glitchtip
+    app.kubernetes.io/component: web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glitchtip-web
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: glitchtip
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: glitchtip
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: glitchtip
+        app.kubernetes.io/component: web
+        app.kubernetes.io/part-of: solid-stats
+    spec:
+      priorityClassName: obs-background
+      serviceAccountName: glitchtip
+      automountServiceAccountToken: false
+      # GlitchTip image runs as a non-root app user. runAsNonRoot enforced.
+      # Exact uid is image-determined; omit runAsUser to let image default apply.
+      # fsGroup set to allow group-writable mounts if needed in future.
+      # readOnlyRootFilesystem intentionally omitted: GlitchTip writes temp files.
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: glitchtip-web
+          image: glitchtip/glitchtip:v6.1.8
+          imagePullPolicy: IfNotPresent
+          # ASSUMPTION (A1): bin/start.sh + SERVER_ROLE=web starts Granian ASGI.
+          # Fallback if bin/start.sh does not dispatch on SERVER_ROLE:
+          #   command: ["python", "-m", "granian", "glitchtip.asgi:application", "--port", "8000"]
+          command: ["./bin/start.sh"]
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            # --- Role ---
+            - name: SERVER_ROLE
+              value: "web"
+            - name: PORT
+              value: "8000"
+            # --- PostgreSQL-only mode (Pitfall 3: must be explicit empty string) ---
+            - name: VALKEY_URL
+              value: ""
+            # --- Secrets (T-16-02: no literal values in YAML) ---
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  # Value rendered by 16-03: postgresql://glitchtip:PWD@glitchtip-postgres.error-tracking.svc:5432/glitchtip?sslmode=disable
+                  name: glitchtip-secrets
+                  key: DATABASE_URL
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: SECRET_KEY
+            # --- Application config ---
+            - name: GLITCHTIP_DOMAIN
+              value: "https://errors.stats-staging.solid-stats.ru"
+            # T-16-01 / ERR-01: closed from first boot. v6 name is ENABLE_USER_REGISTRATION
+            # (NOT the old v3/v4 ENABLE_OPEN_USER_REGISTRATION which v6 silently ignores — Pitfall 1).
+            - name: ENABLE_USER_REGISTRATION
+              value: "False"
+            - name: EMAIL_BACKEND
+              value: "django.core.mail.backends.console.EmailBackend"
+            - name: DEFAULT_FROM_EMAIL
+              value: "glitchtip@stats-staging.solid-stats.ru"
+            # Required behind nginx reverse proxy (Granian TRUSTED_PROXIES — v6 release notes).
+            - name: TRUSTED_PROXIES
+              value: "*"
+            # --- Resource tuning (reduce from defaults: 20 workers, 20 pool, 20 vtasks) ---
+            - name: GRANIAN_WORKERS
+              value: "1"
+            - name: VTASKS_CONCURRENCY
+              value: "2"
+            - name: DATABASE_POOL_MAX_SIZE
+              value: "5"
+          # readiness: /api/0/config/ returns 200 without auth and proves app + DB are up.
+          # ERR-02: response body contains "user_registration_enabled":false to verify T-16-01.
+          readinessProbe:
+            httpGet:
+              path: /api/0/config/
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            # ASSUMED (A2 from 16-RESEARCH.md) — plan 16-04 MUST verify vs kubectl top.
+            # Granian single-worker; OOMKill risk — monitor and tune upward if needed (Pitfall 7).
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: 300m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            # readOnlyRootFilesystem intentionally omitted: GlitchTip writes temp files.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: glitchtip-worker
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: glitchtip
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: glitchtip
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: glitchtip
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/part-of: solid-stats
+    spec:
+      priorityClassName: obs-background
+      serviceAccountName: glitchtip
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: glitchtip-worker
+          image: glitchtip/glitchtip:v6.1.8
+          imagePullPolicy: IfNotPresent
+          # ASSUMPTION (A1): bin/start.sh + SERVER_ROLE=worker dispatches to manage.py runworker --scheduler.
+          # Fallback if bin/start.sh does not dispatch on SERVER_ROLE (Pitfall 4):
+          #   command: ["./manage.py", "runworker", "--scheduler"]
+          command: ["./bin/start.sh"]
+          # Worker is not an HTTP server — no ports or HTTP probes.
+          env:
+            # --- Role ---
+            - name: SERVER_ROLE
+              value: "worker"
+            # --- PostgreSQL-only mode (Pitfall 3: must be explicit empty string) ---
+            - name: VALKEY_URL
+              value: ""
+            # --- Secrets ---
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: DATABASE_URL
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: SECRET_KEY
+            # --- Application config (same as web) ---
+            - name: GLITCHTIP_DOMAIN
+              value: "https://errors.stats-staging.solid-stats.ru"
+            - name: ENABLE_USER_REGISTRATION
+              value: "False"
+            - name: EMAIL_BACKEND
+              value: "django.core.mail.backends.console.EmailBackend"
+            - name: DEFAULT_FROM_EMAIL
+              value: "glitchtip@stats-staging.solid-stats.ru"
+            - name: TRUSTED_PROXIES
+              value: "*"
+            - name: GRANIAN_WORKERS
+              value: "1"
+            - name: VTASKS_CONCURRENCY
+              value: "2"
+            - name: DATABASE_POOL_MAX_SIZE
+              value: "5"
+          resources:
+            # ASSUMED (A2 from 16-RESEARCH.md) — tune in plan 16-04.
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
