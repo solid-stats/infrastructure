@@ -10,10 +10,11 @@
 # Phase 18 NOTE: A from-solid-stats-staging rule for SDK DSN ingest (Sentry protocol)
 # will be added to allow-glitchtip-web-ingress in Phase 18. It is out of scope here.
 #
-# PLACEHOLDER token:
-#   NODE_IP_PLACEHOLDER — the node's real IP (89.223.124.200 assumed; confirmed
-#     during plan 17-03 NET-01 probe: same token as 95-netpol-monitoring.yaml;
-#     17-03 substitutes once). Replace before applying default-deny policies.
+# Live-resolved value (17-03 NET-01 probe), substituted in Policy 4:
+#   host-edge ingress source = 10.42.0.1/32 (cni0 gateway — the SNAT source a node/
+#     host process shows to a pod; NOT the node public IP). Same finding as 95-.
+# error-tracking pods need no k8s-API egress (automountServiceAccountToken:false;
+# they talk only to glitchtip-postgres + DNS), so there is no apiserver-egress here.
 # ---------------------------------------------------------------
 
 # Policy 1: Allow DNS egress — MUST be first so kube-system DNS is never blocked.
@@ -69,10 +70,8 @@ spec:
 ---
 # Policy 4: Allow GlitchTip web ingress on :8000.
 # Sources:
-#   (a) ipBlock NODE_IP_PLACEHOLDER/32 — host nginx proxies errors.solid-stats.ru
-#       to the glitchtip-web ClusterIP. Source IP seen by the pod is the node IP.
-#       PLACEHOLDER: plan 17-03 NET-01 confirms and substitutes before applying.
-#       Same token as 95-netpol-monitoring.yaml (resolved once in 17-03).
+#   (a) ipBlock 10.42.0.1/32 — host nginx proxies errors.solid-stats.ru to the
+#       glitchtip-web ClusterIP; the source the pod sees is the cni0 gateway (A1/A2).
 #   (b) podSelector {} intra-ns — worker may call web admin flows intra-namespace.
 #
 # Phase 18 will add a from-solid-stats-staging selector for SDK DSN ingest.
@@ -93,10 +92,13 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # (a) Host nginx edge — node IP (resolved in 17-03 NET-01 probe)
+    # (a) Host nginx edge. A1/A2 (17-03 NET-01 probe): a node/host process reaching a
+    #     pod is SNAT'd to the cni0 gateway 10.42.0.1, NOT the node public IP. (Host/
+    #     local traffic also bypasses kube-router ingress netpol entirely, so the edge
+    #     survives regardless — this ipBlock is the explicit, measured allow.)
     - from:
         - ipBlock:
-            cidr: NODE_IP_PLACEHOLDER/32
+            cidr: 10.42.0.1/32
       ports:
         - port: 8000
           protocol: TCP

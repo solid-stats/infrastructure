@@ -7,13 +7,11 @@
 # Its scrape path is host-network traffic and bypasses CNI netpol entirely.
 # No NetworkPolicy rule is required for node-exporter scrape.
 #
-# PLACEHOLDER tokens:
-#   NODE_IP_PLACEHOLDER — the node's real IP (89.223.124.200 assumed; confirmed
-#     during plan 17-03 NET-01 probe: verify the source IP grafana pod actually
-#     sees from host nginx). Replace before applying default-deny policies.
-#   K8S_API_EGRESS_PLACEHOLDER — Alloy API server address (see allow-alloy-egress
-#     below). Plan 17-03 resolves via: kubectl exec -n monitoring ds/alloy -- env
-#     | grep KUBERNETES_SERVICE_HOST. Uncomment the correct candidate block.
+# Live-resolved values (17-03 NET-01 probe), substituted below:
+#   host-edge ingress source = 10.42.0.1/32 (cni0 gateway — the SNAT source a node/
+#     host process shows to a pod; NOT the node public IP). See Policy 4.
+#   k8s API server = 10.43.0.1:443 (KUBERNETES_SERVICE_HOST). See Policy 11.
+#   node-exporter scrape target = node IP 89.223.124.200:9100 (hostNetwork). See Policy 7.
 # ---------------------------------------------------------------
 
 # Policy 1: Allow DNS egress (must come first — never shadow by a deny).
@@ -72,10 +70,8 @@ spec:
 ---
 # Policy 4: Allow Grafana ingress on :3000.
 # Sources:
-#   (a) ipBlock NODE_IP_PLACEHOLDER/32 — host nginx on the node proxies
-#       grafana.solid-stats.ru to the grafana ClusterIP. The source IP seen by
-#       the pod is the node's IP. PLACEHOLDER: plan 17-03 NET-01 confirms the
-#       actual node IP and substitutes NODE_IP_PLACEHOLDER before applying.
+#   (a) ipBlock 10.42.0.1/32 — host nginx on the node proxies grafana.solid-stats.ru
+#       to the grafana ClusterIP; the source the pod sees is the cni0 gateway (A1/A2).
 #   (b) podSelector {} intra-ns — any monitoring pod (future kubectl port-forward,
 #       Prometheus alert manager, etc.).
 apiVersion: networking.k8s.io/v1
@@ -93,10 +89,13 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    # (a) Host nginx edge — node IP (resolved in 17-03 NET-01 probe; A1/A2)
+    # (a) Host nginx edge. A1/A2 (17-03 NET-01 probe): a node/host process reaching a
+    #     pod is SNAT'd to the cni0 gateway 10.42.0.1, NOT the node public IP. (Host/
+    #     local traffic also bypasses kube-router ingress netpol entirely, so the edge
+    #     survives regardless — this ipBlock is the explicit, measured allow.)
     - from:
         - ipBlock:
-            cidr: NODE_IP_PLACEHOLDER/32
+            cidr: 10.42.0.1/32
       ports:
         - port: 3000
           protocol: TCP
@@ -207,6 +206,16 @@ spec:
           protocol: TCP
         - port: 12345
           protocol: TCP
+    # node-exporter runs hostNetwork, so its Service endpoint is the node's own IP
+    # (89.223.124.200), NOT a pod-CIDR IP — the podSelector{} rule above cannot match it.
+    # Prometheus scrapes node-exporter.monitoring.svc:9100 -> node IP:9100, so allow that
+    # host-IP egress explicitly (17-03 finding).
+    - to:
+        - ipBlock:
+            cidr: 89.223.124.200/32
+      ports:
+        - port: 9100
+          protocol: TCP
     # Cross-namespace: rabbitmq metrics in solid-stats-staging
     # namespaceSelector + podSelector must both match for AND semantics.
     - to:
@@ -272,22 +281,9 @@ spec:
         - port: 9095
           protocol: TCP
 ---
-# Policy 10: Allow Alloy egress to Loki (intra-ns) + Kubernetes API server.
-#
-# K8S API EGRESS — K8S_API_EGRESS_PLACEHOLDER:
-# Alloy uses discovery.kubernetes (pod discovery) and loki.source.kubernetes
-# (log tailing) — both require the k8s API server. Two candidate targets:
-#
-#   Candidate A: node IP :6443 (k3s API server bound to the node's real IP)
-#     ipBlock: cidr: NODE_IP_PLACEHOLDER/32  port: 6443
-#
-#   Candidate B: kubernetes.default.svc ClusterIP :443 (in-cluster service IP,
-#     typically 10.43.0.1 — KUBERNETES_SERVICE_HOST env inside the alloy pod)
-#     ipBlock: cidr: 10.43.0.1/32  port: 443
-#
-# Plan 17-03 NET-01 step resolves A3:
-#   kubectl exec -n monitoring ds/alloy -- env | grep KUBERNETES_SERVICE_HOST
-# Uncomment the correct candidate below before applying this policy.
+# Policy 10: Allow Alloy egress to Loki (intra-ns).
+# Alloy's k8s-API egress (discovery.kubernetes + loki.source.kubernetes log tailing)
+# is covered by the shared allow-apiserver-egress policy below (Policy 11).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -311,20 +307,32 @@ spec:
       ports:
         - port: 3100
           protocol: TCP
-    # K8S_API_EGRESS_PLACEHOLDER — uncomment the correct block after 17-03 A3 probe:
-    #
-    # Candidate A — node IP :6443 (k3s binds API on node's primary IP):
-    # - to:
-    #     - ipBlock:
-    #         cidr: NODE_IP_PLACEHOLDER/32
-    #   ports:
-    #     - port: 6443
-    #       protocol: TCP
-    #
-    # Candidate B — kubernetes.default.svc ClusterIP :443 (typical in-cluster path):
-    # - to:
-    #     - ipBlock:
-    #         cidr: 10.43.0.1/32
-    #   ports:
-    #     - port: 443
-    #       protocol: TCP
+---
+# Policy 11: Allow egress to the Kubernetes API server (kubernetes.default.svc,
+# ClusterIP 10.43.0.1:443 — A3 confirmed live in 17-03: alloy's KUBERNETES_SERVICE_HOST
+# is 10.43.0.1). Several monitoring pods need the API under default-deny-egress:
+#   - kube-state-metrics  (watches cluster objects — its entire function)
+#   - grafana             (sc-dashboard / sc-datasource sidecars watch ConfigMaps)
+#   - alloy               (discovery.kubernetes + loki.source.kubernetes log tailing)
+# prometheus (static_configs), loki, node-exporter, postgres-exporter do NOT need it,
+# but a namespace-wide podSelector{} allow to the API server is the standard pattern and
+# is not a lateral-movement risk (RBAC governs what each ServiceAccount may read).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-apiserver-egress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.1/32
+      ports:
+        - port: 443
+          protocol: TCP
