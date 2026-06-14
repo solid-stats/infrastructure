@@ -14,7 +14,7 @@ Phase 7 does **NOT** rebuild it — it:
 1. Stores the live vhost config verbatim in the repo (`config/nginx/sites-available/stats-staging-solid-stats.conf`).
 2. Adds a certbot deploy hook (nginx -t gate before reload, installed to `/etc/letsencrypt/renewal-hooks/deploy/`).
 3. Adds an `OnFailure=` drop-in on the stock `certbot.service` to surface renewal failures to journald.
-4. Applies ufw split-tunnel firewall rules (80/443 public, 6443 via WireGuard only).
+4. Applies ufw firewall rules (22/80/443 public; 6443 is NOT exposed externally — reached only via the SSH local-forward to 127.0.0.1:6443).
 5. Keeps the existing `certbot.timer` — no new renewal timer is created.
 
 ## Prerequisites
@@ -23,7 +23,6 @@ Phase 7 does **NOT** rebuild it — it:
 - Git clone of this repository on the VPS (or copy `scripts/` and `config/` to the host).
 - `ADMIN_EMAIL` — a valid email for Let's Encrypt (used only if no cert lineage exists; the
   cert is already issued, so bootstrap skips issuance by default).
-- WireGuard `wg0` interface up on the VPS (from Phase 6 — see `docs/operator-bootstrap.md`).
 - Port 80 and 443 inbound reachable from the public internet.
 
 ## Offline Checks (CI — no VPS required)
@@ -65,8 +64,9 @@ What the bootstrap does:
 - Installs the certbot deploy hook to `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`.
 - Installs the `OnFailure=` drop-in to `/etc/systemd/system/certbot.service.d/onfailure.conf`
   and the failure handler service; runs `systemctl daemon-reload`.
-- Applies ufw rules: `22/tcp`, `80/tcp`, `443/tcp` public; `6443/tcp` on `wg0` only (exits
-  with `FATAL` if the `wg0` interface is absent — complete Phase 6 first).
+- Applies ufw rules: `22/tcp`, `80/tcp`, `443/tcp` public. It adds NO 6443 rule — the k3s API
+  stays private behind the `default deny incoming` policy and is reached only via the SSH
+  local-forward (`scripts/ssh-tunnel-up.sh` -> 127.0.0.1:16443 -> 127.0.0.1:6443 on the VPS).
 
 To skip ufw changes (e.g. ufw is already configured to your satisfaction):
 
@@ -108,7 +108,7 @@ systemctl show -p OnFailure certbot.service
 Expected: `OnFailure=certbot-renew-failure.service`. If the field is empty, the drop-in was not
 loaded — run `systemctl daemon-reload` and check again.
 
-### 3d. Firewall split-tunnel rules — OPERATOR-ONLY
+### 3d. Firewall edge rules — OPERATOR-ONLY
 
 ```bash
 ufw status verbose
@@ -119,10 +119,12 @@ Expected rules present:
 - `22/tcp ALLOW Anywhere` (SSH — operator access)
 - `80/tcp ALLOW Anywhere` (HTTP public + ACME challenges)
 - `443/tcp ALLOW Anywhere` (HTTPS public)
-- `6443/tcp on wg0 ALLOW Anywhere` (k3s API — WireGuard only)
 
-The `6443` rule **must** include `on wg0`. Without the interface qualifier the k3s API server
-port is reachable on the public interface.
+`6443` is intentionally absent from `ufw status` — the k3s API is private, kept closed by
+the `default deny incoming` policy and reached only via the SSH local-forward
+(`scripts/ssh-tunnel-up.sh` -> `127.0.0.1:16443` -> `127.0.0.1:6443` on the VPS).
+If any `6443` allow rule appears, remove it with `ufw delete allow 6443/tcp` — it must not
+be publicly reachable.
 
 ### 3e. Public HTTPS smoke check — OPERATOR-ONLY
 
@@ -196,7 +198,7 @@ This removes:
 - The certbot deploy hook at `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`.
 - The repo vhost from `sites-available` and `sites-enabled`; restores the original from the
   `.bak` backup created during bootstrap.
-- ufw rules for `80/tcp`, `443/tcp`, and `6443/tcp on wg0`.
+- ufw rules for `80/tcp` and `443/tcp`.
 
 Preserved (NOT removed by teardown):
 
@@ -208,7 +210,7 @@ Preserved (NOT removed by teardown):
 After teardown, verify on the host (OPERATOR-ONLY):
 
 ```bash
-ufw status verbose                            # 80/443/6443 rules absent; 22 present
+ufw status verbose                            # 80/443 rules absent; 22 present
 systemctl list-timers                         # stock certbot.timer still active (not removed by teardown)
 systemctl show -p OnFailure certbot.service   # OnFailure field now empty
 nginx -t                                      # nginx config valid with restored original vhost
@@ -221,8 +223,7 @@ nginx -t                                      # nginx config valid with restored
 | `FATAL: ADMIN_EMAIL is required` | `ADMIN_EMAIL` env var not set | Set `ADMIN_EMAIL=your@email.com` before running the script |
 | `FATAL: nginx config invalid after vhost install` | Repo vhost has a syntax error or certbot TLS files are missing | Script restores `.bak` automatically; fix the vhost and re-run |
 | `certbot renew --dry-run` fails to connect | Port 80 not reachable from the internet | Verify Timeweb perimeter firewall allows port 80 inbound |
-| `ufw rule 6443 without 'on wg0'` | 6443 exposed on public interface | Remove with `ufw delete allow 6443/tcp` and re-run bootstrap |
+| `ufw status` shows any `6443` allow rule | 6443 must not be publicly reachable | Remove with `ufw delete allow 6443/tcp` — 6443 must stay private behind the SSH local-forward |
 | `OnFailure= field empty after daemon-reload` | Drop-in directory name mismatch | Check that `/etc/systemd/system/certbot.service.d/onfailure.conf` exists (dir must be `certbot.service.d`, not `certbot-renew.service.d`) |
-| `FATAL: wg0 not found` | WireGuard tunnel not up | Complete Phase 6 operator bootstrap first — see `docs/operator-bootstrap.md` |
 
-See also: [`docs/operator-bootstrap.md`](operator-bootstrap.md) (Phase 6 WireGuard + RBAC bootstrap).
+See also: [`docs/operator-bootstrap.md`](operator-bootstrap.md) (Phase 6 RBAC + SSH-tunnel bootstrap).
