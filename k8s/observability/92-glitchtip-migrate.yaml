@@ -25,6 +25,16 @@ spec:
   # Auto-delete 10 min after completion so a re-apply runs a fresh Job.
   ttlSecondsAfterFinished: 600
   template:
+    metadata:
+      # app.kubernetes.io/name: glitchtip is load-bearing: it is the sole selector
+      # for allow-glitchtip-db-egress (egress to glitchtip-postgres:5432) and
+      # allow-glitchtip-postgres-ingress. Pods inherit labels only from
+      # template.metadata.labels, so without this block the migrate pod is denied
+      # postgres access under the Phase 17 default-deny netpol regime.
+      labels:
+        app.kubernetes.io/name: glitchtip
+        app.kubernetes.io/component: migrate
+        app.kubernetes.io/part-of: solid-stats
     spec:
       restartPolicy: Never
       # Reuse the glitchtip ServiceAccount created in 91-glitchtip.yaml.
