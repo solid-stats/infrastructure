@@ -63,16 +63,33 @@ echo "Webroot ready at $WEBROOT_PATH"
 echo "=== 3. Upstream resolution ==="
 
 if [[ -z "$UPSTREAM" && "${SKIP_UPSTREAM_CHECK}" != "1" ]]; then
-  echo "Discovering Grafana ClusterIP from k3s..."
-  UPSTREAM=$(kubectl get svc grafana -n monitoring \
-    -o jsonpath='{.spec.clusterIP}:{.spec.ports[0].port}')
+  # Discover the in-cluster Service ClusterIP for this domain. Each public obs
+  # subdomain maps to a different Service in a different namespace.
+  case "$DOMAIN" in
+    grafana.*)
+      echo "Discovering Grafana ClusterIP from k3s..."
+      UPSTREAM=$(kubectl get svc grafana -n monitoring \
+        -o jsonpath='{.spec.clusterIP}:{.spec.ports[0].port}')
+      UPSTREAM_DESC="Grafana (monitoring)"
+      ;;
+    errors.*)
+      echo "Discovering GlitchTip ClusterIP from k3s..."
+      UPSTREAM=$(kubectl get svc glitchtip-web -n error-tracking \
+        -o jsonpath='{.spec.clusterIP}:{.spec.ports[0].port}')
+      UPSTREAM_DESC="GlitchTip (error-tracking)"
+      ;;
+    *)
+      echo "FATAL: No upstream-discovery rule for DOMAIN '$DOMAIN' — add a case entry" >&2
+      exit 1
+      ;;
+  esac
   if [[ -z "$UPSTREAM" || "$UPSTREAM" == ":" ]]; then
-    echo "FATAL: Could not discover Grafana Service ClusterIP — is Grafana deployed in namespace monitoring?" >&2
+    echo "FATAL: Could not discover the ClusterIP for $UPSTREAM_DESC — is the Service deployed?" >&2
     exit 1
   fi
-  echo "Grafana upstream: $UPSTREAM"
+  echo "$UPSTREAM_DESC upstream: $UPSTREAM"
 elif [[ "${SKIP_UPSTREAM_CHECK}" == "1" ]]; then
-  echo "SKIP_UPSTREAM_CHECK=1 — skipping upstream discovery (errors. placeholder path, no proxy_pass needed)"
+  echo "SKIP_UPSTREAM_CHECK=1 — skipping upstream discovery (cert-only placeholder path, no proxy_pass substitution)"
 fi
 
 # ---------------------------------------------------------------------------
