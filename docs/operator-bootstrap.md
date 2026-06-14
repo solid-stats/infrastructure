@@ -4,7 +4,7 @@ This is a **one-time operator action**. CI (GitHub Actions) never creates the na
 never applies `k8s/staging/01-ci-rbac.yaml`. After this bootstrap is complete, all subsequent
 deploys are fully automated via the workflow in `.github/workflows/deploy-staging.yml`.
 
-For token and WireGuard key rotation after the initial setup, see
+For token and SSH key rotation after the initial setup, see
 [`docs/sa-token-rotation.md`](sa-token-rotation.md).
 
 ## Prerequisites
@@ -149,30 +149,33 @@ The output must include `IP Address:10.8.0.1`. If it does not, proceed with the 
 After regenerating the certificate, re-extract the CA cert (Step 4) because the old CA
 may have changed, and update the `K8S_CA_CERT` GitHub secret accordingly.
 
-## Step 6: Configure WireGuard secrets in GitHub
+## Step 6: Configure SSH tunnel secrets in GitHub
 
-The CI runner connects to the k3s API server over a WireGuard tunnel (peer IP `10.8.0.2`,
-VPS WireGuard IP `10.8.0.1`). Add the following secrets to the GitHub **staging** environment:
+CI reaches the k3s API via an SSH local-forward (`scripts/ssh-tunnel-up.sh`) to a
+forward-only SSH user on the VPS. The script opens `ssh -fN -L 16443:127.0.0.1:6443`
+to `${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}` and fail-closed probes `127.0.0.1:16443`.
+Port 6443 is **never exposed externally** — it is reached only through this forward to
+`127.0.0.1:6443` inside the VPS.
+
+Add the following secrets to the GitHub **staging** environment:
 
 | GitHub Secret | Description |
 |---------------|-------------|
-| `WG_PRIVATE_KEY` | WireGuard private key for the CI runner peer |
-| `WG_PEER_PUBLIC_KEY` | WireGuard public key of the VPS endpoint |
-| `WG_ENDPOINT` | VPS WireGuard endpoint in `HOST:51820` format |
+| `DEPLOY_SSH_PRIVATE_KEY` | Forward-only SSH private key for the CI runner |
+| `DEPLOY_SSH_KNOWN_HOSTS` | Pinned host key for the VPS (`ssh-keyscan -p 22 <host>` output) |
+| `DEPLOY_SSH_HOST` | VPS SSH host (hostname or IP) |
+| `DEPLOY_SSH_USER` | The forward-only VPS username |
 
-On the VPS, add the CI runner peer to the WireGuard interface configuration:
+**Forward-only VPS user:** create a dedicated non-login user whose `authorized_keys` entry
+is locked with the options prefix:
 
-```ini
-[Peer]
-PublicKey = <CI runner WireGuard public key>
-AllowedIPs = 10.8.0.2/32
+```
+restrict,port-forwarding,permitopen="127.0.0.1:6443",command="/bin/false" <PUBLIC_KEY>
 ```
 
-Then reload WireGuard on the VPS:
-
-```bash
-sudo wg syncconf wg0 <(sudo wg showconf wg0)
-```
+This ensures the key can **only** open the local-forward to the k3s API — it cannot run
+any commands or open any other port. The `restrict` option disables all other SSH
+capabilities (agent forwarding, X11, pty, etc.).
 
 ## Verification
 
@@ -191,5 +194,6 @@ connectivity:
 | `x509: certificate is valid for X, not 10.8.0.1` | SAN not patched | Repeat Step 5 |
 | `Forbidden: namespaces is forbidden` | CI tried to create namespace | Check workflow YAML — remove any `kubectl create namespace` step |
 | `secret has no token field` / empty token | Control plane has not yet populated the token | Wait 5 seconds and retry Step 3 |
-| `WireGuard handshake did not complete` | 51820/udp egress blocked | Check VPS firewall; ensure UDP 51820 is open; check GitHub runner network |
+| `Load key ... error in libcrypto` | `DEPLOY_SSH_PRIVATE_KEY` secret is missing its trailing newline | Re-set the secret ensuring the key value ends with a newline |
+| `Permission denied (publickey)` | Key not yet authorized on the VPS forward-only user, or wrong `DEPLOY_SSH_USER` | Verify the public key is in the forward-only user's `authorized_keys` and the username matches `DEPLOY_SSH_USER` |
 | `Unauthorized` after token extraction | Token extracted before control plane populated it | Re-extract token (Step 4) and update `K8S_TOKEN` |

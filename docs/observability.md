@@ -10,7 +10,7 @@ postgres-exporter + RabbitMQ native metrics**, deployed into the `monitoring` na
 - Dashboards (vendored JSON → ConfigMaps): `k8s/observability/dashboards/`, shipped by
   `60-grafana-dashboards.yaml`.
 - Deploy workflow: `.github/workflows/deploy-observability.yml` (own concurrency group
-  `infrastructure-obs-deploy`, `obs-ci-deployer` token + WireGuard, independent of runtime CD).
+  `infrastructure-obs-deploy`, `obs-ci-deployer` token + SSH local-forward, independent of runtime CD).
 - Validation: `scripts/validate-phase-13.sh` (live), `scripts/validate-obs-manifests.py` (static).
 
 All obs workloads carry `priorityClassName: obs-background` so the scheduler evicts them
@@ -32,7 +32,7 @@ Total ~290Mi — comfortably under the rendered requests/limits and the node hea
 ## One-time operator bootstrap
 
 These steps touch live cluster state and the GitHub secret store; run once before (or as part of)
-the first observability deploy. WireGuard up, or SSH to the staging node where `kubectl` is local.
+the first observability deploy. Reach kubectl via the SSH local-forward (scripts/ssh-tunnel-up.sh), or SSH to the staging node where `kubectl` is local.
 
 ### 1. Prometheus RBAC (operator-applied; obs-ci-deployer cannot create cluster RBAC)
 
