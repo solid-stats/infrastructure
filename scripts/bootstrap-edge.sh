@@ -150,14 +150,11 @@ else
   ufw allow 80/tcp comment 'HTTP public + ACME challenges' || true
   ufw allow 443/tcp comment 'HTTPS public' || true
 
-  # wg0 pre-check: refuse to apply the 6443 rule if WireGuard tunnel is not up.
-  # Without the interface qualifier the k3s API would be exposed on the public interface.
-  if ip link show wg0 >/dev/null 2>&1; then
-    ufw allow in on wg0 to any port 6443 proto tcp comment 'k3s API via WireGuard only' || { echo "FATAL: ufw 6443/wg0 rule failed" >&2; exit 1; }
-  else
-    echo "FATAL: wg0 not found — refusing to apply firewall (6443 would be publicly exposed); bring up the WireGuard tunnel first" >&2
-    exit 1
-  fi
+  # 6443 is intentionally NOT exposed externally. The k3s API is reached only via
+  # the SSH local-forward to 127.0.0.1:6443 (scripts/ssh-tunnel-up.sh). The ufw
+  # default deny incoming policy keeps 6443 private — no ufw rule for 6443 is
+  # needed or wanted. Adding one without an interface qualifier would expose the
+  # k3s API on the public interface, which is forbidden.
 
   ufw --force enable || { echo "FATAL: ufw --force enable failed" >&2; exit 1; }
   echo "Firewall rules:"
@@ -170,6 +167,6 @@ echo "OPERATOR VERIFICATION REQUIRED (live host only — not CI):"
 echo "  1. nginx -t                             (validate nginx config)"
 echo "  2. certbot renew --dry-run              (verify renewal pipeline)"
 echo "  3. systemctl show -p OnFailure certbot.service  (confirm drop-in wired)"
-echo "  4. ufw status verbose                   (confirm split-tunnel rules)"
+echo "  4. ufw status verbose                   (confirm edge rules: 22/80/443; 6443 intentionally absent — reached via SSH local-forward)"
 echo "  5. curl -I https://$DOMAIN/             (smoke check public HTTPS)"
 echo "  See: docs/edge-bootstrap.md for full runbook"
