@@ -5,7 +5,7 @@ set -euo pipefail
 # Exits 1 on first failure.
 #
 # Run after all Phase 13 obs manifests have been applied to the cluster
-# (WireGuard tunnel up from operator workstation or CI):
+# (kubectl reachable — SSH local-forward up from operator workstation or CI, or run on the staging node):
 #   bash scripts/validate-phase-13.sh
 #
 # Flags:

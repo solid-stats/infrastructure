@@ -111,7 +111,7 @@ used to produce or compare new statistics.
 ## Entry Points
 - Human docs: `README.md`, `docs/staging.md`, `docs/backup-restore.md`.
 - CI/CD: `.github/workflows/deploy-staging.yml`.
-- CI deploy helpers: `scripts/wg-tunnel-up.sh`, `scripts/kubeconfig-setup.sh`.
+- CI deploy helpers: `scripts/ssh-tunnel-up.sh` (opens SSH local-forward 127.0.0.1:16443 → k3s API 6443), `scripts/kubeconfig-setup.sh`.
 - Manual backup script: `scripts/backup-postgres-now.sh`.
 - Runtime manifests: `k8s/staging/*.yaml`.
 <!-- GSD:architecture-end -->

@@ -30,7 +30,6 @@ jobs:
         run: |
           set -euo pipefail
           test -d k8s/staging
-          test -f scripts/wg-tunnel-up.sh
           test -f scripts/ssh-tunnel-up.sh
           test -f scripts/kubeconfig-setup.sh
           test -f scripts/render-staging-secrets.py

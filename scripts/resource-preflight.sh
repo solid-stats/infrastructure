@@ -5,7 +5,7 @@ set -euo pipefail
 # Run before applying any observability workload to record headroom.
 #
 # Usage: KUBECONFIG=/path/to/kubeconfig bash scripts/resource-preflight.sh
-#        (or from operator workstation with WireGuard tunnel up)
+#        (kubectl reachable via the SSH local-forward, or run on the k3s node over SSH)
 #
 # Output: timestamped snapshot written to OUTPUT_DIR (default /tmp).
 # Environment variables:

@@ -19,8 +19,9 @@ repository owns how those images are wired together in staging.
 - `k8s/staging/` - Kubernetes manifests applied to the staging k3s cluster.
 - `scripts/render-staging-secrets.py` - renders staging Kubernetes secrets from
   CI environment variables.
-- `scripts/wg-tunnel-up.sh` - brings up the CI WireGuard tunnel to the k3s API
-  and gates on a successful handshake before any `kubectl`.
+- `scripts/ssh-tunnel-up.sh` - opens an SSH local-forward (127.0.0.1:16443 ->
+  k3s API 6443) over TCP and fail-closed gates on the forwarded port being
+  reachable before any `kubectl`.
 - `scripts/kubeconfig-setup.sh` - builds a kubeconfig from the `ci-deployer`
   ServiceAccount token and k3s CA for in-CI `kubectl`.
 - `scripts/backup-postgres-now.sh` - creates and waits for a one-off backup job
@@ -53,8 +54,8 @@ deploy:
 python3 scripts/validate-staging.py
 ```
 
-Deploy runs in CI on merge to `master`: the workflow opens a WireGuard tunnel to
-the closed k3s API, builds a kubeconfig from the `ci-deployer` ServiceAccount
+Deploy runs in CI on merge to `master`: the workflow opens an SSH local-forward to
+the closed k3s API (`scripts/ssh-tunnel-up.sh`), builds a kubeconfig from the `ci-deployer` ServiceAccount
 token, and applies `k8s/staging/` (excluding the operator-managed
 `01-ci-rbac.yaml`). It then waits for `statefulset/postgres`,
 `statefulset/rabbitmq`, `deployment/server-2`, and `deployment/replay-parser-2`,
