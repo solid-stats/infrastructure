@@ -4,13 +4,13 @@ milestone: v3.0
 milestone_name: Staging Observability Stack
 status: executing
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-14T00:32:40.485Z"
+last_updated: "2026-06-14T00:42:19.150Z"
 last_activity: 2026-06-14 -- Phase 16 execution started
 progress:
   total_phases: 7
   completed_phases: 3
   total_plans: 24
-  completed_plans: 18
+  completed_plans: 19
   percent: 43
 ---
 
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 16 (Error Tracking (GlitchTip)) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 16
+Plan: 2 of 5
+Status: Ready to execute
 Last activity: 2026-06-14 -- Phase 16 execution started
 
 Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
@@ -81,6 +81,7 @@ Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 | Phase 14-public-edge-grafana-tls P03 | 12 | 2 tasks | 2 files |
 | Phase 15-log-stack P01 | 35 | 3 tasks | 3 files |
 | Phase 15-log-stack P03 | 20 | 2 tasks | 4 files |
+| Phase 16-error-tracking-glitchtip P01 | 3m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -132,6 +133,7 @@ Recent decisions affecting current work:
 - [Phase ?]: Loki SingleBinary: replication_factor 1 + chunksCache/resultsCache disabled to prevent OOM
 - [Phase ?]: Corrected metric names: loki_boltdb_shipper_compactor_running + loki_write_sent_entries_total
 - [Phase ?]: ClusterRole stripped from 70-loki.yaml via Python YAML doc-split (obs-ci-deployer namespace-scoped, same as Phase 13 Prometheus)
+- [Phase ?]: GlitchTip postgres uid=70 requires PGDATA subdir to avoid PVC bind error
 
 ### Pending Todos
 
@@ -212,7 +214,7 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-06-13T23:27:10.714Z
+Last session: 2026-06-14T00:42:09.746Z
 Stopped at: Completed 12-02-PLAN.md
 Resume file: None
 
