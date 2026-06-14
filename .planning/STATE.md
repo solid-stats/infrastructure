@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Staging Observability Stack
-status: completed
+status: verifying
 stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-14T09:55:00.000Z"
-last_activity: 2026-06-14 -- Phase 16 complete (GlitchTip live + public TLS cutover)
+last_updated: "2026-06-14T03:07:37.724Z"
+last_activity: 2026-06-14 -- Phase 16 complete
 progress:
   total_phases: 7
   completed_phases: 5
-  total_plans: 26
-  completed_plans: 26
+  total_plans: 27
+  completed_plans: 25
   percent: 71
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 Phase: 16 — COMPLETE
 Plan: 5 of 5
-Status: Phase 16 complete (GlitchTip live; errors.solid-stats.ru public TLS)
+Status: Phase complete — ready for verification
 Last activity: 2026-06-14 -- Phase 16 complete
 
 Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)

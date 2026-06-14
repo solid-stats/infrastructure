@@ -63,7 +63,7 @@ a trimmed, single-replica footprint (no VPS resize).
 
 ### Validation (VAL)
 
-- [ ] **VAL-01**: A re-runnable validation script verifies the full stack on any fresh staging deploy: Prometheus target health, Grafana datasource health, a Loki query, and a forced GlitchTip test event.
+- [x] **VAL-01**: A re-runnable validation script verifies the full stack on any fresh staging deploy: Prometheus target health, Grafana datasource health, a Loki query, and a forced GlitchTip test event.
 
 ## v2 Requirements
 
@@ -126,7 +126,7 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 | ERR-03 | Phase 16 | Complete |
 | NET-01 | Phase 17 | Pending |
 | NET-02 | Phase 17 | Pending |
-| VAL-01 | Phase 17 | Pending |
+| VAL-01 | Phase 17 | Complete |
 | SDK-01 | Phase 18 | Pending |
 
 **Coverage:**
