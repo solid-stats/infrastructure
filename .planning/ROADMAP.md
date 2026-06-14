@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 14: Public Edge & Grafana TLS** - DNS, the independent host-nginx obs-edge bootstrap, and certbot make Grafana reachable over TLS at its public staging URL behind local-user auth.
 - [ ] **Phase 15: Log Stack** - Loki + Alloy collect cluster logs with ~7-day retention and a LogQL query returns recent `server-2` lines in Grafana.
 - [x] **Phase 16: Error Tracking (GlitchTip)** - GlitchTip runs with its own PostgreSQL, closed registration, and a public TLS URL on the reused obs-edge; a forced test error appears and a project DSN exists.
-- [ ] **Phase 17: Network Isolation & Stack Validation** - NetworkPolicies isolate the obs namespaces without breaking scraping, and one re-runnable script validates the whole stack on any fresh deploy.
+- [x] **Phase 17: Network Isolation & Stack Validation** - NetworkPolicies isolate the obs namespaces without breaking scraping, and one re-runnable script validates the whole stack on any fresh deploy.
 - [ ] **Phase 18: App-side Error SDK** - Errors-only Sentry SDK integration is prepared as separate app-repo PRs for server-2, replay-parser-2, and replays-fetcher using the GlitchTip DSN.
 
 ## Phase Details
@@ -333,7 +333,7 @@ Plans:
 
 **Wave 2** *(live apply + validation — operator-gated, autonomous:false)*
 
-- [ ] 17-03-PLAN.md — NET-01 enforcement proof (resolve A1/A2/A3/A4) + substitute placeholders + RBAC apply + validate-stack green before/after netpol apply + docs/network-policies.md (NET-01, NET-02, VAL-01) [wave 2]
+- [x] 17-03-PLAN.md — NET-01 enforcement proof (resolve A1/A2/A3/A4) + substitute placeholders + RBAC apply + validate-stack green before/after netpol apply + docs/network-policies.md (NET-01, NET-02, VAL-01) [wave 2]
 
 #### Phase 18: App-side Error SDK
 
@@ -371,5 +371,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 14. Public Edge & Grafana TLS | v3.0 | 3/4 | In Progress|  |
 | 15. Log Stack | v3.0 | 4/4 | Complete   | 2026-06-13 |
 | 16. Error Tracking (GlitchTip) | v3.0 | 5/5 | Complete   | 2026-06-14 |
-| 17. Network Isolation & Stack Validation | v3.0 | 2/3 | In Progress|  |
+| 17. Network Isolation & Stack Validation | v3.0 | 3/3 | Complete   | 2026-06-14 |
 | 18. App-side Error SDK | v3.0 | 0/TBD | Not started | - |

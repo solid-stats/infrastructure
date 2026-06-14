@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Staging Observability Stack
-status: verifying
-stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-14T03:11:24.906Z"
-last_activity: 2026-06-14 -- Phase 16 complete
+status: in-progress
+stopped_at: Completed 17-03-PLAN.md
+last_updated: "2026-06-14T10:30:00.000Z"
+last_activity: 2026-06-14 -- Phase 17 complete (NetworkPolicies live, stack validated)
 progress:
   total_phases: 7
-  completed_phases: 5
-  total_plans: 27
-  completed_plans: 26
-  percent: 71
+  completed_phases: 6
+  total_plans: 29
+  completed_plans: 29
+  percent: 86
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 17 — Network Isolation & Stack Validation
+**Current focus:** Phase 18 — App-side Error SDK (cross-repo)
 
 ## Current Position
 
-Phase: 16 — COMPLETE
-Plan: 5 of 5
-Status: Phase complete — ready for verification
-Last activity: 2026-06-14 -- Phase 16 complete
+Phase: 17 — COMPLETE
+Plan: 3 of 3
+Status: Phase 17 complete (17 NetworkPolicies live; validate-stack green before/after)
+Last activity: 2026-06-14 -- Phase 17 complete
 
 Progress: [░░░░░░░░░░] 0% (0 plans complete this milestone)
 
