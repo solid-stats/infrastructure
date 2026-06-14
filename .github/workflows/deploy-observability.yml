@@ -56,7 +56,7 @@ jobs:
           WG_LOCAL_IP: 10.8.0.3/32
         run: bash scripts/wg-tunnel-up.sh
 
-      - name: Setup kubeconfig (obs-ci-deployer)
+      - name: Setup kubeconfig (obs-ci-deployer, monitoring)
         env:
           K8S_TOKEN: ${{ secrets.K8S_OBS_TOKEN }}
           K8S_CA_CERT: ${{ secrets.K8S_CA_CERT }}
@@ -65,38 +65,98 @@ jobs:
           K8S_CONTEXT_NAME: obs-k3s-staging
         run: bash scripts/kubeconfig-setup.sh
 
+      - name: Setup kubeconfig (obs-ci-deployer, error-tracking)
+        # K8S_OBS_ET_TOKEN: the error-tracking obs-ci-deployer SA token.
+        # Minted from: kubectl -n error-tracking get secret obs-ci-deployer-token -o jsonpath='{.data.token}' | base64 -d
+        # Store as GitHub Actions secret K8S_OBS_ET_TOKEN in the staging environment.
+        # This token is scoped only to the error-tracking namespace Role — it cannot
+        # touch monitoring or app namespaces (T-16-11 mitigation).
+        env:
+          K8S_TOKEN: ${{ secrets.K8S_OBS_ET_TOKEN }}
+          K8S_CA_CERT: ${{ secrets.K8S_CA_CERT }}
+          K8S_NAMESPACE: error-tracking
+          K8S_USER_NAME: obs-ci-deployer-et
+          K8S_CONTEXT_NAME: obs-et-k3s-staging
+        run: bash scripts/kubeconfig-setup.sh
+
       - name: Render and apply obs secrets
+        # The renderer emits both monitoring and error-tracking secrets in a single
+        # multi-doc YAML. Split by namespace so each token only touches its own namespace:
+        #   - monitoring docs  → applied with obs-k3s-staging context (K8S_OBS_TOKEN)
+        #   - error-tracking docs → applied with obs-et-k3s-staging context (K8S_OBS_ET_TOKEN)
+        # Split strategy: write full rendered YAML to tmpfile, then extract docs by namespace
+        # using python3 stdlib (no awk/csplit) to produce two namespace-specific files.
+        # Both files are trap-removed on exit (T-16-10: no secrets in CI logs).
         env:
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           PG_MONITOR_PASSWORD: ${{ secrets.PG_MONITOR_PASSWORD }}
+          GLITCHTIP_SECRET_KEY: ${{ secrets.GLITCHTIP_SECRET_KEY }}
+          GLITCHTIP_POSTGRES_PASSWORD: ${{ secrets.GLITCHTIP_POSTGRES_PASSWORD }}
+          GLITCHTIP_SUPERUSER_EMAIL: ${{ secrets.GLITCHTIP_SUPERUSER_EMAIL }}
+          GLITCHTIP_SUPERUSER_PASSWORD: ${{ secrets.GLITCHTIP_SUPERUSER_PASSWORD }}
         run: |
           set -euo pipefail
-          tmp=$(mktemp)
-          trap 'rm -f "$tmp"' EXIT
-          python3 scripts/render-obs-secrets.py > "$tmp"
-          kubectl apply -n monitoring -f "$tmp"
+          tmp_all=$(mktemp)
+          tmp_monitoring=$(mktemp)
+          tmp_et=$(mktemp)
+          trap 'rm -f "$tmp_all" "$tmp_monitoring" "$tmp_et"' EXIT
 
-      - name: Apply obs manifests
+          python3 scripts/render-obs-secrets.py > "$tmp_all"
+
+          # Split multi-doc YAML into per-namespace temp files (T-16-11).
+          # scripts/split-obs-secrets.py routes docs by "namespace:" field:
+          #   monitoring docs  → tmp_monitoring (applied with monitoring-scoped token)
+          #   error-tracking docs → tmp_et (applied with error-tracking-scoped token)
+          python3 scripts/split-obs-secrets.py "$tmp_all" "$tmp_monitoring" "$tmp_et"
+
+          kubectl --context obs-k3s-staging apply -f "$tmp_monitoring"
+          kubectl --context obs-et-k3s-staging apply -f "$tmp_et"
+
+      - name: Apply obs manifests (monitoring)
         run: |
           set -euo pipefail
-          # Apply top-level k8s/observability/*.yaml only.
+          # Apply top-level k8s/observability/*.yaml only — excluding 9*-glitchtip*.yaml
+          # (those are applied to error-tracking in the next step).
           # values/ and dashboards/ are inputs to helm template; they are not applied directly.
           # 60-grafana-dashboards.yaml ships dashboard ConfigMaps (vendored JSONs).
           # --server-side: the node-exporter/rabbitmq dashboard JSONs exceed the 256KB
           # last-applied-configuration annotation that client-side apply writes; server-side
           # apply stores no such annotation. --force-conflicts claims field ownership
           # idempotently across re-runs.
-          find k8s/observability -maxdepth 1 -name '*.yaml' | sort \
-            | sed 's/^/-f /' | xargs kubectl apply --server-side --force-conflicts -n monitoring
+          find k8s/observability -maxdepth 1 -name '*.yaml' \
+            ! -name '9*-glitchtip*.yaml' | sort \
+            | sed 's/^/-f /' | xargs kubectl --context obs-k3s-staging apply \
+              --server-side --force-conflicts -n monitoring
 
-      - name: Verify rollouts
+      - name: Apply GlitchTip manifests (error-tracking)
         run: |
           set -euo pipefail
-          kubectl -n monitoring rollout status deployment/prometheus-server --timeout=300s
-          kubectl -n monitoring rollout status deployment/grafana --timeout=300s
-          kubectl -n monitoring rollout status deployment/kube-state-metrics --timeout=120s
-          kubectl -n monitoring rollout status daemonset/node-exporter --timeout=120s
-          kubectl -n monitoring rollout status deployment/postgres-exporter --timeout=120s
-          kubectl -n monitoring rollout status statefulset/loki --timeout=180s
-          kubectl -n monitoring rollout status daemonset/alloy --timeout=120s
-          echo "All obs workloads rolled out successfully"
+          # Apply only the 9*-glitchtip*.yaml manifests into error-tracking.
+          # These already declare namespace: error-tracking in their metadata; -n is
+          # redundant but consistent. The obs-et-k3s-staging context uses the
+          # error-tracking-scoped K8S_OBS_ET_TOKEN (T-16-11: cannot touch monitoring).
+          find k8s/observability -maxdepth 1 -name '9*-glitchtip*.yaml' | sort \
+            | sed 's/^/-f /' | xargs kubectl --context obs-et-k3s-staging apply \
+              --server-side --force-conflicts -n error-tracking
+
+      - name: Verify rollouts (monitoring)
+        run: |
+          set -euo pipefail
+          kubectl --context obs-k3s-staging -n monitoring rollout status deployment/prometheus-server --timeout=300s
+          kubectl --context obs-k3s-staging -n monitoring rollout status deployment/grafana --timeout=300s
+          kubectl --context obs-k3s-staging -n monitoring rollout status deployment/kube-state-metrics --timeout=120s
+          kubectl --context obs-k3s-staging -n monitoring rollout status daemonset/node-exporter --timeout=120s
+          kubectl --context obs-k3s-staging -n monitoring rollout status deployment/postgres-exporter --timeout=120s
+          kubectl --context obs-k3s-staging -n monitoring rollout status statefulset/loki --timeout=180s
+          kubectl --context obs-k3s-staging -n monitoring rollout status daemonset/alloy --timeout=120s
+          echo "All monitoring workloads rolled out successfully"
+
+      - name: Verify GlitchTip rollouts (error-tracking)
+        run: |
+          set -euo pipefail
+          kubectl --context obs-et-k3s-staging -n error-tracking rollout status statefulset/glitchtip-postgres --timeout=300s
+          kubectl --context obs-et-k3s-staging -n error-tracking rollout status deployment/glitchtip-web --timeout=300s
+          kubectl --context obs-et-k3s-staging -n error-tracking rollout status deployment/glitchtip-worker --timeout=300s
+          kubectl --context obs-et-k3s-staging -n error-tracking wait \
+            --for=condition=complete job/glitchtip-migrate --timeout=180s
+          echo "All GlitchTip workloads rolled out and migrate Job completed"
