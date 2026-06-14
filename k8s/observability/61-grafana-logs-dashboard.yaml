@@ -18,7 +18,7 @@ data:
         "solid-stats"
       ],
       "schemaVersion": 39,
-      "version": 2,
+      "version": 3,
       "editable": true,
       "style": "dark",
       "graphTooltip": 0,
@@ -161,7 +161,7 @@ data:
             {
               "refId": "A",
               "datasource": "Loki",
-              "expr": "sum by (app) (count_over_time({namespace=~\"$namespace\", app=~\"$app\"} |~ \"(?i)$search\" |~ \"$level\" [$__interval]))",
+              "expr": "sum by (app) (count_over_time({namespace=~\"$namespace\", app=~\"$app\"} |~ \"(?i)$search\" |~ `$level` [$__interval]))",
               "legendFormat": "{{app}}",
               "queryType": "range"
             }
@@ -204,7 +204,7 @@ data:
                 {
                   "refId": "A",
                   "datasource": "Loki",
-                  "expr": "{namespace=~\"$namespace\", app=~\"$app\"} |~ \"(?i)$search\" |~ \"$level\"",
+                  "expr": "{namespace=~\"$namespace\", app=~\"$app\"} |~ \"(?i)$search\" |~ `$level`",
                   "queryType": "range",
                   "maxLines": 500
                 }
