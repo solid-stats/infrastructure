@@ -41,10 +41,12 @@ _CLUSTER_SCOPED_KINDS = {
     "CustomResourceDefinition",
 }
 
-# Cluster RBAC kinds forbidden in the CI-applied obs directory (T-15-07).
-# These must live in k8s/staging/ operator-bootstrap files only.
-# obs-ci-deployer is namespace-scoped and cannot create cluster-scoped RBAC.
-_FORBIDDEN_OBS_KINDS = {"ClusterRole", "ClusterRoleBinding"}
+# RBAC kinds forbidden in the CI-applied obs directory — both cluster-scoped
+# (ClusterRole/ClusterRoleBinding, T-15-07) AND namespaced (Role/RoleBinding).
+# All RBAC must live in k8s/staging/ operator-bootstrap files only.
+# obs-ci-deployer holds no roles/rolebindings verbs, so it 403s when CI tries to
+# create/patch namespaced RBAC — just as it cannot create cluster-scoped RBAC.
+_FORBIDDEN_OBS_KINDS = {"ClusterRole", "ClusterRoleBinding", "Role", "RoleBinding"}
 
 
 def _split_documents(text: str) -> list[str]:
@@ -175,20 +177,21 @@ def _check_namespace(doc: str, path: Path) -> list[str]:
 
 
 def _check_no_clusterrole(doc: str, path: Path) -> list[str]:
-    """Fail if a document in k8s/observability/ has a cluster RBAC kind.
+    """Fail if a document in k8s/observability/ has an RBAC kind (cluster-scoped or namespaced).
 
-    ClusterRole and ClusterRoleBinding must live in operator-bootstrap files
-    under k8s/staging/ only. obs-ci-deployer is namespace-scoped and will
-    receive a 403 trying to create cluster-scoped resources (T-15-07, Pitfall 4).
-    Move any such document to k8s/staging/03-alloy-rbac.yaml or similar.
+    ClusterRole, ClusterRoleBinding, Role, and RoleBinding must all live in
+    operator-bootstrap files under k8s/staging/ only. obs-ci-deployer is
+    namespace-scoped and holds no roles/rolebindings verbs, so it receives a 403
+    trying to create/patch any RBAC — cluster-scoped or namespaced
+    (T-15-07, Pitfall 4). Move any such document to k8s/staging/01-obs-rbac.yaml.
     """
     errors = []
     kind = _top_value(doc, "kind")
     if kind in _FORBIDDEN_OBS_KINDS:
         errors.append(
             f"{path.relative_to(ROOT)}: {kind} must not appear in the CI-applied "
-            f"k8s/observability/ directory — move cluster RBAC to a k8s/staging/ "
-            f"operator-bootstrap file (obs-ci-deployer cannot create cluster-scoped resources)"
+            f"k8s/observability/ directory — move it to a k8s/staging/ operator-bootstrap "
+            f"file (obs-ci-deployer cannot create/patch RBAC)"
         )
     return errors
 
