@@ -80,8 +80,8 @@ echo "=== 4. Remove ufw edge rules ==="
 
 # delete_rule <grep-needle> <ufw-delete-args...>
 # Distinguishes "rule absent" (benign skip) from "delete failed" (FATAL). Blanket
-# '2>/dev/null || echo skipping' previously reported a failed delete — e.g. the
-# 6443/wg0 rule still active — as a clean absence, masking a real reversibility gap.
+# '2>/dev/null || echo skipping' previously reported a failed delete as a clean
+# absence, masking a real reversibility gap.
 delete_rule() {
   local needle="$1"
   shift
@@ -94,13 +94,12 @@ delete_rule() {
 
 delete_rule "80/tcp" allow 80/tcp
 delete_rule "443/tcp" allow 443/tcp
-delete_rule "6443/tcp on wg0" allow in on wg0 to any port 6443 proto tcp
 echo "ufw edge rules removed (SSH rule preserved, firewall remains enabled)"
 ufw status verbose
 
 # ---------------------------------------------------------------------------
 echo "=== Teardown complete ==="
-echo "Removed: certbot.service.d drop-in, failure handler, deploy hook, ufw 80/443/6443-wg0"
+echo "Removed: certbot.service.d drop-in, failure handler, deploy hook, ufw 80/443"
 echo "Restored: original nginx vhost from .bak (or removed if no backup)"
 echo "Preserved: /etc/letsencrypt/ certs, ufw 22/tcp SSH rule, ufw enabled"
 echo "OPERATOR VERIFICATION:"

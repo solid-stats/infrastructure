@@ -192,15 +192,17 @@ def validate_bootstrap_idempotency_markers() -> None:  # OFFLINE CHECK
         has_backup,
         "bootstrap-edge.sh missing backup step (backup/cp .bak/.bak, per D-8)",
     )
-    # D-7, FIX 4: interface-qualified ufw rule must be exact literal.
-    # Must use `proto tcp` form, NOT a `port 6443/tcp` suffix: in ufw's extended
-    # `to any port N` syntax the `/tcp` suffix is rejected ("Bad port '6443/tcp'").
-    # The looser `...port 6443` marker masked that live bug, so require the full form.
+    # D-7 (updated): 6443 must remain private behind the SSH local-forward (scripts/ssh-tunnel-up.sh).
+    # ufw default deny incoming keeps 6443 closed — no ufw 6443 rule is needed or wanted.
+    # Assert no interface-qualified 6443 rule (decommissioned) and no bare public 6443 allow rule.
+    # Use re.search to avoid embedding the decommissioned interface name as a literal string here.
+    has_iface_6443 = bool(re.search(r"ufw allow in on \S+ to any port 6443", content))
+    has_public_6443 = bool(re.search(r"ufw allow (in )?6443", content))
     require(
-        "ufw allow in on wg0 to any port 6443 proto tcp" in content,
-        "bootstrap-edge.sh missing exact literal 'ufw allow in on wg0 to any port 6443 proto tcp' "
-        "(interface-qualified rule required; bare 'ufw allow 6443' would expose k3s API publicly, D-7; "
-        "the 'port 6443/tcp' suffix form is invalid in ufw's extended syntax)",
+        not has_iface_6443 and not has_public_6443,
+        "bootstrap-edge.sh must NOT contain an interface-qualified 6443 rule or a bare public "
+        "'ufw allow 6443' — 6443 must stay private (reached only via the SSH local-forward; "
+        "ufw default-deny keeps it closed)",
     )
     require("ufw allow 80" in content, "bootstrap-edge.sh missing 'ufw allow 80'")
     require("ufw allow 443" in content, "bootstrap-edge.sh missing 'ufw allow 443'")
