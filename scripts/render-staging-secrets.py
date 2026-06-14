@@ -42,6 +42,14 @@ s3_bucket = required("S3_BUCKET")
 s3_access_key_id = required("S3_ACCESS_KEY_ID")
 s3_secret_access_key = required("S3_SECRET_ACCESS_KEY")
 
+# SENTRY_DSN: GlitchTip project DSN for the app-side error SDK (Phase 18). Optional —
+# an empty DSN makes the Sentry SDK a no-op, so app deploys never break before an app
+# wires the SDK. Value is the public-URL form https://<public_key>@errors.solid-stats.ru/1
+# (apps egress to the public edge; the edge->glitchtip ingress is already allowed by the
+# Phase 17 netpol). Injected into every app runtime Secret via envFrom. See
+# docs/error-sdk-handoff.md and ../plans/<app>/SENTRY-WIRE-BRIEF.md.
+sentry_dsn = os.environ.get("SENTRY_DSN", "")
+
 fetcher_replay_source_url = required("REPLAYS_FETCHER_REPLAY_SOURCE_URL")
 fetcher_replay_source_transport = os.environ.get("REPLAYS_FETCHER_REPLAY_SOURCE_TRANSPORT", "direct")
 fetcher_replay_source_ssh_host = os.environ.get("REPLAYS_FETCHER_REPLAY_SOURCE_SSH_HOST", "")
@@ -96,6 +104,7 @@ documents = [
             "S3_BUCKET": s3_bucket,
             "S3_ACCESS_KEY_ID": s3_access_key_id,
             "S3_SECRET_ACCESS_KEY": s3_secret_access_key,
+            "SENTRY_DSN": sentry_dsn,
         },
     ),
     secret(
@@ -105,9 +114,10 @@ documents = [
             "REPLAY_PARSER_S3_BUCKET": s3_bucket,
             "AWS_ACCESS_KEY_ID": s3_access_key_id,
             "AWS_SECRET_ACCESS_KEY": s3_secret_access_key,
+            "SENTRY_DSN": sentry_dsn,
         },
     ),
-    secret("replays-fetcher-runtime", fetcher_runtime),
+    secret("replays-fetcher-runtime", {**fetcher_runtime, "SENTRY_DSN": sentry_dsn}),
 ]
 
 print("\n---\n".join(documents))
