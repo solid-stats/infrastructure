@@ -396,3 +396,81 @@ roleRef:
   kind: ClusterRole
   name: grafana-clusterrole
   apiGroup: rbac.authorization.k8s.io
+---
+# ---------------------------------------------------------------------------
+# postgres-exporter namespaced RBAC — operator-applied, NOT from CI.
+# Extracted from 40-postgres-exporter.yaml helm render because obs-ci-deployer
+# is namespace-scoped and cannot create/patch namespaced roles/rolebindings.
+# These bind the workload SA to an empty Role (grant nothing); kept for helm
+# re-render fidelity. Applied once by operator alongside the rest of this file.
+# ---------------------------------------------------------------------------
+# Source: prometheus-postgres-exporter/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: postgres-exporter
+  namespace: monitoring
+  labels:
+    helm.sh/chart: prometheus-postgres-exporter-8.0.0
+    app.kubernetes.io/name: prometheus-postgres-exporter
+    app.kubernetes.io/instance: postgres-exporter
+    app.kubernetes.io/version: "v0.19.1"
+---
+# Source: prometheus-postgres-exporter/templates/rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: postgres-exporter
+  namespace: monitoring
+  labels:
+    helm.sh/chart: prometheus-postgres-exporter-8.0.0
+    app.kubernetes.io/name: prometheus-postgres-exporter
+    app.kubernetes.io/instance: postgres-exporter
+    app.kubernetes.io/version: "v0.19.1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: postgres-exporter
+subjects:
+- kind: ServiceAccount
+  name: postgres-exporter
+---
+# ---------------------------------------------------------------------------
+# grafana namespaced RBAC — operator-applied, NOT from CI.
+# Extracted from 50-grafana.yaml helm render because obs-ci-deployer is
+# namespace-scoped and cannot create/patch namespaced roles/rolebindings.
+# These bind the workload SA to an empty Role (grant nothing); kept for helm
+# re-render fidelity. Applied once by operator alongside the rest of this file.
+# ---------------------------------------------------------------------------
+# Source: grafana/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "12.3.1"
+rules: []
+---
+# Source: grafana/templates/rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    helm.sh/chart: grafana-10.5.15
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: grafana
+    app.kubernetes.io/version: "12.3.1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: grafana
+subjects:
+- kind: ServiceAccount
+  name: grafana
+  namespace: monitoring
