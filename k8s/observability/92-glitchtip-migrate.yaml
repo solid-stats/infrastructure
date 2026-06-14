@@ -1,0 +1,99 @@
+# First-run order step 1 (ERR-01): migrate. The seed Job (93) waits for this Job
+# to complete via a showmigrations DB poll (no extra RBAC needed — see 93-glitchtip-seed.yaml).
+# SERVER_ROLE finding recorded in 16-02-SUMMARY.md.
+#
+# Apply order (16-04):
+#   Wave A: 90-glitchtip-postgres.yaml, 91-glitchtip.yaml, 92-glitchtip-migrate.yaml
+#   Wave B (after migrate Job reaches Complete): 93-glitchtip-seed.yaml
+#
+# This Job is safe to re-apply: ttlSecondsAfterFinished auto-deletes the completed Job
+# pod after 600 s, so a subsequent `kubectl apply` of this file creates a fresh Job.
+# Django's migrate is idempotent: re-running after schema is current is a no-op.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: glitchtip-migrate
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: glitchtip
+    app.kubernetes.io/component: migrate
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  completions: 1
+  backoffLimit: 3
+  # Auto-delete 10 min after completion so a re-apply runs a fresh Job.
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      # Reuse the glitchtip ServiceAccount created in 91-glitchtip.yaml.
+      # If 91-glitchtip.yaml has not been applied yet, the SA is absent and
+      # the Job pod will be Pending; apply 91-glitchtip.yaml first (Wave A).
+      serviceAccountName: glitchtip
+      automountServiceAccountToken: false
+      priorityClassName: obs-background
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+      initContainers:
+        # Pitfall 2 / Pattern 3: never migrate before postgres is ready.
+        # pg_isready exits 0 only when the server accepts connections.
+        - name: wait-for-postgres
+          image: postgres:17-alpine
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h glitchtip-postgres.error-tracking.svc -U glitchtip; do
+                echo "waiting for glitchtip-postgres..."; sleep 2
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: migrate
+          image: glitchtip/glitchtip:v6.1.8
+          imagePullPolicy: IfNotPresent
+          # manage.py migrate --noinput applies all pending Django migrations.
+          # Does NOT depend on SERVER_ROLE / bin/start.sh — called directly.
+          # (SERVER_ROLE finding and bin/start.sh verification deferred to 16-04
+          # live-apply step where docker/kubectl exec inspection is available.)
+          command: ["./manage.py", "migrate", "--noinput"]
+          env:
+            # Pitfall 3: explicit empty string — absent VALKEY_URL defaults to
+            # redis://valkey:6379/0, causing ConnectionError in postgres-only mode.
+            - name: VALKEY_URL
+              value: ""
+            # T-16-06: no inline secret values (STRIDE Information Disclosure).
+            # DATABASE_URL rendered by 16-03: postgresql://glitchtip:PWD@
+            #   glitchtip-postgres.error-tracking.svc:5432/glitchtip?sslmode=disable
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: DATABASE_URL
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: SECRET_KEY
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            # readOnlyRootFilesystem intentionally omitted: manage.py writes
+            # .pyc files and Django may write to /tmp during startup.
+          resources:
+            # One-shot sizing per 16-RESEARCH Resource Sizing table (ASSUMED — A2).
+            # Plan 16-04 must confirm via kubectl top after a live run.
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

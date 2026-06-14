@@ -138,11 +138,18 @@ def _check_no_secret_values(doc: str, path: Path) -> list[str]:
 
 
 def _check_namespace(doc: str, path: Path) -> list[str]:
-    """Fail if a namespaced resource declares a namespace other than 'monitoring'."""
+    """Fail if a namespaced resource declares a namespace outside the allowed obs set.
+
+    Allowed namespaces:
+    - monitoring  — Phase 13+ metrics/logs stack
+    - error-tracking — Phase 16+ GlitchTip error tracking (Pitfall 5 guard)
+    """
     errors = []
     kind = _top_value(doc, "kind")
     if kind in _CLUSTER_SCOPED_KINDS or kind is None:
         return errors
+
+    _ALLOWED_OBS_NAMESPACES = {"monitoring", "error-tracking"}
 
     # Find namespace in metadata block
     in_metadata = False
@@ -159,10 +166,10 @@ def _check_namespace(doc: str, path: Path) -> list[str]:
                 namespace_value = line.split(":", 1)[1].strip()
                 break
 
-    if namespace_value is not None and namespace_value != "monitoring":
+    if namespace_value is not None and namespace_value not in _ALLOWED_OBS_NAMESPACES:
         errors.append(
             f"{path.relative_to(ROOT)}: {kind} resource declares namespace: {namespace_value!r} "
-            f"(expected 'monitoring')"
+            f"(expected one of: {sorted(_ALLOWED_OBS_NAMESPACES)})"
         )
     return errors
 
