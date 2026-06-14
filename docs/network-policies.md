@@ -39,9 +39,19 @@ post-apply validation passed first try:
 
 1. **k8s API egress** — `kube-state-metrics` (watches cluster objects) and the Grafana sidecars
    (`sc-dashboard`/`sc-datasource` watch ConfigMaps) need the API server under default-deny-egress.
-   Added Policy 11 `allow-apiserver-egress` (namespace-wide `podSelector:{}` → 10.43.0.1/32:443;
-   also covers Alloy). prometheus/loki/postgres-exporter don't need it but a blanket API-server
-   allow is the standard pattern and not a lateral-movement risk (RBAC bounds each SA).
+   Added Policy 11 `allow-apiserver-egress` (namespace-wide `podSelector:{}`; also covers Alloy).
+   prometheus/loki/postgres-exporter don't need it but a blanket API-server allow is the standard
+   pattern and not a lateral-movement risk (RBAC bounds each SA).
+
+   **Post-DNAT correction (found live when the grafana dashboard sidecar was restarted):**
+   kube-router enforces egress AFTER kube-proxy DNAT, so allowing only the kubernetes.default
+   ClusterIP `10.43.0.1:443` is NOT sufficient — the post-DNAT destination is the real apiserver
+   endpoint, the node IP `89.223.124.200:6443` (`kubectl get endpoints kubernetes`). The policy
+   allows BOTH (ClusterIP:443 + node-IP:6443). Symptom of the missing node-IP rule: a pod that
+   opens a FRESH API connection after the policy is applied gets `Connection refused` and
+   crash-loops (the k8s-sidecar), while pods whose API watch was already established before the
+   policy keep working — which is why validate-stack passed at apply time (no obs pod had been
+   restarted yet).
 2. **node-exporter scrape egress** — node-exporter runs `hostNetwork`, so its Service endpoint is
    the node IP `89.223.124.200:9100`, which the intra-ns `podSelector:{}` egress rule can't match.
    Added an explicit `ipBlock 89.223.124.200/32:9100` to `allow-prometheus-scrape-egress`.

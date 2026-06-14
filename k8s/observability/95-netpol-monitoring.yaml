@@ -330,9 +330,20 @@ spec:
   policyTypes:
     - Egress
   egress:
+    # kube-router enforces egress AFTER kube-proxy DNAT, so allowing only the
+    # kubernetes.default ClusterIP (10.43.0.1:443) is NOT enough — the post-DNAT
+    # destination is the real apiserver endpoint, the node IP :6443 (verified live,
+    # `kubectl get endpoints kubernetes`). Without the node-IP:6443 rule, any pod that
+    # opens a FRESH API connection after this policy is applied (e.g. a restarted
+    # grafana dashboard sidecar, kube-state-metrics, alloy) gets Connection refused.
+    # Both are kept: the ClusterIP for CNIs that match pre-DNAT, the endpoint for kube-router.
     - to:
         - ipBlock:
             cidr: 10.43.0.1/32
+        - ipBlock:
+            cidr: 89.223.124.200/32
       ports:
         - port: 443
+          protocol: TCP
+        - port: 6443
           protocol: TCP
