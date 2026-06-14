@@ -1,9 +1,10 @@
-# ServiceAccount Token and WireGuard Key Rotation
+# ServiceAccount Token and CI SSH Key Rotation
 
 This runbook covers periodic rotation of the CI deployer ServiceAccount token and the
-WireGuard key pair used by GitHub Actions to reach the k3s API. Long-lived SA tokens are
-a security risk without rotation discipline — CD-09 requires documented cadence and
-procedure. For the one-time initial setup that creates these credentials, see
+forward-only CI SSH key used by GitHub Actions to reach the k3s API over the SSH
+local-forward. Long-lived SA tokens are a security risk without rotation discipline —
+CD-09 requires documented cadence and procedure. For the one-time initial setup that
+creates these credentials, see
 [`docs/operator-bootstrap.md`](operator-bootstrap.md).
 
 **Important ordering rule:** Update GitHub environment secrets **before** rotating the VPS
@@ -16,7 +17,7 @@ credentials when it connects. Both rotations must happen in the same maintenance
 |---|---|
 | **Owner** | Operator — the person who performed the initial bootstrap |
 | **Cadence** | At minimum quarterly; rotate immediately if a token or key is suspected compromised |
-| **Scope** | SA token (`K8S_TOKEN`) and WireGuard key pair (`WG_PRIVATE_KEY` + `WG_PEER_PUBLIC_KEY`) — both in the same window |
+| **Scope** | SA token (`K8S_TOKEN`) and CI SSH key (`DEPLOY_SSH_PRIVATE_KEY`, plus the matching public key on the VPS forward-only user) — both in the same window |
 | **Window rule** | Update GitHub secrets first, then rotate on the VPS |
 
 ## Step 1: Rotate the ServiceAccount Token
@@ -59,58 +60,54 @@ kubectl get secret ci-deployer-token \
 In **Settings → Environments → staging**, update `K8S_TOKEN` with the value from the
 command above. **Never commit the token value to git.**
 
-## Step 2: Rotate the WireGuard Key Pair
+## Step 2: Rotate the CI SSH Key
 
-**2a. Generate a new WireGuard private key** for the CI runner peer:
-
-```bash
-wg genkey
-```
-
-Store the output securely (e.g. a password manager). Do **not** commit it to git.
-
-**2b. Derive the corresponding public key:**
+**2a. Generate a new SSH keypair** for the forward-only CI user:
 
 ```bash
-echo "<private-key>" | wg pubkey
+ssh-keygen -t ed25519 -N '' -f /tmp/ci-forward-key
 ```
 
-Replace `<private-key>` with the value from Step 2a.
+This creates `/tmp/ci-forward-key` (private) and `/tmp/ci-forward-key.pub` (public).
+Store the private key securely (e.g. a password manager). Do **not** commit it to git.
 
-**2c. Update GitHub environment secrets** (Settings → Environments → staging):
+**2b. Update GitHub environment secrets** (Settings → Environments → staging):
 
 | GitHub Secret | New value |
 |---------------|-----------|
-| `WG_PRIVATE_KEY` | New private key from Step 2a |
-| `WG_PEER_PUBLIC_KEY` | New public key from Step 2b |
+| `DEPLOY_SSH_PRIVATE_KEY` | Contents of `/tmp/ci-forward-key` (include the trailing newline) |
+
+Refresh `DEPLOY_SSH_KNOWN_HOSTS` only if the VPS host key changed (rare — host key
+changes on OS reinstall or SSH server reconfiguration). If needed:
+
+```bash
+ssh-keyscan -p 22 <VPS_HOST>
+```
 
 **Never commit key values to git.**
 
-**2d. Update the VPS WireGuard configuration:**
+**2c. Update the VPS forward-only user's authorized_keys:**
 
-On the VPS, replace the CI peer's `PublicKey` entry in the WireGuard interface config
-(typically `/etc/wireguard/wg0.conf`) with the new public key from Step 2b, then reload
-without dropping existing peers:
+On the VPS, replace the existing public key line in the forward-only user's
+`~/.ssh/authorized_keys` with the new public key from Step 2a, keeping the options prefix:
 
-```bash
-sudo wg syncconf wg0 <(sudo wg-quick strip wg0)
+```
+restrict,port-forwarding,permitopen="127.0.0.1:6443",command="/bin/false" <NEW_PUBLIC_KEY>
 ```
 
-If `wg syncconf` is unavailable on the VPS distribution, restart the interface instead:
+Replace `<NEW_PUBLIC_KEY>` with the contents of `/tmp/ci-forward-key.pub`. The options
+prefix (`restrict,port-forwarding,permitopen=...`) must remain exactly as-is — it limits
+the key to opening only the local-forward to the k3s API.
+
+**2d. Verify the rotation** by triggering a CI deploy (branch push or `workflow_dispatch`).
+Confirm the SSH local-forward opens successfully and `kubectl auth whoami` shows the
+`ci-deployer` identity (not `system:anonymous`).
+
+**2e. Delete the temporary key files** from the operator workstation:
 
 ```bash
-sudo systemctl restart wg-quick@wg0
+rm -f /tmp/ci-forward-key /tmp/ci-forward-key.pub
 ```
-
-**2e. Verify the handshake** from the VPS after triggering a CI deploy (or after the
-runner brings up the tunnel manually):
-
-```bash
-sudo wg show wg0 latest-handshakes
-```
-
-The CI peer entry must show a recent timestamp (within the last few minutes). A timestamp
-of `0` means no handshake has occurred yet.
 
 ## Step 3: Verify Both Rotations
 
@@ -130,11 +127,11 @@ errors appear during `kubectl apply` or `kubectl rollout status`.
 |---------|-------------|-----|
 | `Unauthorized` after token rotation | `K8S_TOKEN` in GitHub still holds the old token | Re-extract the token (Step 1d) and update the secret again |
 | `secret has no token field` / empty token | Control plane still populating the token | Wait 5 seconds and retry Step 1c–1d |
-| `WireGuard handshake did not complete` | VPS peer config not yet updated, or new public key does not match new private key | Verify the VPS config has the correct public key from Step 2b; if keys were regenerated again, redo Step 2 end-to-end |
-| `WG_PEER_PUBLIC_KEY` rejected | Public key derived from wrong private key | Regenerate the key pair (Steps 2a–2b) and update both secrets |
-| Rotation fails mid-window | Partial update — old GitHub secret still valid | Revert `K8S_TOKEN` or `WG_PRIVATE_KEY` to the previous value while diagnosing; the old credentials remain valid until the VPS side is also rotated |
+| SSH local-forward fails to open / `Permission denied (publickey)` | New key not yet in the VPS forward-only user's authorized_keys, or `DEPLOY_SSH_PRIVATE_KEY` secret missing its trailing newline | Verify the VPS authorized_keys has the new public key with the correct options prefix; re-set `DEPLOY_SSH_PRIVATE_KEY` ensuring a trailing newline |
+| `ExitOnForwardFailure` / port 6443 refused | `permitopen` does not match `127.0.0.1:6443` on the forward-only user | Check the authorized_keys options prefix on the VPS |
+| Rotation fails mid-window | Partial update — old GitHub secret still valid | Revert `DEPLOY_SSH_PRIVATE_KEY` to the previous value while diagnosing; the old credentials remain valid until the VPS side is also rotated |
 
 ## Related Documents
 
 - [`docs/operator-bootstrap.md`](operator-bootstrap.md) — initial namespace, RBAC, and
-  WireGuard setup (first rotation follows the same Secret deletion pattern in Step 2)
+  SSH-tunnel setup (first rotation follows the same pattern as Step 2)

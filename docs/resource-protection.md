@@ -28,7 +28,7 @@ ssh root@89.223.124.200
 df -h /
 ```
 
-Alternatively, run the preflight snapshot (requires kubectl access via WireGuard):
+Alternatively, run the preflight snapshot (requires kubectl access via the SSH local-forward):
 
 ```bash
 bash scripts/resource-preflight.sh

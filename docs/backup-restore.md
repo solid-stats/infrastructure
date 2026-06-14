@@ -57,7 +57,7 @@ it into an ephemeral scratch PostgreSQL instance (never the live `postgres-0` po
 
 ### Run the drill
 
-From a machine with `kubectl` access to the cluster (WireGuard tunnel must be up):
+From a machine with `kubectl` access to the cluster (SSH local-forward to the k3s API must be up):
 
 ```bash
 K8S_NAMESPACE=solid-stats-staging bash scripts/restore-drill.sh

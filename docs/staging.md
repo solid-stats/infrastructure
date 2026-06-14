@@ -2,8 +2,8 @@
 
 This repository owns the staging runtime infrastructure for Solid Stats.
 
-For remote `kubectl` access from a workstation over WireGuard (instead of running
-kubectl on the VPS over SSH), see [WireGuard Access](./wireguard-access.md).
+For remote `kubectl` access from a workstation via the SSH local-forward (instead of
+running kubectl on the VPS directly), see [k3s API Access](./k3s-api-access.md).
 
 ## Scope
 
@@ -63,9 +63,10 @@ RabbitMQ refuses to boot unless the cookie file is accessible by the owner only.
 
 The `staging` GitHub environment must define:
 
-- `WG_PRIVATE_KEY` — CI runner WireGuard private key
-- `WG_PEER_PUBLIC_KEY` — VPS WireGuard public key
-- `WG_ENDPOINT` — VPS WireGuard endpoint `HOST:PORT`
+- `DEPLOY_SSH_PRIVATE_KEY` — forward-only CI SSH private key
+- `DEPLOY_SSH_KNOWN_HOSTS` — pinned VPS host key (`ssh-keyscan -p 22 <host>` output)
+- `DEPLOY_SSH_HOST` — VPS SSH host
+- `DEPLOY_SSH_USER` — forward-only VPS username
 - `K8S_TOKEN` — `ci-deployer` ServiceAccount token (from `01-ci-rbac.yaml`)
 - `K8S_CA_CERT` — k3s API server CA certificate (PEM)
 - `GHCR_USERNAME`
@@ -130,14 +131,14 @@ Application repositories publish images to GHCR. To deploy one in staging:
    - `replays-fetcher`: `k8s/staging/50-replays-fetcher.yaml`
 3. Do not use `latest`.
 4. Run `python3 scripts/validate-staging.py`.
-5. Merge to `master`; the infrastructure workflow deploys over the WireGuard tunnel.
+5. Merge to `master`; the infrastructure workflow deploys over the SSH local-forward.
 
 ## Deploy and Verify
 
 Deploy is CI-native: it runs on the GitHub `staging` environment, not from a
 workstation. Pull requests run `validate` + a server-side `kubectl apply
---dry-run`; merging to `master` runs the full deploy. The deploy job brings up a
-WireGuard tunnel to the closed k3s API (`scripts/wg-tunnel-up.sh`), builds a
+--dry-run`; merging to `master` runs the full deploy. The deploy job opens an
+SSH local-forward to the closed k3s API (`scripts/ssh-tunnel-up.sh`), builds a
 kubeconfig from the `ci-deployer` ServiceAccount token
 (`scripts/kubeconfig-setup.sh`), then applies `k8s/staging/` excluding the
 operator-managed `01-ci-rbac.yaml`.

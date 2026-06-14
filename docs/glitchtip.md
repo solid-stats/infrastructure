@@ -38,7 +38,7 @@ or app namespaces.
 ### Existing secrets (already set)
 
 `K8S_OBS_TOKEN`, `K8S_CA_CERT`, `GRAFANA_ADMIN_PASSWORD`, `PG_MONITOR_PASSWORD`,
-`WG_PRIVATE_KEY`, `WG_PEER_PUBLIC_KEY`, `WG_ENDPOINT` — set during Phase 13/14.
+and the `DEPLOY_SSH_*` tunnel secrets — see docs/operator-bootstrap.md.
 
 ---
 
@@ -85,7 +85,7 @@ meaningful after the seed Job has run — `validate-phase-16.sh` runs seed first
 
 ### Automated live check (ERR-01/02/03)
 
-Requires kubectl access to the cluster (WireGuard tunnel up):
+Requires kubectl access to the cluster (kubectl reachable via the SSH local-forward):
 
 ```bash
 # Full check — ERR-01 pods + ERR-02 registration closed + ERR-03 forced error
@@ -140,7 +140,7 @@ completes the cutover once the operator adds the DNS A record.
 
 ### Cutover command
 
-Run from the operator workstation (WireGuard tunnel up to staging VPS):
+Run from the operator workstation (SSH local-forward to the staging VPS up):
 
 ```bash
 DOMAIN=errors.solid-stats.ru \

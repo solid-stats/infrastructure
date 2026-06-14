@@ -78,7 +78,7 @@ This file contains no secrets. All values are prefix strings and day counts. Saf
 
 **Pre-requisites:**
 
-1. WireGuard tunnel to the staging cluster is up (`wg show` confirms the interface is active).
+1. SSH local-forward to the staging cluster is up (`kubectl cluster-info` confirms the API is reachable).
 2. `KUBECONFIG` is configured for `solid-stats-staging` (`kubectl get ns solid-stats-staging`
    should succeed).
 3. The empirical probe (Section 4) has been run and the Evidence table (Section 5) is filled with
@@ -137,7 +137,7 @@ Timeweb S3 lifecycle API parity with AWS S3 is rated MEDIUM confidence. The
 `get-bucket-lifecycle-configuration` and `put-bucket-lifecycle-configuration` endpoints must be
 implemented for the retention policy to take effect. Run this probe before relying on the policy.
 
-**Pre-requisites:** same cluster access as Section 3 (WireGuard up, KUBECONFIG set).
+**Pre-requisites:** same cluster access as Section 3 (SSH local-forward up, KUBECONFIG set).
 
 **Steps:**
 
