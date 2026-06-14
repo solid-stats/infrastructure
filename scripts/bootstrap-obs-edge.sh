@@ -149,7 +149,7 @@ VHOST_SYM="$NGINX_SITES_ENABLED/$REPO_VHOST_NAME"
 if [[ -d "/etc/letsencrypt/live/$DOMAIN" ]]; then
   # Cert lineage already exists — install the final TLS vhost directly.
   echo "Cert lineage found for $DOMAIN — installing final TLS vhost directly"
-  cp "$REPO_VHOST" "$VHOST_CONF"
+  sed "s|UPSTREAM_PLACEHOLDER|${UPSTREAM}|g" "$REPO_VHOST" > "$VHOST_CONF"
   ln -sf "$VHOST_CONF" "$VHOST_SYM"
   _nginx_gate_reload "$VHOST_CONF" "$VHOST_SYM" "$BAK_VHOST"
 else
@@ -200,7 +200,7 @@ fi
 # swap in the final repo TLS vhost now that the cert files exist.
 if [[ "$CERT_INSTALLED" == "1" ]]; then
   echo "Cert issued — swapping HTTP-only temp vhost for final TLS vhost..."
-  cp "$REPO_VHOST" "$VHOST_CONF"
+  sed "s|UPSTREAM_PLACEHOLDER|${UPSTREAM}|g" "$REPO_VHOST" > "$VHOST_CONF"
   ln -sf "$VHOST_CONF" "$VHOST_SYM"
   _nginx_gate_reload "$VHOST_CONF" "$VHOST_SYM" "$BAK_VHOST"
 fi
