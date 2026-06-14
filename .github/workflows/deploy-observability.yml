@@ -115,8 +115,10 @@ jobs:
       - name: Apply obs manifests (monitoring)
         run: |
           set -euo pipefail
-          # Apply top-level k8s/observability/*.yaml only — excluding 9*-glitchtip*.yaml
-          # (those are applied to error-tracking in the next step).
+          # Apply top-level k8s/observability/*.yaml only — excluding:
+          #   9*-glitchtip*.yaml        (error-tracking workloads, next step)
+          #   96-netpol-error-tracking.yaml (error-tracking NetworkPolicy, next step)
+          # 95-netpol-monitoring.yaml is included here (monitoring NetworkPolicy, NET-02).
           # values/ and dashboards/ are inputs to helm template; they are not applied directly.
           # 60-grafana-dashboards.yaml ships dashboard ConfigMaps (vendored JSONs).
           # --server-side: the node-exporter/rabbitmq dashboard JSONs exceed the 256KB
@@ -124,18 +126,22 @@ jobs:
           # apply stores no such annotation. --force-conflicts claims field ownership
           # idempotently across re-runs.
           find k8s/observability -maxdepth 1 -name '*.yaml' \
-            ! -name '9*-glitchtip*.yaml' | sort \
+            ! -name '9*-glitchtip*.yaml' \
+            ! -name '96-netpol-error-tracking.yaml' | sort \
             | sed 's/^/-f /' | xargs kubectl --context obs-k3s-staging apply \
               --server-side --force-conflicts -n monitoring
 
       - name: Apply GlitchTip manifests (error-tracking)
         run: |
           set -euo pipefail
-          # Apply only the 9*-glitchtip*.yaml manifests into error-tracking.
-          # These already declare namespace: error-tracking in their metadata; -n is
+          # Apply error-tracking namespace manifests into the obs-et-k3s-staging context:
+          #   9*-glitchtip*.yaml            — GlitchTip workloads (web, worker, postgres, jobs)
+          #   96-netpol-error-tracking.yaml — error-tracking NetworkPolicy (NET-02)
+          # Both sets declare namespace: error-tracking in their metadata; -n is
           # redundant but consistent. The obs-et-k3s-staging context uses the
           # error-tracking-scoped K8S_OBS_ET_TOKEN (T-16-11: cannot touch monitoring).
-          find k8s/observability -maxdepth 1 -name '9*-glitchtip*.yaml' | sort \
+          find k8s/observability -maxdepth 1 \
+            \( -name '9*-glitchtip*.yaml' -o -name '96-netpol-error-tracking.yaml' \) | sort \
             | sed 's/^/-f /' | xargs kubectl --context obs-et-k3s-staging apply \
               --server-side --force-conflicts -n error-tracking
 
