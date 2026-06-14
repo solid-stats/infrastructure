@@ -297,7 +297,12 @@ Plans:
   2. Self-registration is disabled and only the seeded local superuser can log in (verified against the registration endpoint).
   3. The `errors.stats-staging.solid-stats.ru` vhost serves GlitchTip over valid TLS (reusing the Phase 14 obs-edge bootstrap with GlitchTip's ClusterIP), and a project + DSN exist with a deliberately forced staging test error appearing in GlitchTip.
 
-**Plans**: TBD
+**Plans**: 5 plans
+- [ ] 16-01-PLAN.md — GlitchTip own-postgres StatefulSet + web/worker Deployments + ClusterIP Service (ERR-01) [wave 1]
+- [ ] 16-02-PLAN.md — migrate Job + superuser seed Job (first-run order) + bin/start.sh SERVER_ROLE check (ERR-01) [wave 1]
+- [ ] 16-03-PLAN.md — secret renderer + validator + obs deploy workflow extensions for error-tracking; validate-phase-16.sh + test-glitchtip-ingest.sh + docs/glitchtip.md (ERR-01/02/03) [wave 1]
+- [ ] 16-04-PLAN.md — live deploy + migrate/seed in order + org/project/DSN + forced-error test + right-size (ERR-01/02/03) [wave 2]
+- [ ] 16-05-PLAN.md — errors. vhost cutover to GlitchTip ClusterIP + operator DNS/cert public TLS (ERR-03) [wave 3]
 **UI hint**: yes
 
 #### Phase 17: Network Isolation & Stack Validation
