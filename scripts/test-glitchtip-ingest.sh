@@ -39,6 +39,10 @@ NAMESPACE="${NAMESPACE:-error-tracking}"
 PF_PORT="${PF_PORT:-18000}"
 SUPERUSER_TOKEN="${SUPERUSER_TOKEN:-}"
 ISSUE_POLL_TRIES="${ISSUE_POLL_TRIES:-12}"
+# Sentry-compatible issues endpoint is /api/0/projects/<org>/<project>/issues/.
+# Defaults match the org/project created in 16-04 (verified live).
+GLITCHTIP_ORG_SLUG="${GLITCHTIP_ORG_SLUG:-solidstats}"
+GLITCHTIP_PROJECT_SLUG="${GLITCHTIP_PROJECT_SLUG:-staging}"
 
 # ---------------------------------------------------------------------------
 # Parse DSN: http://PUBLIC_KEY@any-host/PROJECT_ID
@@ -74,7 +78,7 @@ trap 'kill "$pf_pid" 2>/dev/null || true' EXIT
 
 # Wait until /api/0/config/ responds (up to 20 s)
 deadline=$(( $(date +%s) + 20 ))
-until curl -sf "http://localhost:${PF_PORT}/api/0/config/" >/dev/null 2>&1; do
+until curl -sf "http://localhost:${PF_PORT}/_health/" >/dev/null 2>&1; do
   if [[ $(date +%s) -ge $deadline ]]; then
     echo "FAIL: port-forward to glitchtip-web did not become ready within 20s" >&2
     exit 1
@@ -113,7 +117,10 @@ ${EVENT_JSON}"
 # ---------------------------------------------------------------------------
 # POST envelope to ingest endpoint
 # ---------------------------------------------------------------------------
-INGEST_URL="http://localhost:${PF_PORT}/api/${PROJECT_ID}/envelope/"
+# GlitchTip authenticates ingest by the DSN public key passed as the ?sentry_key=
+# query param (what real Sentry SDKs send), NOT by the `dsn` field in the envelope
+# header — the header-only form returns 403 (verified live, 16-04).
+INGEST_URL="http://localhost:${PF_PORT}/api/${PROJECT_ID}/envelope/?sentry_key=${PUBLIC_KEY}"
 echo "POSTing Sentry envelope to ${INGEST_URL}..."
 echo "  event_id=${EVENT_ID}"
 echo "  marker=${MARKER}"
@@ -149,7 +156,7 @@ if [[ -n "$SUPERUSER_TOKEN" ]]; then
   for i in $(seq 1 "$ISSUE_POLL_TRIES"); do
     issues_json="$(curl -sf \
       -H "Authorization: Bearer ${SUPERUSER_TOKEN}" \
-      "http://localhost:${PF_PORT}/api/0/projects/-/staging-project/issues/?query=$(python3 -c "import urllib.parse; print(urllib.parse.quote('Phase 16'))")" \
+      "http://localhost:${PF_PORT}/api/0/projects/${GLITCHTIP_ORG_SLUG}/${GLITCHTIP_PROJECT_SLUG}/issues/?query=$(python3 -c "import urllib.parse; print(urllib.parse.quote('Phase 16'))")" \
       2>/dev/null || echo '[]')"
     match="$(echo "$issues_json" | python3 -c "
 import sys, json

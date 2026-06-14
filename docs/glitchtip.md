@@ -50,21 +50,34 @@ GlitchTip requires a strict init sequence. CI enforces it automatically:
 Wave 1 — CI apply (deploy-observability.yml):
   1. glitchtip-postgres StatefulSet starts (90-glitchtip-postgres.yaml)
   2. glitchtip-web + glitchtip-worker start — wait on postgres readiness (91-glitchtip.yaml)
-  3. glitchtip-migrate Job runs manage.py migrate --noinput (92-glitchtip-migrate.yaml)
+  3. glitchtip-migrate Job runs migrate --noinput THEN createcachetable (92-glitchtip-migrate.yaml)
      → initContainer polls pg_isready before migrate starts
-     → web/worker initContainers poll showmigrations before serving traffic
+     → createcachetable creates the django_cache DB table the PostgreSQL-only cache
+       backend needs; WITHOUT it the worker's task consumer crashes on first cache
+       write and the queue never drains (verified live, 16-04). This is why migrate
+       MUST run before web/worker start — the migrate Job is the gate.
 
   4. glitchtip-seed Job runs manage.py createsuperuser --noinput (93-glitchtip-seed.yaml)
      → initContainer polls showmigrations to confirm migrate is complete
 
 Wave 2 — Operator (16-04, run manually after CI deploy):
-  5. Create org + project + DSN via GlitchTip API (scripts/seed-glitchtip-org.sh)
-     → stores DSN in a known location for the validate script
+  5. Create org + project + DSN directly against the models (the v6 REST org-creation
+     API is gated by enableOrganizationCreation=false, so use manage.py shell):
+       kubectl exec deploy/glitchtip-web -n error-tracking -- ./manage.py shell -c "<<py>>"
+     creating Organization(name=...), Team, Project, and reading the auto-created
+     ProjectKey.public_key. The live staging values: org slug `solidstats`,
+     project slug `staging`, PROJECT_ID `1`. The DSN is
+     `http://<ProjectKey.public_key>@errors.solid-stats.ru/1`.
 ```
 
 `ENABLE_USER_REGISTRATION=False` is set from the very first boot on both web and worker.
-Registration is closed before any superuser exists — no window where an anonymous user
-could register.
+
+Caveat (verified live, 16-04): GlitchTip's `/api/settings/` reports
+`enableUserRegistration: true` while **zero users exist** — the "first user can always
+self-register" bootstrap in `apps/users/utils.py` (`settings.ENABLE_USER_REGISTRATION
+or not User.objects.exists()`). The Django setting is correctly `False` the whole time;
+once the seed superuser exists the flag reads `false`. So the ERR-02 assertion is only
+meaningful after the seed Job has run — `validate-phase-16.sh` runs seed first.
 
 ---
 
@@ -99,9 +112,15 @@ bash scripts/test-glitchtip-ingest.sh
 The script:
 1. Opens `kubectl port-forward svc/glitchtip-web 18000:8000 -n error-tracking`
 2. Builds a 3-line Sentry envelope (header + item header + event payload)
-3. POSTs to `http://localhost:18000/api/PROJECT_ID/envelope/`
-4. Asserts HTTP 200 or 202 (not 403 — a 403 means the DSN public key is wrong)
-5. If `SUPERUSER_TOKEN` is set, polls the issues API to confirm the event appears
+3. POSTs to `http://localhost:18000/api/PROJECT_ID/envelope/?sentry_key=PUBLIC_KEY`
+   — GlitchTip authenticates ingest by the `?sentry_key=` query param (what real
+   Sentry SDKs send), NOT by the `dsn` field in the envelope header; the header-only
+   form returns 403 (verified live, 16-04).
+4. Asserts HTTP 200 or 202 (not 403 — a 403 means the DSN public key is wrong or the
+   `?sentry_key=` query param is missing)
+5. If `SUPERUSER_TOKEN` is set, polls `/api/0/projects/<org>/<project>/issues/` to
+   confirm the event appears (defaults to `solidstats`/`staging`, overridable via
+   `GLITCHTIP_ORG_SLUG`/`GLITCHTIP_PROJECT_SLUG`)
 
 ---
 
@@ -143,10 +162,11 @@ See `docs/obs-edge-bootstrap.md` for full details on the bootstrap script.
 ### Smoke test after cutover
 
 ```bash
-# Verify TLS + response
-curl -I https://errors.solid-stats.ru/api/0/config/
+# Verify TLS + response (v6 config endpoint is /api/settings/, NOT /api/0/config/)
+curl -s https://errors.solid-stats.ru/api/settings/ | python3 -m json.tool
 
-# Expected: HTTP/2 200 with {"user_registration_enabled":false,...}
+# Expected: HTTP 200 with {"enableUserRegistration": false, "version": "6.1.8", ...}
+# Health endpoint for probes / quick liveness: GET /_health/ → 200 "ok"
 ```
 
 ---
@@ -163,10 +183,20 @@ Key GlitchTip v6 env vars set in `k8s/observability/91-glitchtip.yaml`:
 | `ENABLE_USER_REGISTRATION` | `"False"` | hardcoded — never open from boot |
 | `GLITCHTIP_DOMAIN` | `https://errors.solid-stats.ru` | hardcoded |
 | `TRUSTED_PROXIES` | `"*"` | hardcoded — required behind nginx |
-| `SERVER_ROLE` | `web` or `worker` | hardcoded per Deployment |
+| `SERVER_ROLE` | `web` or `worker` | hardcoded per Deployment — `bin/start.sh` dispatches on it (confirmed live) |
 
 Secrets are rendered at CI deploy time by `scripts/render-obs-secrets.py` from GitHub
 environment secrets. No values appear in git or CI logs.
+
+**Image / security context notes (verified live, 16-04):**
+- Image tag is `glitchtip/glitchtip:6.1.8` — **no `v` prefix** (the repo dropped it
+  after v6.0.3; `v6.1.8` is a Docker Hub 404).
+- The image's `app` user is **uid/gid 5000**. Because the pods run `runAsNonRoot:true`
+  and the image names the user (not a numeric uid), every glitchtip-image container
+  pins `runAsUser:5000`/`runAsGroup:5000` explicitly or kubelet fails with
+  `CreateContainerConfigError`. The migrate Job's pg_isready initContainer overrides
+  to uid 70 (the postgres user).
+- Probes use `/_health/` (200 "ok"); the v6 public config is `/api/settings/`.
 
 ---
 
@@ -192,11 +222,29 @@ kubectl apply -f k8s/observability/93-glitchtip-seed.yaml
 
 ### Envelope POST returns 403
 
-The `GLITCHTIP_DSN` public key does not match the project. Retrieve the correct DSN
-from the GlitchTip UI or from the 16-04 seed script output, then re-run:
+Either the `?sentry_key=` query param is missing (GlitchTip ignores the `dsn` field
+in the envelope header for auth) or the public key does not match the project.
+`test-glitchtip-ingest.sh` already appends `?sentry_key=PUBLIC_KEY`; if calling the
+endpoint by hand, include it. Retrieve the correct DSN from the GlitchTip UI or the
+16-04 ProjectKey, then re-run:
 
 ```bash
 GLITCHTIP_DSN=http://CORRECT_PUBKEY@host/PROJECT_ID bash scripts/test-glitchtip-ingest.sh
+```
+
+### Forced error accepted (HTTP 200) but no issue ever appears
+
+The envelope is enqueued to the `ingest` queue but the worker is not draining it.
+Root cause (seen live in 16-04): the worker booted before the `django_cache` table
+existed, so its task consumer thread crashed on the first cache write while the
+scheduler thread kept logging `Enqueuing due task`. The migrate Job now runs
+`createcachetable`, so a fresh deploy is fine. If you hit it on an existing cluster,
+ensure the table exists and restart the worker:
+
+```bash
+kubectl exec deploy/glitchtip-web -n error-tracking -- ./manage.py createcachetable
+kubectl rollout restart deploy/glitchtip-worker -n error-tracking
+# worker log should then show: "Processing batch of N tasks from queue ingest"
 ```
 
 ### Web pod OOMKilled

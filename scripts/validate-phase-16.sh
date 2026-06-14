@@ -91,7 +91,7 @@ start_port_forward() {
 
   # Wait until the endpoint responds (up to 20 s)
   local deadline=$(( $(date +%s) + 20 ))
-  until curl -sf "http://localhost:${pf_port}/api/0/config/" >/dev/null 2>&1; do
+  until curl -sf "http://localhost:${pf_port}/_health/" >/dev/null 2>&1; do
     if [[ $(date +%s) -ge $deadline ]]; then
       echo "FAIL: port-forward to glitchtip-web did not become ready within 20s" >&2
       exit 1
@@ -133,24 +133,16 @@ if [[ -z "$postgres_phase" ]]; then
 fi
 assert "ERR-01: glitchtip-postgres pod phase" "$postgres_phase" "Running"
 
+# web/worker pods carry app.kubernetes.io/name=glitchtip + component={web,worker}
+# (the postgres pod is the one named glitchtip-postgres). Select by component.
 web_phase="$(kubectl -n "${namespace}" get pod \
-  -l "app.kubernetes.io/name=glitchtip-web" \
+  -l "app.kubernetes.io/component=web" \
   -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)"
-if [[ -z "$web_phase" ]]; then
-  web_phase="$(kubectl -n "${namespace}" get pod \
-    -l "app=glitchtip-web" \
-    -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)"
-fi
 assert "ERR-01: glitchtip-web pod phase" "$web_phase" "Running"
 
 worker_phase="$(kubectl -n "${namespace}" get pod \
-  -l "app.kubernetes.io/name=glitchtip-worker" \
+  -l "app.kubernetes.io/component=worker" \
   -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)"
-if [[ -z "$worker_phase" ]]; then
-  worker_phase="$(kubectl -n "${namespace}" get pod \
-    -l "app=glitchtip-worker" \
-    -o jsonpath='{.items[0].status.phase}' 2>/dev/null || true)"
-fi
 assert "ERR-01: glitchtip-worker pod phase" "$worker_phase" "Running"
 
 echo ""
@@ -162,9 +154,18 @@ assert_not_found "ERR-01: no valkey/redis workload in namespace" \
 
 echo ""
 echo "--- ERR-01: migrate Job completed ---"
-migrate_succeeded="$(kubectl -n "${namespace}" get job glitchtip-migrate \
-  -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "0")"
-assert "ERR-01: glitchtip-migrate Job succeeded" "$migrate_succeeded" "1"
+# The migrate Job carries ttlSecondsAfterFinished:600, so it self-deletes ~10 min
+# after completing. On a fresh deploy it is present and must show succeeded==1; on
+# a later re-run it may be gone — in which case the web/worker pods being Running
+# (their readiness probes hit /_health/, which queries the DB) already proves the
+# schema is migrated. Accept either: present→must be succeeded; absent→TTL-cleaned.
+if kubectl -n "${namespace}" get job glitchtip-migrate >/dev/null 2>&1; then
+  migrate_succeeded="$(kubectl -n "${namespace}" get job glitchtip-migrate \
+    -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "0")"
+  assert "ERR-01: glitchtip-migrate Job succeeded" "$migrate_succeeded" "1"
+else
+  echo "ok: ERR-01: migrate Job absent (ttlSecondsAfterFinished cleanup); web/worker Running implies migrated DB"
+fi
 
 echo ""
 echo "--- ERR-01: VALKEY_URL is empty on glitchtip-web ---"
@@ -190,19 +191,23 @@ else
   echo "Using public URL: ${base_url}"
 fi
 
-# Method A: config endpoint — most reliable (16-RESEARCH Pattern 5)
-config_json="$(curl -sf "${base_url}/api/0/config/" 2>/dev/null || echo '{}')"
+# Method A: config endpoint — most reliable. In GlitchTip v6 the public config is
+# /api/settings/ with camelCase key enableUserRegistration (verified live, 16-04).
+# NOTE: GlitchTip reports enableUserRegistration=true while ZERO users exist (the
+# "first user can always self-register" bootstrap in apps/users/utils.py). Once the
+# seed superuser exists, the env ENABLE_USER_REGISTRATION=False takes visible effect.
+config_json="$(curl -sf "${base_url}/api/settings/" 2>/dev/null || echo '{}')"
 reg_enabled="$(echo "$config_json" | python3 -c "
 import sys, json
 try:
     cfg = json.load(sys.stdin)
-    val = cfg.get('user_registration_enabled')
+    val = cfg.get('enableUserRegistration')
     print('false' if val is False else str(val))
 except Exception:
     print('parse_error')
 " 2>/dev/null || echo "parse_error")"
 
-assert "ERR-02: user_registration_enabled is false (via /api/0/config/)" \
+assert "ERR-02: enableUserRegistration is false (via /api/settings/)" \
   "$reg_enabled" "false"
 
 # Method B: POST registration endpoint, expect 4xx (best-effort)
