@@ -54,7 +54,7 @@ a trimmed, single-replica footprint (no VPS resize).
 
 ### Network Isolation (NET)
 
-- [ ] **NET-01**: NetworkPolicy enforcement under k3s/kube-router is confirmed before relying on it.
+- [x] **NET-01**: NetworkPolicy enforcement under k3s/kube-router is confirmed before relying on it.
 - [x] **NET-02**: Default-deny + minimal allow NetworkPolicies isolate `monitoring` and `error-tracking`, including an allow-prometheus-scrape rule into `solid-stats-staging`, applied only after scraping/datasources are validated.
 
 ### App-side Error SDK (SDK)
@@ -100,7 +100,7 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | PREP-01 | Phase 12 | Complete |
-| PREP-02 | Phase 12 | Pending |
+| PREP-02 | Phase 12 | Complete |
 | PREP-03 | Phase 12 | Complete |
 | PREP-04 | Phase 12 | Complete |
 | PREP-05 | Phase 12 | Complete |
@@ -124,10 +124,10 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 | ERR-01 | Phase 16 | Complete |
 | ERR-02 | Phase 16 | Complete |
 | ERR-03 | Phase 16 | Complete |
-| NET-01 | Phase 17 | Pending |
+| NET-01 | Phase 17 | Complete |
 | NET-02 | Phase 17 | Complete |
 | VAL-01 | Phase 17 | Complete |
-| SDK-01 | Phase 18 | Pending |
+| SDK-01 | Phase 18 | Scoped (infra wiring + briefs; app-repo PRs deferred to owners) |
 
 **Coverage:**
 
