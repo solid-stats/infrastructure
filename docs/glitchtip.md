@@ -1,7 +1,7 @@
 # GlitchTip Operator Runbook
 
 GlitchTip v6 error tracking in the `error-tracking` namespace.
-Public URL: `https://errors.stats-staging.solid-stats.ru` (DNS-gated — see §Cutover).
+Public URL: `https://errors.solid-stats.ru` (DNS-gated — see §Cutover).
 
 ---
 
@@ -107,16 +107,16 @@ The script:
 
 ## Public URL Cutover (Operator-Gated)
 
-The `errors.stats-staging.solid-stats.ru` subdomain is not yet routed to GlitchTip.
+The `errors.solid-stats.ru` subdomain is not yet routed to GlitchTip.
 Phase 14 provisioned the TLS cert and set a 503 placeholder in nginx. Phase 16-05
 completes the cutover once the operator adds the DNS A record.
 
 ### Prerequisites
 
-- DNS A record for `errors.stats-staging.solid-stats.ru` pointing to the staging VPS IP
+- DNS A record for `errors.solid-stats.ru` pointing to the staging VPS IP
   (`89.223.124.200`) is set and has propagated
 - GlitchTip pods are Running and the migrate Job has completed (ERR-01 passes)
-- The Phase 14 Let's Encrypt cert for `errors.stats-staging.solid-stats.ru` is in the
+- The Phase 14 Let's Encrypt cert for `errors.solid-stats.ru` is in the
   certbot lineage (already issued in Phase 14)
 
 ### Cutover command
@@ -124,7 +124,7 @@ completes the cutover once the operator adds the DNS A record.
 Run from the operator workstation (WireGuard tunnel up to staging VPS):
 
 ```bash
-DOMAIN=errors.stats-staging.solid-stats.ru \
+DOMAIN=errors.solid-stats.ru \
 ADMIN_EMAIL=your-email@example.com \
 UPSTREAM=$(kubectl get svc glitchtip-web -n error-tracking \
   -o jsonpath='{.spec.clusterIP}:{.spec.ports[0].port}') \
@@ -144,7 +144,7 @@ See `docs/obs-edge-bootstrap.md` for full details on the bootstrap script.
 
 ```bash
 # Verify TLS + response
-curl -I https://errors.stats-staging.solid-stats.ru/api/0/config/
+curl -I https://errors.solid-stats.ru/api/0/config/
 
 # Expected: HTTP/2 200 with {"user_registration_enabled":false,...}
 ```
@@ -161,7 +161,7 @@ Key GlitchTip v6 env vars set in `k8s/observability/91-glitchtip.yaml`:
 | `DATABASE_URL` | `postgresql://glitchtip:PWD@glitchtip-postgres.error-tracking.svc:5432/glitchtip?sslmode=disable` | `glitchtip-secrets` Secret |
 | `VALKEY_URL` | `""` (empty) | hardcoded in manifest — activates PostgreSQL-only mode |
 | `ENABLE_USER_REGISTRATION` | `"False"` | hardcoded — never open from boot |
-| `GLITCHTIP_DOMAIN` | `https://errors.stats-staging.solid-stats.ru` | hardcoded |
+| `GLITCHTIP_DOMAIN` | `https://errors.solid-stats.ru` | hardcoded |
 | `TRUSTED_PROXIES` | `"*"` | hardcoded — required behind nginx |
 | `SERVER_ROLE` | `web` or `worker` | hardcoded per Deployment |
 

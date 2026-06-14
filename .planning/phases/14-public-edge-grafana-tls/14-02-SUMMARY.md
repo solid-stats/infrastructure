@@ -117,7 +117,7 @@ No new trust boundaries introduced beyond those in the plan's threat model. Both
 
 - 14-03 (offline structural validator) can now run checks against both vhost files
 - 14-04 (operator runbook) can reference the exact file paths and placeholder token
-- Phase 16 (GlitchTip): re-run bootstrap-obs-edge.sh with `DOMAIN=errors.stats-staging.solid-stats.ru UPSTREAM=<glitchtip-clusterip>:80` to wire the real upstream
+- Phase 16 (GlitchTip): re-run bootstrap-obs-edge.sh with `DOMAIN=errors.solid-stats.ru UPSTREAM=<glitchtip-clusterip>:80` to wire the real upstream
 
 ---
 *Phase: 14-public-edge-grafana-tls*

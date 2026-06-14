@@ -28,7 +28,7 @@ proxying Grafana's in-cluster ClusterIP — established as the reusable bootstra
 `errors.` vhost extends in Phase 16.
 
 ### HARD external gate — DNS (EDGE-01) is operator-controlled
-As of 2026-06-14, `grafana.stats-staging.solid-stats.ru` and `errors.stats-staging.solid-stats.ru`
+As of 2026-06-14, `grafana.solid-stats.ru` and `errors.solid-stats.ru`
 do NOT resolve (parent `stats-staging.solid-stats.ru` → 89.223.124.200 exists). DNS A records
 are operator/registrar-controlled — the agent cannot create them. certbot HTTP-01 (EDGE-03)
 cannot issue until both resolve. Therefore: AUTHOR the bootstrap/vhost/validation/docs

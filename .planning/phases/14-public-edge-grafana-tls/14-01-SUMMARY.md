@@ -45,7 +45,7 @@ requirements: [EDGE-02, EDGE-03]
 
 ## What Was Built
 
-`scripts/bootstrap-obs-edge.sh` — 248-line idempotent bootstrap for the observability edge subdomains. Handles both `grafana.stats-staging.solid-stats.ru` (real Grafana ClusterIP upstream discovered at runtime) and `errors.stats-staging.solid-stats.ru` (placeholder, no upstream, 503 response) via a single script with different env vars.
+`scripts/bootstrap-obs-edge.sh` — 248-line idempotent bootstrap for the observability edge subdomains. Handles both `grafana.solid-stats.ru` (real Grafana ClusterIP upstream discovered at runtime) and `errors.solid-stats.ru` (placeholder, no upstream, 503 response) via a single script with different env vars.
 
 ### 7-Step Structure (mirrors bootstrap-edge.sh exactly)
 

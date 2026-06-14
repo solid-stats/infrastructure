@@ -31,7 +31,7 @@ migrate → close registration → create superuser. ENABLE_USER_REGISTRATION=Fa
 boot, superuser seeded via a seed Job after migration completes.
 
 ### Public errors. URL is DNS-gated (operator) — like Phase 14
-ERR-03's public TLS (`errors.stats-staging.solid-stats.ru`) reuses the Phase 14 obs-edge
+ERR-03's public TLS (`errors.solid-stats.ru`) reuses the Phase 14 obs-edge
 bootstrap (errors. vhost placeholder already authored; swap the 503 for GlitchTip's ClusterIP).
 DNS A record does NOT resolve yet (operator-controlled). Autonomous work: deploy GlitchTip
 internally (ClusterIP) and run the forced-error test via port-forward / internal DSN.
@@ -156,7 +156,7 @@ CI (GitHub Actions)
          │                        POST /api/PROJECT_ID/envelope/
          │                        (via port-forward to glitchtip-web svc)
          ▼
-[Host nginx — errors.stats-staging.solid-stats.ru]  ← OPERATOR-GATED
+[Host nginx — errors.solid-stats.ru]  ← OPERATOR-GATED
     TLS: Let's Encrypt cert (Phase 14 bootstrap-obs-edge.sh)
     proxy_pass → glitchtip-web ClusterIP:8000
     (currently returns 503; Phase 16 swaps in proxy_pass when DNS resolves)
@@ -203,7 +203,7 @@ env:
         name: glitchtip-secrets
         key: SECRET_KEY
   - name: GLITCHTIP_DOMAIN
-    value: "https://errors.stats-staging.solid-stats.ru"
+    value: "https://errors.solid-stats.ru"
   - name: ENABLE_USER_REGISTRATION
     value: "False"                     # closes registration from first boot [CITED: glitchtip.com/documentation/install/]
   - name: EMAIL_BACKEND
@@ -439,7 +439,7 @@ upstream glitchtip_obs {
 
 server {
     listen 443 ssl http2;
-    server_name errors.stats-staging.solid-stats.ru;
+    server_name errors.solid-stats.ru;
     # ... ssl_certificate, HSTS headers (same as grafana vhost) ...
 
     location / {
@@ -459,7 +459,7 @@ server {
 
 The `bootstrap-obs-edge.sh` script already handles the UPSTREAM_PLACEHOLDER substitution
 (`kubectl get svc glitchtip-web -n error-tracking -o jsonpath=...`) and the cert lineage
-already exists from Phase 14. Re-running with `DOMAIN=errors.stats-staging.solid-stats.ru` and
+already exists from Phase 14. Re-running with `DOMAIN=errors.solid-stats.ru` and
 `ADMIN_EMAIL=...` is all that's needed once DNS resolves. [CITED: scripts/bootstrap-obs-edge.sh]
 
 ### Anti-Patterns to Avoid
@@ -578,7 +578,7 @@ DSN key. Using a placeholder or mismatched key fails silently or with 403.
 |----------|----------|---------------------|--------|
 | `SECRET_KEY` | Yes | random 50-char string (from GitHub secret) | [CITED: docs] |
 | `DATABASE_URL` | Yes | `postgresql://glitchtip:PWD@glitchtip-postgres.error-tracking.svc:5432/glitchtip?sslmode=disable` | [CITED: docs] |
-| `GLITCHTIP_DOMAIN` | Yes | `https://errors.stats-staging.solid-stats.ru` (or localhost for internal) | [CITED: docs] |
+| `GLITCHTIP_DOMAIN` | Yes | `https://errors.solid-stats.ru` (or localhost for internal) | [CITED: docs] |
 | `VALKEY_URL` | Yes (empty) | `""` — postgres-only mode | [CITED: glitchtip.com/blog/2026-02-03-glitchtip-6-released/] |
 | `ENABLE_USER_REGISTRATION` | Yes | `"False"` | [CITED: glitchtip.com/documentation/install/] |
 | `EMAIL_BACKEND` | No | `django.core.mail.backends.console.EmailBackend` — no SMTP | [ASSUMED] standard Django |
@@ -685,7 +685,7 @@ The config endpoint method (Method A) is more reliable.
 |------|---------|
 | Set GitHub Secrets (4 new secrets) | Once, before first CI deploy |
 | Run `bootstrap-obs-edge.sh` with GlitchTip upstream | After DNS resolves |
-| Verify `curl -I https://errors.stats-staging.solid-stats.ru/` returns 200 | After certbot |
+| Verify `curl -I https://errors.solid-stats.ru/` returns 200 | After certbot |
 | Run public-URL smoke test | After operator cutover |
 
 ---
@@ -795,7 +795,7 @@ The config endpoint method (Method A) is more reliable.
 
 **Missing dependencies with no fallback for autonomous work:** None — all ERR-01/02/03 acceptance tests work via port-forward without DNS.
 
-**Operator-gated only:** DNS A record for `errors.stats-staging.solid-stats.ru`. Everything else is autonomous.
+**Operator-gated only:** DNS A record for `errors.solid-stats.ru`. Everything else is autonomous.
 
 ---
 

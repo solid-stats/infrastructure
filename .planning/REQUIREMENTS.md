@@ -41,7 +41,7 @@ a trimmed, single-replica footprint (no VPS resize).
 
 ### Public Edge & TLS (EDGE)
 
-- [x] **EDGE-01**: DNS A records for `grafana.stats-staging.solid-stats.ru` and `errors.stats-staging.solid-stats.ru` resolve to the staging host.
+- [x] **EDGE-01**: DNS A records for `grafana.solid-stats.ru` and `errors.solid-stats.ru` resolve to the staging host.
 - [x] **EDGE-02**: Host nginx vhosts proxy each public host to its ClusterIP Service, reusing the v2.0 Phase 07 edge pattern via an independent obs-edge bootstrap.
 - [x] **EDGE-03**: Valid certbot TLS certificates are issued and served for both public hosts.
 

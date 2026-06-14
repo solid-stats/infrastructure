@@ -6,12 +6,12 @@ set -euo pipefail
 # Run on the VPS as root (or with sudo). Safe to re-run — all ops are idempotent.
 #
 # Usage — grafana (discovers upstream from k3s at runtime):
-#   DOMAIN=grafana.stats-staging.solid-stats.ru \
+#   DOMAIN=grafana.solid-stats.ru \
 #   ADMIN_EMAIL=ops@example.com \
 #   scripts/bootstrap-obs-edge.sh
 #
 # Usage — errors placeholder (no upstream; cert-only):
-#   DOMAIN=errors.stats-staging.solid-stats.ru \
+#   DOMAIN=errors.solid-stats.ru \
 #   ADMIN_EMAIL=ops@example.com \
 #   SKIP_UPSTREAM_CHECK=1 \
 #   scripts/bootstrap-obs-edge.sh
@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # --- Required vars (exit 64 if missing) ------------------------------------
 if [[ -z "${DOMAIN:-}" ]]; then
-  echo "FATAL: DOMAIN is required (e.g. grafana.stats-staging.solid-stats.ru)" >&2
+  echo "FATAL: DOMAIN is required (e.g. grafana.solid-stats.ru)" >&2
   exit 64
 fi
 if [[ -z "${ADMIN_EMAIL:-}" ]]; then

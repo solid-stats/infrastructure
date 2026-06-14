@@ -36,10 +36,10 @@ created: 2026-06-14
 
 | Req | Behavior | Type | Check | Gate |
 |-----|----------|------|-------|------|
-| EDGE-01 | both A records resolve to 89.223.124.200 | live | `dig +short grafana.stats-staging.solid-stats.ru` / `errors.…` == host IP | OPERATOR (DNS) |
+| EDGE-01 | both A records resolve to 89.223.124.200 | live | `dig +short grafana.solid-stats.ru` / `errors.…` == host IP | OPERATOR (DNS) |
 | EDGE-02 | obs-edge bootstrap serves HTTP vhost then TLS, proxies Grafana ClusterIP | static+live | `bootstrap-obs-edge.sh` exists, idempotent adopt-reconcile; `nginx -t` passes; vhost proxies grafana ClusterIP:80 | author=auto, run=OPERATOR |
 | EDGE-03 | certbot per-domain cert issued + served | live | `openssl s_client -connect grafana.…:443` shows valid LE cert; `certbot certonly -d` (never full-renew) | OPERATOR (needs DNS) |
-| MET-07 | Grafana reachable at public HTTPS URL behind local-user auth | live | `curl -sI https://grafana.stats-staging.solid-stats.ru` → 200/302 to Grafana login | OPERATOR |
+| MET-07 | Grafana reachable at public HTTPS URL behind local-user auth | live | `curl -sI https://grafana.solid-stats.ru` → 200/302 to Grafana login | OPERATOR |
 
 ---
 
@@ -57,8 +57,8 @@ created: 2026-06-14
 | Behavior | Req | Why operator | Instructions |
 |----------|-----|--------------|--------------|
 | Create the two DNS A records | EDGE-01 | registrar/DNS-provider controlled; agent has no DNS API | add A `grafana.stats-staging` + `errors.stats-staging` → 89.223.124.200 |
-| Run bootstrap-obs-edge.sh live + certbot | EDGE-02/03 | issues real Let's Encrypt certs; needs DNS resolving | `DOMAIN=grafana.stats-staging.solid-stats.ru UPSTREAM=<grafana-clusterip>:80 bash scripts/bootstrap-obs-edge.sh` (then errors.) |
-| Confirm Grafana over HTTPS behind login | MET-07 | visual / post-DNS | open https://grafana.stats-staging.solid-stats.ru |
+| Run bootstrap-obs-edge.sh live + certbot | EDGE-02/03 | issues real Let's Encrypt certs; needs DNS resolving | `DOMAIN=grafana.solid-stats.ru UPSTREAM=<grafana-clusterip>:80 bash scripts/bootstrap-obs-edge.sh` (then errors.) |
+| Confirm Grafana over HTTPS behind login | MET-07 | visual / post-DNS | open https://grafana.solid-stats.ru |
 
 ---
 

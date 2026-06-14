@@ -23,7 +23,7 @@ set -euo pipefail
 #   SUPERUSER_TOKEN         — GlitchTip API auth token (Bearer) for project/issue queries.
 #   K8S_NAMESPACE           — override namespace (default: error-tracking)
 #   GLITCHTIP_PUBLIC_URL    — public URL for --public mode
-#                             (default: https://errors.stats-staging.solid-stats.ru)
+#                             (default: https://errors.solid-stats.ru)
 
 namespace="${K8S_NAMESPACE:-error-tracking}"
 mode="internal"
@@ -185,7 +185,7 @@ if [[ "$mode" == "internal" ]]; then
   start_port_forward
   base_url="http://localhost:${pf_port}"
 else
-  public_url="${GLITCHTIP_PUBLIC_URL:-https://errors.stats-staging.solid-stats.ru}"
+  public_url="${GLITCHTIP_PUBLIC_URL:-https://errors.solid-stats.ru}"
   base_url="$public_url"
   echo "Using public URL: ${base_url}"
 fi

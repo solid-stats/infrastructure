@@ -14,7 +14,7 @@
   canonical model). Produce a dedicated `bootstrap-obs-edge.sh` for the obs subdomains.
 - The bootstrap is reusable: Phase 16 (GlitchTip) extends it for the `errors.` vhost without
   modifications to the script — just a second invocation with different domain/upstream args.
-- `errors.stats-staging.solid-stats.ru` DNS + cert must be provisioned NOW in Phase 14 even
+- `errors.solid-stats.ru` DNS + cert must be provisioned NOW in Phase 14 even
   though the upstream is wired in Phase 16 (rate-limit avoidance).
 - certbot per-domain issuance only (`certbot certonly -d <domain>`). NEVER `certbot --full-renew`
   (known operator caveat: hangs on the auth cert on this VPS).
@@ -117,8 +117,8 @@ Internet (HTTPS :443)
         |
         v
 [Host nginx — obs-edge vhost]
-  grafana.stats-staging.solid-stats.ru
-  errors.stats-staging.solid-stats.ru (cert-only; no upstream yet)
+  grafana.solid-stats.ru
+  errors.solid-stats.ru (cert-only; no upstream yet)
         |
         | TLS terminated by /etc/letsencrypt/live/<domain>/fullchain.pem
         | proxy_pass to ClusterIP:port (host routing table covers k3s 10.43.x.x CIDR)
@@ -140,8 +140,8 @@ ACME challenge flow (HTTP :80):
   certbot HTTP-01 → Let's Encrypt verifies → issues cert
 
 DNS gate (operator action, before certbot can run):
-  grafana.stats-staging.solid-stats.ru  A  89.223.124.200
-  errors.stats-staging.solid-stats.ru   A  89.223.124.200
+  grafana.solid-stats.ru  A  89.223.124.200
+  errors.solid-stats.ru   A  89.223.124.200
 ```
 
 ### Recommended Project Structure (new artifacts)
@@ -179,7 +179,7 @@ docs/
 **Script signature:**
 ```bash
 # Required:
-DOMAIN=grafana.stats-staging.solid-stats.ru
+DOMAIN=grafana.solid-stats.ru
 UPSTREAM=<ClusterIP>:80          # discovered at runtime via kubectl
 ADMIN_EMAIL=ops@example.com
 
@@ -190,7 +190,7 @@ NGINX_SITES_ENABLED=/etc/nginx/sites-enabled
 WEBROOT_PATH=/var/www/html
 
 # Phase 16 reuse (example):
-DOMAIN=errors.stats-staging.solid-stats.ru
+DOMAIN=errors.solid-stats.ru
 UPSTREAM=<glitchtip-clusterip>:80
 ```
 
@@ -216,7 +216,7 @@ The adopt-reconcile loop requires a working HTTP vhost BEFORE certbot can issue:
 server {
     listen 80;
     listen [::]:80;
-    server_name grafana.stats-staging.solid-stats.ru;
+    server_name grafana.solid-stats.ru;
 
     location /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -263,10 +263,10 @@ upstream grafana_obs {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name grafana.stats-staging.solid-stats.ru;
+    server_name grafana.solid-stats.ru;
 
-    ssl_certificate /etc/letsencrypt/live/grafana.stats-staging.solid-stats.ru/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/grafana.stats-staging.solid-stats.ru/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/grafana.solid-stats.ru/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/grafana.solid-stats.ru/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
@@ -300,12 +300,12 @@ correct `Host` header. The vhost already sends `proxy_set_header Host $host` whi
 No change to the Grafana ConfigMap is needed for basic operation.
 
 [ASSUMED] — `root_url` not required when `Host` header is proxied correctly and Grafana `domain`
-is empty. If redirect loops occur post-deployment, add `root_url = https://grafana.stats-staging.solid-stats.ru`
+is empty. If redirect loops occur post-deployment, add `root_url = https://grafana.solid-stats.ru`
 to grafana.ini ConfigMap — but do NOT preemptively change Phase 13 config.
 
 ### Pattern 4: errors. vhost — Placeholder Only (no upstream yet)
 
-For Phase 14, `errors.stats-staging.solid-stats.ru` gets:
+For Phase 14, `errors.solid-stats.ru` gets:
 - DNS A record (operator, same time as grafana.)
 - certbot cert issuance (`SKIP_CERTBOT=0` once DNS exists)
 - A placeholder vhost returning 503 (or a "coming soon" static response)
@@ -398,8 +398,8 @@ are already open from Phase 07. Or check before adding.
 **What goes wrong:** Operator runs bootstrap immediately after creating DNS A records; certbot
 HTTP-01 check fails because DNS hasn't propagated yet.
 **Why it happens:** DNS TTL + resolver caches; new records can take 5-60 minutes.
-**How to avoid:** Bootstrap runbook must instruct operator to verify DNS with `dig grafana.stats-staging.solid-stats.ru A`
-or `curl http://grafana.stats-staging.solid-stats.ru/.well-known/acme-challenge/test` before running
+**How to avoid:** Bootstrap runbook must instruct operator to verify DNS with `dig grafana.solid-stats.ru A`
+or `curl http://grafana.solid-stats.ru/.well-known/acme-challenge/test` before running
 certbot. Script can include a DNS pre-check that exits with a clear message if not resolved.
 
 ### Pitfall 7: errors. vhost without upstream causes nginx error
@@ -432,10 +432,10 @@ upstream, nginx may fail to start/reload.
 | Step | Gate | Instruction |
 |------|------|-------------|
 | Create DNS A records | Registrar access | `grafana. A 89.223.124.200`, `errors. A 89.223.124.200` |
-| Verify DNS propagation | DNS resolution | `dig grafana.stats-staging.solid-stats.ru A @8.8.8.8` returns 89.223.124.200 |
-| Run bootstrap (grafana) | DNS resolved | `DOMAIN=grafana.stats-staging.solid-stats.ru UPSTREAM=$(kubectl get svc grafana -n monitoring -o jsonpath='{.spec.clusterIP}:{.spec.ports[0].port}') ADMIN_EMAIL=... scripts/bootstrap-obs-edge.sh` |
-| Run bootstrap (errors) | DNS resolved | `DOMAIN=errors.stats-staging.solid-stats.ru UPSTREAM=placeholder ADMIN_EMAIL=... SKIP_UPSTREAM_CHECK=1 scripts/bootstrap-obs-edge.sh` |
-| Smoke-test Grafana HTTPS | Certs issued | `curl -I https://grafana.stats-staging.solid-stats.ru/` → HTTP 200 |
+| Verify DNS propagation | DNS resolution | `dig grafana.solid-stats.ru A @8.8.8.8` returns 89.223.124.200 |
+| Run bootstrap (grafana) | DNS resolved | `DOMAIN=grafana.solid-stats.ru UPSTREAM=$(kubectl get svc grafana -n monitoring -o jsonpath='{.spec.clusterIP}:{.spec.ports[0].port}') ADMIN_EMAIL=... scripts/bootstrap-obs-edge.sh` |
+| Run bootstrap (errors) | DNS resolved | `DOMAIN=errors.solid-stats.ru UPSTREAM=placeholder ADMIN_EMAIL=... SKIP_UPSTREAM_CHECK=1 scripts/bootstrap-obs-edge.sh` |
+| Smoke-test Grafana HTTPS | Certs issued | `curl -I https://grafana.solid-stats.ru/` → HTTP 200 |
 | Verify Grafana login page | HTTPS up | Browser: navigate to URL, confirm login page renders |
 
 ---
@@ -455,10 +455,10 @@ upstream, nginx may fail to start/reload.
 
 | Req ID | Behavior | Test Type | Automated Command | Notes |
 |--------|----------|-----------|-------------------|-------|
-| EDGE-01 | DNS A records resolve to 89.223.124.200 | smoke/manual | `dig grafana.stats-staging.solid-stats.ru A` | Operator-run; DNS is external |
+| EDGE-01 | DNS A records resolve to 89.223.124.200 | smoke/manual | `dig grafana.solid-stats.ru A` | Operator-run; DNS is external |
 | EDGE-02 | Vhost structure: ACME block, HTTP redirect, TLS block, proxy_pass, HSTS | offline structural | `python3 scripts/validate-obs-edge.py` | Fully automated offline |
 | EDGE-03 | Cert issued, cert valid, cert CN matches domain | operator-run | `certbot certificates`, `openssl s_client -connect ...` | Post-DNS only |
-| MET-07 | Grafana login page served over HTTPS (200 + login form) | smoke/manual | `curl -s https://grafana.stats-staging.solid-stats.ru/login` | Post-cert only |
+| MET-07 | Grafana login page served over HTTPS (200 + login form) | smoke/manual | `curl -s https://grafana.solid-stats.ru/login` | Post-cert only |
 
 ### Validation Stages
 
@@ -481,10 +481,10 @@ upstream, nginx may fail to start/reload.
 
 **Stage 2 — LIVE (operator, post-DNS + post-certbot):**
 Documented in `docs/obs-edge-bootstrap.md` as operator-only steps:
-- `dig grafana.stats-staging.solid-stats.ru A` → 89.223.124.200
+- `dig grafana.solid-stats.ru A` → 89.223.124.200
 - `nginx -t` on VPS
-- `curl -I https://grafana.stats-staging.solid-stats.ru/` → HTTP 200
-- `curl -s https://grafana.stats-staging.solid-stats.ru/login | grep -i "grafana"` → login page
+- `curl -I https://grafana.solid-stats.ru/` → HTTP 200
+- `curl -s https://grafana.solid-stats.ru/login | grep -i "grafana"` → login page
 - `certbot renew --dry-run` (renewal pipeline smoke-test)
 
 ### Wave 0 Gaps
@@ -631,7 +631,7 @@ Existing state to be aware of (NOT modified):
    - What we know: Grafana ConfigMap has `domain = ''` (empty); nginx sends correct `Host` header
    - What's unclear: Whether Grafana redirects to HTTP after login when behind a reverse proxy
    - Recommendation: Don't pre-emptively change Phase 13 config. If post-deployment the login
-     redirect goes to `http://` instead of `https://`, add `root_url = https://grafana.stats-staging.solid-stats.ru`
+     redirect goes to `http://` instead of `https://`, add `root_url = https://grafana.solid-stats.ru`
      to the Grafana ConfigMap and redeploy. Flag this as a known post-deploy check in the runbook.
 
 2. **errors. placeholder vhost: `return 503` vs HTTP-only redirect**

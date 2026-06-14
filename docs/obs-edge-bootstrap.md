@@ -1,7 +1,7 @@
 # Obs-Edge Bootstrap: Grafana TLS and errors. Placeholder Vhosts
 
 This is the operator runbook for bootstrapping the observability edge subdomains
-(`grafana.stats-staging.solid-stats.ru` and `errors.stats-staging.solid-stats.ru`) on
+(`grafana.solid-stats.ru` and `errors.solid-stats.ru`) on
 the existing Phase 07 staging host. The bootstrap extends the live edge **additively** —
 it does NOT touch the existing `stats-staging-solid-stats.conf` vhost or its certificate.
 
@@ -16,8 +16,8 @@ Phase 14 adds two independent nginx vhosts and TLS certs:
 
 | Domain | Upstream | Phase wired |
 |--------|----------|-------------|
-| `grafana.stats-staging.solid-stats.ru` | Grafana ClusterIP (discovered at runtime) | Phase 14 |
-| `errors.stats-staging.solid-stats.ru` | GlitchTip ClusterIP | Phase 16 (cert issued now) |
+| `grafana.solid-stats.ru` | Grafana ClusterIP (discovered at runtime) | Phase 14 |
+| `errors.solid-stats.ru` | GlitchTip ClusterIP | Phase 16 (cert issued now) |
 
 **Do NOT touch** `stats-staging-solid-stats.conf` or its cert (`stats-staging.solid-stats.ru`)
 at any point during this bootstrap. The obs-edge script does not modify the Phase 07 vhost.
@@ -34,8 +34,8 @@ idempotent `cp` — they are the same files as Phase 07 and the `cp` is a no-op 
 Create the following DNS A records with your registrar or DNS provider:
 
 ```
-grafana.stats-staging.solid-stats.ru  A  89.223.124.200
-errors.stats-staging.solid-stats.ru   A  89.223.124.200
+grafana.solid-stats.ru  A  89.223.124.200
+errors.solid-stats.ru   A  89.223.124.200
 ```
 
 Both records point to the same VPS public IP. The agent cannot create DNS records — this is a
@@ -46,8 +46,8 @@ registrar-controlled action.
 DNS propagation can take 5–60 minutes after record creation. Verify with:
 
 ```bash
-dig +short grafana.stats-staging.solid-stats.ru A @8.8.8.8
-dig +short errors.stats-staging.solid-stats.ru A @8.8.8.8
+dig +short grafana.solid-stats.ru A @8.8.8.8
+dig +short errors.solid-stats.ru A @8.8.8.8
 ```
 
 Both commands must return `89.223.124.200` before proceeding. If either returns empty or
@@ -80,7 +80,7 @@ The Grafana ClusterIP is dynamically assigned by k3s. The script discovers it at
 time via `kubectl get svc`. Run from the repo root on the VPS:
 
 ```bash
-DOMAIN=grafana.stats-staging.solid-stats.ru \
+DOMAIN=grafana.solid-stats.ru \
 ADMIN_EMAIL=your@email.com \
 scripts/bootstrap-obs-edge.sh
 ```
@@ -92,7 +92,7 @@ What the bootstrap does for grafana.:
 3. Discovers Grafana ClusterIP: `kubectl get svc grafana -n monitoring -o jsonpath='{.spec.clusterIP}:{.spec.ports[0].port}'`.
 4. Backs up any existing live vhost to `.bak` (only on first run).
 5. Installs HTTP-only temp vhost → runs `nginx -t` gate → reloads nginx (ACME challenge now reachable).
-6. Issues TLS cert: `certbot certonly -d grafana.stats-staging.solid-stats.ru`.
+6. Issues TLS cert: `certbot certonly -d grafana.solid-stats.ru`.
 7. Swaps HTTP-only temp vhost for final TLS vhost → `nginx -t` gate → reloads nginx.
 8. Installs certbot deploy hook and OnFailure drop-in (idempotent `cp`).
 9. Skips UFW — ports 80/443 are already open from Phase 07.
@@ -108,7 +108,7 @@ to avoid hitting Let's Encrypt rate limits later (both certs share the registere
 ClusterIP discovery and install a placeholder vhost that returns 503.
 
 ```bash
-DOMAIN=errors.stats-staging.solid-stats.ru \
+DOMAIN=errors.solid-stats.ru \
 ADMIN_EMAIL=your@email.com \
 SKIP_UPSTREAM_CHECK=1 \
 scripts/bootstrap-obs-edge.sh
@@ -150,29 +150,29 @@ Expected: `syntax is ok` and `test is successful`.
 certbot certificates
 ```
 
-Expected: lineages for both `grafana.stats-staging.solid-stats.ru` and
-`errors.stats-staging.solid-stats.ru` are listed with a valid expiry date.
+Expected: lineages for both `grafana.solid-stats.ru` and
+`errors.solid-stats.ru` are listed with a valid expiry date.
 
 ### 4c. TLS handshake — grafana.
 
 ```bash
-openssl s_client -connect grafana.stats-staging.solid-stats.ru:443 -servername grafana.stats-staging.solid-stats.ru </dev/null 2>/dev/null | grep -E "subject|issuer|expire"
+openssl s_client -connect grafana.solid-stats.ru:443 -servername grafana.solid-stats.ru </dev/null 2>/dev/null | grep -E "subject|issuer|expire"
 ```
 
-Expected: subject includes `grafana.stats-staging.solid-stats.ru`; issuer is `Let's Encrypt`.
+Expected: subject includes `grafana.solid-stats.ru`; issuer is `Let's Encrypt`.
 
 ### 4d. HTTP → HTTPS redirect
 
 ```bash
-curl -sI http://grafana.stats-staging.solid-stats.ru/ | head -5
+curl -sI http://grafana.solid-stats.ru/ | head -5
 ```
 
-Expected: `301 Moved Permanently` with `Location: https://grafana.stats-staging.solid-stats.ru/`.
+Expected: `301 Moved Permanently` with `Location: https://grafana.solid-stats.ru/`.
 
 ### 4e. Grafana HTTPS reachability (MET-07)
 
 ```bash
-curl -sI https://grafana.stats-staging.solid-stats.ru/
+curl -sI https://grafana.solid-stats.ru/
 ```
 
 Expected: `200 OK` or `302` redirect to `/login`. Then open the URL in a browser and confirm the
@@ -181,8 +181,8 @@ Grafana login page renders (local-user auth — no anonymous access).
 ### 4f. Renewal pipeline smoke-test
 
 ```bash
-certbot renew --dry-run --cert-name grafana.stats-staging.solid-stats.ru
-certbot renew --dry-run --cert-name errors.stats-staging.solid-stats.ru
+certbot renew --dry-run --cert-name grafana.solid-stats.ru
+certbot renew --dry-run --cert-name errors.solid-stats.ru
 ```
 
 Expected: `Simulating renewal of an existing certificate` → `Congratulations, all simulated
@@ -195,7 +195,7 @@ the Grafana ConfigMap needs `root_url` set:
 
 ```yaml
 # k8s/observability/50-grafana.yaml — grafana.ini ConfigMap key
-root_url = https://grafana.stats-staging.solid-stats.ru
+root_url = https://grafana.solid-stats.ru
 ```
 
 Add this line to the Grafana ConfigMap and redeploy (`kubectl rollout restart deployment/grafana -n monitoring`).
@@ -208,7 +208,7 @@ When Phase 16 deploys GlitchTip, wire the `errors.` upstream by re-running the b
 the GlitchTip Service ClusterIP. No script change is needed:
 
 ```bash
-DOMAIN=errors.stats-staging.solid-stats.ru \
+DOMAIN=errors.solid-stats.ru \
 UPSTREAM=$(kubectl get svc glitchtip-web -n monitoring -o jsonpath='{.spec.clusterIP}:{.spec.ports[0].port}') \
 ADMIN_EMAIL=your@email.com \
 scripts/bootstrap-obs-edge.sh
@@ -227,7 +227,7 @@ placeholder 503 vhost for the full TLS proxy vhost wired to the GlitchTip Cluste
 | nginx returns 502 Bad Gateway for grafana. | Wrong ClusterIP or Grafana pod not running | Run `kubectl get svc grafana -n monitoring` to verify ClusterIP; check `kubectl get pods -n monitoring` |
 | `nginx -t` fails after bootstrap | TLS vhost installed before cert existed | bootstrap restores `.bak` automatically; check bootstrap log for `FATAL`; re-run after cert issuance |
 | `FATAL: nginx config invalid after vhost install` | Repo vhost syntax error or cert file not found | Bootstrap auto-restores `.bak`; fix the vhost or ensure cert was issued first and re-run |
-| `FATAL: DOMAIN is required` | `DOMAIN` env var not set | Set `DOMAIN=grafana.stats-staging.solid-stats.ru` (or errors.) before running the script |
+| `FATAL: DOMAIN is required` | `DOMAIN` env var not set | Set `DOMAIN=grafana.solid-stats.ru` (or errors.) before running the script |
 | `FATAL: ADMIN_EMAIL is required` | `ADMIN_EMAIL` env var not set | Set `ADMIN_EMAIL=your@email.com` |
 | `FATAL: Could not discover Grafana Service ClusterIP` | Grafana not deployed in `monitoring` namespace | Complete Phase 13 first; verify with `kubectl get svc grafana -n monitoring` |
 

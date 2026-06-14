@@ -38,7 +38,7 @@ The superuser is seeded non-interactively (env-driven createsuperuser / manageme
 self-registration is disabled so only that superuser can log in.
 
 ### Public errors. URL is DNS-gated (operator) — like Phase 14
-ERR-03's public TLS (`errors.stats-staging.solid-stats.ru`) reuses the Phase 14 obs-edge bootstrap
+ERR-03's public TLS (`errors.solid-stats.ru`) reuses the Phase 14 obs-edge bootstrap
 (errors. vhost placeholder already authored; just swap the 503 for GlitchTip's ClusterIP and
 issue the cert). The DNS A record does NOT resolve yet (operator-controlled). So: AUTHOR + deploy
 GlitchTip internally (ClusterIP) and run the forced-error test via port-forward / the internal DSN
