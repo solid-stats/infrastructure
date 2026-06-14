@@ -31,6 +31,7 @@ jobs:
           set -euo pipefail
           test -d k8s/staging
           test -f scripts/wg-tunnel-up.sh
+          test -f scripts/ssh-tunnel-up.sh
           test -f scripts/kubeconfig-setup.sh
           test -f scripts/render-staging-secrets.py
           find k8s/staging -type f -name '*.yaml' | sort
@@ -46,16 +47,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install WireGuard tools
-        run: sudo apt-get update && sudo apt-get install -y wireguard-tools
-
-      - name: Bring up WireGuard tunnel
+      - name: Open SSH tunnel
         env:
-          WG_PRIVATE_KEY: ${{ secrets.WG_PRIVATE_KEY }}
-          WG_PEER_PUBLIC_KEY: ${{ secrets.WG_PEER_PUBLIC_KEY }}
-          WG_ENDPOINT: ${{ secrets.WG_ENDPOINT }}
-          WG_LOCAL_IP: 10.8.0.3/32
-        run: bash scripts/wg-tunnel-up.sh
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+        run: bash scripts/ssh-tunnel-up.sh
 
       - name: Setup kubeconfig
         env:
@@ -93,16 +91,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install WireGuard tools
-        run: sudo apt-get update && sudo apt-get install -y wireguard-tools
-
-      - name: Bring up WireGuard tunnel
+      - name: Open SSH tunnel
         env:
-          WG_PRIVATE_KEY: ${{ secrets.WG_PRIVATE_KEY }}
-          WG_PEER_PUBLIC_KEY: ${{ secrets.WG_PEER_PUBLIC_KEY }}
-          WG_ENDPOINT: ${{ secrets.WG_ENDPOINT }}
-          WG_LOCAL_IP: 10.8.0.3/32
-        run: bash scripts/wg-tunnel-up.sh
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+        run: bash scripts/ssh-tunnel-up.sh
 
       - name: Setup kubeconfig
         env:
