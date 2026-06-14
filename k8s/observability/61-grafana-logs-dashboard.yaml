@@ -18,7 +18,7 @@ data:
         "solid-stats"
       ],
       "schemaVersion": 39,
-      "version": 1,
+      "version": 2,
       "editable": true,
       "style": "dark",
       "graphTooltip": 0,
@@ -75,6 +75,37 @@ data:
             "hide": 0
           },
           {
+            "name": "level",
+            "label": "Min level",
+            "type": "custom",
+            "hide": 0,
+            "query": "All : . , Warning+ : (?i)(\"level\":[456]0|\"level\":\"(warn|warning|error|fatal|critical)\"|\\[(warn|warning|error|fatal|crit|critical)\\]) , Error+ : (?i)(\"level\":[56]0|\"level\":\"(error|fatal|critical)\"|\\[(error|fatal|crit|critical)\\])",
+            "current": {
+              "selected": true,
+              "text": "All",
+              "value": "."
+            },
+            "options": [
+              {
+                "selected": true,
+                "text": "All",
+                "value": "."
+              },
+              {
+                "selected": false,
+                "text": "Warning+",
+                "value": "(?i)(\"level\":[456]0|\"level\":\"(warn|warning|error|fatal|critical)\"|\\[(warn|warning|error|fatal|crit|critical)\\])"
+              },
+              {
+                "selected": false,
+                "text": "Error+",
+                "value": "(?i)(\"level\":[56]0|\"level\":\"(error|fatal|critical)\"|\\[(error|fatal|crit|critical)\\])"
+              }
+            ],
+            "includeAll": false,
+            "multi": false
+          },
+          {
             "name": "search",
             "label": "Search (regex)",
             "type": "textbox",
@@ -94,7 +125,7 @@ data:
           "type": "timeseries",
           "datasource": "Loki",
           "gridPos": {
-            "h": 8,
+            "h": 9,
             "w": 24,
             "x": 0,
             "y": 0
@@ -103,60 +134,81 @@ data:
             "defaults": {
               "custom": {
                 "drawStyle": "bars",
-                "fillOpacity": 40,
+                "fillOpacity": 50,
+                "lineWidth": 0,
                 "stacking": {
                   "mode": "normal"
                 }
-              }
+              },
+              "min": 0
             },
             "overrides": []
           },
           "options": {
             "legend": {
               "displayMode": "list",
-              "placement": "bottom"
+              "placement": "bottom",
+              "calcs": [
+                "sum"
+              ]
             },
             "tooltip": {
-              "mode": "multi"
+              "mode": "multi",
+              "sort": "desc"
             }
           },
           "targets": [
             {
               "refId": "A",
               "datasource": "Loki",
-              "expr": "sum by (app) (count_over_time({namespace=~\"$namespace\", app=~\"$app\"} |~ \"(?i)$search\" [1m]))",
+              "expr": "sum by (app) (count_over_time({namespace=~\"$namespace\", app=~\"$app\"} |~ \"(?i)$search\" |~ \"$level\" [$__interval]))",
               "legendFormat": "{{app}}",
               "queryType": "range"
             }
           ]
         },
         {
-          "id": 2,
-          "title": "Logs",
-          "type": "logs",
-          "datasource": "Loki",
+          "id": 3,
+          "type": "row",
+          "title": "Log lines \u2014 expand to view",
+          "collapsed": true,
           "gridPos": {
-            "h": 22,
+            "h": 1,
             "w": 24,
             "x": 0,
-            "y": 8
+            "y": 9
           },
-          "options": {
-            "showTime": true,
-            "showLabels": true,
-            "showCommonLabels": false,
-            "wrapLogMessage": true,
-            "prettifyLogMessage": false,
-            "enableLogDetails": true,
-            "dedupStrategy": "none",
-            "sortOrder": "Descending"
-          },
-          "targets": [
+          "panels": [
             {
-              "refId": "A",
+              "id": 2,
+              "title": "Logs",
+              "type": "logs",
               "datasource": "Loki",
-              "expr": "{namespace=~\"$namespace\", app=~\"$app\"} |~ \"(?i)$search\"",
-              "queryType": "range"
+              "gridPos": {
+                "h": 24,
+                "w": 24,
+                "x": 0,
+                "y": 10
+              },
+              "options": {
+                "showTime": true,
+                "showLabels": false,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "prettifyLogMessage": true,
+                "enableLogDetails": true,
+                "dedupStrategy": "none",
+                "sortOrder": "Descending"
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": "Loki",
+                  "expr": "{namespace=~\"$namespace\", app=~\"$app\"} |~ \"(?i)$search\" |~ \"$level\"",
+                  "queryType": "range",
+                  "maxLines": 500
+                }
+              ]
             }
           ]
         }
