@@ -4,11 +4,11 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # kubeconfig-setup.sh — kubeconfig construction from SA token + CA cert
 #
-# Builds a kubeconfig targeting the k3s API server over the WireGuard tunnel
-# (https://10.8.0.1:6443).  Uses kubectl config set-* subcommands (no YAML
-# templating).  Verifies that kubectl auth whoami returns a non-anonymous
-# identity; exits 1 on system:anonymous.  Exits 64 on missing required config.
-# Never uses --insecure-skip-tls-verify.
+# Builds a kubeconfig targeting the k3s API server over the SSH local-forward
+# (https://127.0.0.1:16443 with tls-server-name=10.8.0.1).  Uses kubectl
+# config set-* subcommands (no YAML templating).  Verifies that kubectl auth
+# whoami returns a non-anonymous identity; exits 1 on system:anonymous.
+# Exits 64 on missing required config.  TLS is always verified (no insecure flag).
 #
 # Usage (called from GitHub Actions step with env vars from secrets):
 #   K8S_TOKEN=<token> K8S_CA_CERT=<pem> scripts/kubeconfig-setup.sh
@@ -25,7 +25,8 @@ if [[ -z "${K8S_CA_CERT:-}" ]]; then
 fi
 
 # --- Optional vars with defaults -------------------------------------------
-: "${K8S_API_SERVER:=https://10.8.0.1:6443}"
+: "${K8S_API_SERVER:=https://127.0.0.1:16443}"
+: "${K8S_TLS_SERVER_NAME:=10.8.0.1}"
 : "${K8S_NAMESPACE:=solid-stats-staging}"
 : "${K8S_CLUSTER_NAME:=k3s-staging}"
 : "${K8S_USER_NAME:=ci-deployer}"
@@ -44,10 +45,14 @@ printf '%s' "$K8S_CA_CERT" > "$ca_file"
 
 # --- 3. Build kubeconfig via kubectl config set-* (no YAML templating) -----
 echo "Configuring cluster $K8S_CLUSTER_NAME -> $K8S_API_SERVER..."
+# --tls-server-name: the k3s CA SAN includes 10.8.0.1 but not 127.0.0.1,
+# so TLS verification of the SSH-forwarded 127.0.0.1 endpoint must use the
+# 10.8.0.1 server name.
 kubectl config set-cluster "$K8S_CLUSTER_NAME" \
   --certificate-authority="$ca_file" \
   --embed-certs=true \
   --server="$K8S_API_SERVER" \
+  --tls-server-name="$K8S_TLS_SERVER_NAME" \
   --kubeconfig="$KUBECONFIG"
 
 echo "Configuring credentials for $K8S_USER_NAME..."
