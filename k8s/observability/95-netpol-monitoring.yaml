@@ -336,14 +336,20 @@ spec:
     # `kubectl get endpoints kubernetes`). Without the node-IP:6443 rule, any pod that
     # opens a FRESH API connection after this policy is applied (e.g. a restarted
     # grafana dashboard sidecar, kube-state-metrics, alloy) gets Connection refused.
-    # Both are kept: the ClusterIP for CNIs that match pre-DNAT, the endpoint for kube-router.
+    # Two SEPARATE entries (not one cross-product): a single `to`+`ports` block would
+    # allow every peer×port combo, which would also open 89.223.124.200:443 — the host
+    # nginx public edge — and the no-op 10.43.0.1:6443. Keep each {peer,port} exact:
+    #   ClusterIP :443  (CNIs that match pre-DNAT)
+    #   node IP   :6443 (kube-router, post-DNAT apiserver endpoint)
     - to:
         - ipBlock:
             cidr: 10.43.0.1/32
-        - ipBlock:
-            cidr: 89.223.124.200/32
       ports:
         - port: 443
           protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 89.223.124.200/32
+      ports:
         - port: 6443
           protocol: TCP
