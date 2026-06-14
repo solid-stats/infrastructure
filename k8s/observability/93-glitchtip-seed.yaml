@@ -1,0 +1,142 @@
+# First-run order step 3 (ERR-01): create superuser. Gated on migrate completion
+# via a showmigrations DB poll (no extra RBAC). Org/project/DSN creation happens
+# in 16-04 (live, superuser-authed API).
+#
+# Apply order (16-04):
+#   Apply this file in Wave B — AFTER the migrate Job (92) reaches Complete status.
+#   The initContainer below provides a defence-in-depth guard so that even if this
+#   file is applied concurrently, createsuperuser never runs against an unmigrated DB.
+#
+# Idempotency note: createsuperuser --noinput exits non-zero if the superuser already
+# exists. backoffLimit 3 allows retries on transient failures, but a re-run after the
+# superuser is seeded will also fail (expected — the user is already there). If the Job
+# ends in Failed state after a re-apply and the superuser exists in GlitchTip, the
+# failure can be ignored: use `kubectl get job glitchtip-seed -n error-tracking` to
+# confirm completion, then delete the Job manually before re-applying if needed.
+#
+# Fallback for Open Question #2 (Assumption A4): if createsuperuser --noinput is
+# incompatible with GlitchTip's custom user model (e.g., extra required fields),
+# the 16-04 live-apply plan falls back to a Python shell one-liner:
+#   ./manage.py shell -c "
+#     from users.models import User
+#     if not User.objects.filter(email=os.environ['DJANGO_SUPERUSER_EMAIL']).exists():
+#         User.objects.create_superuser(
+#             email=os.environ['DJANGO_SUPERUSER_EMAIL'],
+#             password=os.environ['DJANGO_SUPERUSER_PASSWORD'],
+#         )"
+# Replace the command below with ["./manage.py","shell","-c","<one-liner>"] if needed.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: glitchtip-seed
+  namespace: error-tracking
+  labels:
+    app.kubernetes.io/name: glitchtip
+    app.kubernetes.io/component: seed
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  completions: 1
+  backoffLimit: 3
+  # Auto-delete 10 min after completion so a re-apply runs a fresh Job.
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: glitchtip
+      automountServiceAccountToken: false
+      priorityClassName: obs-background
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+      initContainers:
+        # T-16-07 / Pitfall 2 / T-16-08 mitigation:
+        # Poll the DB directly via showmigrations to confirm all migrations are applied
+        # before running createsuperuser. This avoids granting the glitchtip SA any
+        # jobs/pods get verbs (no `kubectl wait` needed — pure DB-level check).
+        #
+        # Logic: showmigrations exits 0 and lists each migration as [X] (applied) or
+        # [ ] (unapplied). The loop exits only when ALL migrations are [X] and NONE
+        # are [ ]. A missing table (pre-migrate) causes showmigrations to fail entirely
+        # (non-zero exit) and the loop keeps retrying.
+        - name: wait-for-migrate
+          image: glitchtip/glitchtip:v6.1.8
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until ./manage.py showmigrations 2>/dev/null | grep -q '\[X\]' \
+                && ! ./manage.py showmigrations 2>/dev/null | grep -q '\[ \]'; do
+                echo "waiting for migrations to complete..."; sleep 3
+              done
+              echo "all migrations applied — proceeding to createsuperuser"
+          env:
+            - name: VALKEY_URL
+              value: ""
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: DATABASE_URL
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: SECRET_KEY
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: seed
+          image: glitchtip/glitchtip:v6.1.8
+          imagePullPolicy: IfNotPresent
+          # Standard Django createsuperuser --noinput reads DJANGO_SUPERUSER_EMAIL
+          # and DJANGO_SUPERUSER_PASSWORD (Assumption A4 — standard Django pattern;
+          # GlitchTip uses email as USERNAME_FIELD which is compatible).
+          command: ["./manage.py", "createsuperuser", "--noinput"]
+          env:
+            # Pitfall 3: explicit empty string required.
+            - name: VALKEY_URL
+              value: ""
+            # T-16-06: no inline secret values (STRIDE Information Disclosure).
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: DATABASE_URL
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: SECRET_KEY
+            # T-16-06: superuser credentials sourced only via secretKeyRef.
+            # Secret keys rendered by 16-03 from GitHub env secrets
+            # GLITCHTIP_SUPERUSER_EMAIL and GLITCHTIP_SUPERUSER_PASSWORD.
+            - name: DJANGO_SUPERUSER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: GLITCHTIP_SUPERUSER_EMAIL
+            - name: DJANGO_SUPERUSER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: glitchtip-secrets
+                  key: GLITCHTIP_SUPERUSER_PASSWORD
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            # readOnlyRootFilesystem intentionally omitted: manage.py writes .pyc files.
+          resources:
+            # One-shot sizing per 16-RESEARCH Resource Sizing table (ASSUMED — A2).
+            # Plan 16-04 must confirm via kubectl top after a live run.
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
