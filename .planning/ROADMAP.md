@@ -325,7 +325,15 @@ Plans:
   2. Default-deny + minimal-allow NetworkPolicies isolate `monitoring` and `error-tracking` (including an allow-prometheus-scrape rule into `solid-stats-staging`), applied only after scraping/datasources were validated, and all Prometheus targets remain UP and all Grafana datasources remain healthy after they are applied.
   3. A re-runnable validation script verifies the full stack on a fresh staging deploy: Prometheus target health, Grafana datasource health, a Loki query, and a forced GlitchTip test event — failing loudly on any broken capability.
 
-**Plans**: TBD
+**Plans**: 3 plans
+**Wave 1** *(authoring — autonomous)*
+
+- [ ] 17-01-PLAN.md — Author 95-/96- netpol manifests (default-deny + minimal-allow) + networkpolicies RBAC verb + deploy-workflow netpol routing (NET-02) [wave 1]
+- [ ] 17-02-PLAN.md — Author scripts/validate-stack.sh composing validate-phase-13/15/16.sh, fail-loud + --quick/--public (VAL-01) [wave 1]
+
+**Wave 2** *(live apply + validation — operator-gated, autonomous:false)*
+
+- [ ] 17-03-PLAN.md — NET-01 enforcement proof (resolve A1/A2/A3/A4) + substitute placeholders + RBAC apply + validate-stack green before/after netpol apply + docs/network-policies.md (NET-01, NET-02, VAL-01) [wave 2]
 
 #### Phase 18: App-side Error SDK
 
@@ -363,5 +371,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 14. Public Edge & Grafana TLS | v3.0 | 3/4 | In Progress|  |
 | 15. Log Stack | v3.0 | 4/4 | Complete   | 2026-06-13 |
 | 16. Error Tracking (GlitchTip) | v3.0 | 5/5 | Complete   | 2026-06-14 |
-| 17. Network Isolation & Stack Validation | v3.0 | 0/TBD | Not started | - |
+| 17. Network Isolation & Stack Validation | v3.0 | 0/3 | Not started | - |
 | 18. App-side Error SDK | v3.0 | 0/TBD | Not started | - |
