@@ -36,8 +36,8 @@ a trimmed, single-replica footprint (no VPS resize).
 ### Error Tracking (ERR)
 
 - [x] **ERR-01**: GlitchTip runs with its own PostgreSQL (PostgreSQL-only mode, Valkey/Redis disabled) following the strict first-run order (migrate → close registration → create superuser).
-- [ ] **ERR-02**: Self-registration is disabled; only the seeded local superuser can log in.
-- [ ] **ERR-03**: A project + DSN exist, and a deliberately forced staging test error appears in GlitchTip.
+- [x] **ERR-02**: Self-registration is disabled; only the seeded local superuser can log in.
+- [x] **ERR-03**: A project + DSN exist, and a deliberately forced staging test error appears in GlitchTip.
 
 ### Public Edge & TLS (EDGE)
 
@@ -122,8 +122,8 @@ Mapped by roadmapper during v3.0 roadmap creation. Every v1 requirement maps to 
 | LOG-02 | Phase 15 | Complete |
 | LOG-03 | Phase 15 | Complete |
 | ERR-01 | Phase 16 | Complete |
-| ERR-02 | Phase 16 | Pending |
-| ERR-03 | Phase 16 | Pending |
+| ERR-02 | Phase 16 | Complete |
+| ERR-03 | Phase 16 | Complete |
 | NET-01 | Phase 17 | Pending |
 | NET-02 | Phase 17 | Pending |
 | VAL-01 | Phase 17 | Pending |

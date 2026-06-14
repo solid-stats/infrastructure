@@ -302,7 +302,7 @@ Plans:
 
 - [x] 16-01-PLAN.md — GlitchTip own-postgres StatefulSet + web/worker Deployments + ClusterIP Service (ERR-01) [wave 1]
 - [x] 16-02-PLAN.md — migrate Job + superuser seed Job (first-run order) + bin/start.sh SERVER_ROLE check (ERR-01) [wave 1]
-- [ ] 16-03-PLAN.md — secret renderer + validator + obs deploy workflow extensions for error-tracking; validate-phase-16.sh + test-glitchtip-ingest.sh + docs/glitchtip.md (ERR-01/02/03) [wave 1]
+- [x] 16-03-PLAN.md — secret renderer + validator + obs deploy workflow extensions for error-tracking; validate-phase-16.sh + test-glitchtip-ingest.sh + docs/glitchtip.md (ERR-01/02/03) [wave 1]
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -362,6 +362,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 13. Deploy Pipeline & Metrics Stack | v3.0 | 6/6 | Complete   | 2026-06-13 |
 | 14. Public Edge & Grafana TLS | v3.0 | 3/4 | In Progress|  |
 | 15. Log Stack | v3.0 | 4/4 | Complete   | 2026-06-13 |
-| 16. Error Tracking (GlitchTip) | v3.0 | 2/5 | In Progress|  |
+| 16. Error Tracking (GlitchTip) | v3.0 | 3/5 | In Progress|  |
 | 17. Network Isolation & Stack Validation | v3.0 | 0/TBD | Not started | - |
 | 18. App-side Error SDK | v3.0 | 0/TBD | Not started | - |
