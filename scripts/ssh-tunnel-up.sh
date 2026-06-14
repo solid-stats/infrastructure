@@ -50,9 +50,13 @@ key_file=$(mktemp)
 known_hosts_file=$(mktemp)
 trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
 
-printf '%s' "$DEPLOY_SSH_PRIVATE_KEY" > "$key_file"
+# Trailing newline is REQUIRED: OpenSSH private keys must end with a newline
+# after the "-----END ... PRIVATE KEY-----" line, and a secret round-tripped
+# through a GitHub Actions env var arrives without one — writing it with a bare
+# `printf '%s'` yields "Load key: error in libcrypto" + publickey auth failure.
+printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$key_file"
 chmod 600 "$key_file"
-printf '%s' "$DEPLOY_SSH_KNOWN_HOSTS" > "$known_hosts_file"
+printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > "$known_hosts_file"
 
 # --- 2. Open background SSH local-forward ----------------------------------
 # ExitOnForwardFailure=yes: ssh exits non-zero if the listener cannot bind,
