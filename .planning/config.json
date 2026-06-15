@@ -147,5 +147,8 @@
   },
   "graphify": {
     "enabled": true
+  },
+  "mempalace": {
+    "enabled": true
   }
 }
