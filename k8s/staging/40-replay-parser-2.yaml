@@ -33,7 +33,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: replay-parser-2
-          image: ghcr.io/solid-stats/replay-parser-2:5e09d33c2d02f67407d9f9921c72434076eee3e2
+          image: ghcr.io/solid-stats/replay-parser-2:72116db6cc07f9509330616daf7da7c5e38a2343
           imagePullPolicy: IfNotPresent
           ports:
             - name: probes

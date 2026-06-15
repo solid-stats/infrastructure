@@ -40,9 +40,10 @@ spec:
             - name: ghcr-pull
           containers:
             - name: replays-fetcher
-              # F1 fix (conditional-writes) — pinned to the live-validated image. Do not
-              # revert to 8395fbc… without updating plans/product/PARITY-COORDINATION.md.
-              image: ghcr.io/solid-stats/replays-fetcher:7e5ca974053f814aaedb8698c427d85a6a43c723
+              # Pinned to 205b4cd (master): includes the F1 conditional-writes fix
+              # (7e5ca97 is an ancestor) plus the errors-only Sentry SDK. Do not revert
+              # below the F1 fix (pre-F1 was 8395fbc…); PARITY-COORDINATION.md is archived.
+              image: ghcr.io/solid-stats/replays-fetcher:205b4cdf91432c537bb3454ab074f0bcd3884af3
               imagePullPolicy: IfNotPresent
               args: ["run-once"]
               env:
