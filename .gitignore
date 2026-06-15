@@ -44,3 +44,9 @@ __pycache__
 
 # GSD research/agent transient caches
 .planning/research/.cache/
+
+# graphify working dir (build + cache); canonical graph lives in .planning/graphs/
+graphify-out/
+# heavy regenerable graph artifacts (keep GRAPH_COMMUNITIES.md + GRAPH_REPORT.md)
+.planning/graphs/graph.json
+.planning/graphs/graph.html
