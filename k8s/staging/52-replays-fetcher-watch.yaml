@@ -1,0 +1,91 @@
+# Continuous page-1 watch Deployment. The shared `replays-fetcher` ServiceAccount is
+# defined ONCE in 50-replays-fetcher.yaml; the 52- numeric prefix sorts after 50- so the
+# SA (and the nightly run-once CronJob) apply first and the SA exists before this
+# Deployment references it. The nightly full-corpus sweep lives in 50-...yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: replays-fetcher-watch
+  namespace: solid-stats-staging
+  labels:
+    app.kubernetes.io/name: replays-fetcher-watch
+    app.kubernetes.io/part-of: solid-stats
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: replays-fetcher-watch
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: replays-fetcher-watch
+        app.kubernetes.io/part-of: solid-stats
+    spec:
+      priorityClassName: app-critical  # PREP-03: evict after obs-background under node pressure
+      serviceAccountName: replays-fetcher  # shared SA, defined once in 50-replays-fetcher.yaml
+      automountServiceAccountToken: false
+      # SIGTERM lets the watch loop finish/abort the current page-1 cycle cleanly.
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: replays-fetcher-watch
+          # Same pinned SHA as the run-once CronJob in 50-...yaml — cron and watch stay
+          # version-locked. `watch` is appended to the image ENTRYPOINT `node dist/cli.mjs`.
+          image: ghcr.io/solid-stats/replays-fetcher:9f091bf1b913a2f04029b9b24ec8009130351495
+          imagePullPolicy: IfNotPresent
+          args: ["watch"]
+          env:
+            - name: S3_ENDPOINT
+              value: https://s3.twcstorage.ru
+            - name: S3_REGION
+              value: ru-1
+            - name: S3_FORCE_PATH_STYLE
+              value: "true"
+            # Source/S3 knobs mirror the CronJob. The S3 checkpoint conditional-writes
+            # knob is intentionally absent: the watcher never reads/advances the source
+            # checkpoint, so that flag is irrelevant to this workload.
+            # REPLAY_WATCH_INTERVAL_MS is left UNSET so the code default 0 = continuous,
+            # self-paced by REPLAY_SOURCE_REQUEST_SPACING_MS below.
+            - name: REPLAY_SOURCE_RETRY_ATTEMPTS
+              value: "8"
+            - name: REPLAY_SOURCE_REQUEST_SPACING_MS
+              value: "500"
+            - name: REPLAY_SOURCE_CONCURRENCY
+              value: "2"
+            - name: REPLAY_SOURCE_TIMEOUT_MS
+              value: "60000"
+          envFrom:
+            - secretRef:
+                name: replays-fetcher-runtime
+          resources:
+            # Burstable QoS (requests < limits) — intentional, matches the CronJob's QoS.
+            # The watch loop loads one page-1 batch per cycle (peak comparable to a
+            # run-once page); a long-running poll daemon does not need the Guaranteed-QoS
+            # heap pinning that server-2's OCAP-artifact consumer requires.
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          livenessProbe:
+            # No HTTP server in this image -> exec probe (no readiness probe either).
+            # Use `node` (the app runtime, guaranteed on PATH; do NOT assume sh/stat/date):
+            # exits 0 iff the heartbeat file's mtime is < 60s old. The heartbeat is written
+            # atomically ONLY AFTER a successful page-1 fetch+store+stage cycle, so the first
+            # one appears only after the first full cycle — statSync throwing on the missing
+            # file during the post-initialDelay window is the intended fail path, and
+            # failureThreshold 3 absorbs a slow first cycle.
+            exec:
+              command:
+                - node
+                - -e
+                - const fs=require('fs');const p=process.env.REPLAY_WATCH_HEARTBEAT_PATH||'/tmp/replays-fetcher-watch.heartbeat';process.exit(Date.now()-fs.statSync(p).mtimeMs<60000?0:1)
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]

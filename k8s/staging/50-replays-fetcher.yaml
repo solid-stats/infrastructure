@@ -7,6 +7,11 @@ metadata:
     app.kubernetes.io/name: replays-fetcher
     app.kubernetes.io/part-of: solid-stats
 ---
+# Nightly FULL-CORPUS run-once sweep (08:00 MSK). Continuous page-1 ingest is now
+# owned by the watch Deployment in 52-replays-fetcher-watch.yaml; this CronJob is the
+# backstop that crawls to the true end-of-corpus and catches anything that fell off
+# page 1. Name kept `replays-fetcher` on purpose: the shared SA above and the live
+# secret `replays-fetcher-runtime` already use it, so a rename only churns kubectl diff.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -16,8 +21,9 @@ metadata:
     app.kubernetes.io/name: replays-fetcher
     app.kubernetes.io/part-of: solid-stats
 spec:
-  schedule: "*/30 * * * *"
-  suspend: true
+  schedule: "0 8 * * *"
+  timeZone: Europe/Moscow
+  suspend: false
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 5
@@ -40,10 +46,10 @@ spec:
             - name: ghcr-pull
           containers:
             - name: replays-fetcher
-              # Pinned to 205b4cd (master): includes the F1 conditional-writes fix
-              # (7e5ca97 is an ancestor) plus the errors-only Sentry SDK. Do not revert
-              # below the F1 fix (pre-F1 was 8395fbc…); PARITY-COORDINATION.md is archived.
-              image: ghcr.io/solid-stats/replays-fetcher:205b4cdf91432c537bb3454ab074f0bcd3884af3
+              # Pinned to the watch-split image (master): adds the page-1 watch daemon
+              # used by 52-replays-fetcher-watch.yaml; the run-once sweep path is unchanged.
+              # Both workloads share this exact SHA so cron and watch stay version-locked.
+              image: ghcr.io/solid-stats/replays-fetcher:9f091bf1b913a2f04029b9b24ec8009130351495
               imagePullPolicy: IfNotPresent
               args: ["run-once"]
               env:
