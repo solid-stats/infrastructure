@@ -53,8 +53,15 @@ spec:
                   value: ru-1
                 - name: S3_FORCE_PATH_STYLE
                   value: "true"
-                - name: REPLAY_SOURCE_MAX_PAGES
-                  value: "786"
+                # REPLAY_SOURCE_MAX_PAGES intentionally UNSET: the discovery loop
+                # is unbounded by default and stops on end-of-corpus (run-once.ts
+                # RANGE-01, stop-on-empty). The earlier `786` pin (23c94c2,
+                # "for the full source corpus") matched the page count on
+                # 2026-05-11 but went stale as sg.zone grew (786 -> 790 pages):
+                # newest-first pagination pushes the oldest replays past the cap,
+                # so the cap silently truncated the oldest ~120 replays and the run
+                # still reported `complete`. Removed 2026-06-16 to crawl to the
+                # true end-of-corpus and close the sg coverage gap.
                 # F4 parity-run resilience tuning + F1 conditional-writes flag.
                 # Source of truth is this manifest — see plans/product/PARITY-COORDINATION.md.
                 # Order mirrors the live CronJob to keep `kubectl diff` clean.
