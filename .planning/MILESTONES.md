@@ -1,5 +1,11 @@
 # Milestones
 
+## v1.0 Roadmap: Solid Stats Infrastructure (Backfilled: 2026-06-16)
+
+**Note:** Synthesized from archive snapshot by `/gsd-health --backfill`. Original completion date unknown.
+
+---
+
 ## v3.0 Staging Observability Stack (Shipped: 2026-06-14)
 
 **Phases completed:** 7 phases, 27 plans, 30 tasks
