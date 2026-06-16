@@ -1,0 +1,270 @@
+{
+  "_meta": {
+    "updated_at": "2026-06-16T11:49:24.283Z",
+    "version": 2
+  },
+  "entries": {
+    ".github/workflows/deploy-staging.yml": {
+      "type": "config",
+      "role": "Staging CD entrypoint. On push to master / workflow_dispatch: validate -> server-side dry-run -> deploy. Opens SSH tunnel, builds kubeconfig (ci-deployer), renders+applies secrets, applies k8s/staging/*.yaml (excluding 5 operator-bootstrapped manifests), verifies rollouts and services/cronjobs.",
+      "namespace": "solid-stats-staging"
+    },
+    ".github/workflows/deploy-observability.yml": {
+      "type": "config",
+      "role": "Observability CD entrypoint (independent concurrency group; does not block runtime CD). Applies monitoring stack (obs-ci-deployer) and error-tracking GlitchTip stack (obs-ci-deployer-et) with separately scoped tokens, server-side apply, then verifies rollouts.",
+      "namespace": "monitoring + error-tracking"
+    },
+    "scripts/ssh-tunnel-up.sh": {
+      "type": "script",
+      "role": "CI pre-flight gate. Opens background SSH local-forward 127.0.0.1:16443 -> k3s API 6443; fail-closed verifies TCP reachability before any kubectl. Exit 64 on missing config, 1 if unreachable."
+    },
+    "scripts/kubeconfig-setup.sh": {
+      "type": "script",
+      "role": "Builds kubeconfig from SA token + CA cert via kubectl config set-* (tls-server-name=10.8.0.1). Verifies non-anonymous identity. Parameterized by K8S_USER_NAME/K8S_CONTEXT_NAME for multi-context obs deploys."
+    },
+    "scripts/render-staging-secrets.py": {
+      "type": "script",
+      "role": "Renders solid-stats-staging Kubernetes Secrets (postgres, rabbitmq, ghcr pull, server-2, replays-fetcher, S3, Sentry DSNs) from env vars to multi-doc YAML. stdlib only; exit 64 on missing required env. No secrets in git."
+    },
+    "scripts/render-obs-secrets.py": {
+      "type": "script",
+      "role": "Renders observability Secrets (Grafana admin, pg_monitor, GlitchTip secret/postgres/superuser) for monitoring + error-tracking namespaces to multi-doc YAML from env. Exit 64 on missing required env."
+    },
+    "scripts/split-obs-secrets.py": {
+      "type": "script",
+      "role": "Splits render-obs-secrets output into per-namespace files (monitoring vs error-tracking) so each scoped CI token applies only its own secrets (T-16-11)."
+    },
+    "scripts/validate-staging.py": {
+      "type": "test",
+      "role": "Static staging validator run in CI validate job: manifest structure, secret renderer dry-run, py_compile, embeds validate-s3-lifecycle assertions. No cluster access."
+    },
+    "scripts/validate-obs-manifests.py": {
+      "type": "test",
+      "role": "Static obs manifest gate (DEP-04): no secret values in Secrets, namespace: monitoring on namespaced resources, priorityClassName: obs-background on pod specs. Runs in obs CI validate job."
+    },
+    "scripts/validate-edge.py": {
+      "type": "test",
+      "role": "Offline structural validator for Phase 7 edge artifacts (nginx vhost, certbot drop-in, deploy hook, ufw rules). No live VPS needed."
+    },
+    "scripts/validate-obs-edge.py": {
+      "type": "test",
+      "role": "Offline structural validator for Phase 14 obs-edge artifacts (bootstrap-obs-edge.sh, grafana. + errors. vhosts, systemd artifacts)."
+    },
+    "scripts/validate-s3-lifecycle.py": {
+      "type": "test",
+      "role": "Offline validator for S3 lifecycle policy: Expiration (Days>=30 floor) on backups/postgres/ and AbortIncompleteMultipartUpload. Single source of truth, reused by validate-staging.py."
+    },
+    "scripts/validate-phase-12.sh": {
+      "type": "test",
+      "role": "Live kubectl assertion harness for Phase 12 (resource protection / obs foundation, PREP-01..05)."
+    },
+    "scripts/validate-phase-13.sh": {
+      "type": "test",
+      "role": "Live assertion harness for Phase 13 metrics stack (MET-01..06), --quick skips Grafana port-forward checks."
+    },
+    "scripts/validate-phase-15.sh": {
+      "type": "test",
+      "role": "Live assertion harness for Phase 15 log stack (Loki/Alloy, LOG-01..03)."
+    },
+    "scripts/validate-phase-16.sh": {
+      "type": "test",
+      "role": "Live assertion harness for Phase 16 error tracking (GlitchTip ERR-01..03), --internal/--public/--quick modes."
+    },
+    "scripts/validate-stack.sh": {
+      "type": "test",
+      "role": "Full obs validation orchestrator (VAL-01) composing validate-phase-13/15/16. Fails on first sub-script failure."
+    },
+    "scripts/backup-postgres-now.sh": {
+      "type": "script",
+      "role": "Creates a one-off Job from cronjob/postgres-backup, waits for completion, parses backup_id/dump/list/manifest objects from logs."
+    },
+    "scripts/restore-drill.sh": {
+      "type": "script",
+      "role": "Applies restore-drill Job (k8s/staging/restore-drill/70-restore-drill.yaml), tails logs, confirms PASS/FAIL, cleans up."
+    },
+    "scripts/start-controlled-full-run.sh": {
+      "type": "script",
+      "role": "Gated full run: refuses unless docs/backup-gate.md contains 'Status: verified', then runs a one-off Job from cronjob/replays-fetcher."
+    },
+    "scripts/apply-s3-lifecycle.sh": {
+      "type": "script",
+      "role": "Operator-driven Job (inline spec, never reaches CD glob) applying config/s3/backups-lifecycle.json to the S3 bucket."
+    },
+    "scripts/resource-preflight.sh": {
+      "type": "script",
+      "role": "Re-runnable node CPU/mem/disk + pod allocation snapshot, run before applying obs workloads to record headroom."
+    },
+    "scripts/bootstrap-edge.sh": {
+      "type": "script",
+      "role": "Idempotent adopt-reconcile for the staging host nginx edge: backs up live vhost, installs repo vhost + certbot drop-in + deploy hook + ufw rules. Run on VPS as root."
+    },
+    "scripts/bootstrap-obs-edge.sh": {
+      "type": "script",
+      "role": "Env-parameterized obs-edge bootstrap wiring grafana./errors. subdomains into host nginx (DOMAIN-driven; SKIP_UPSTREAM_CHECK for cert-only)."
+    },
+    "scripts/teardown-edge.sh": {
+      "type": "script",
+      "role": "Reverses bootstrap-edge.sh: restores original vhost, removes drop-in/hook/edge ufw rules. Preserves certs, ufw 22/tcp, and ufw enabled state."
+    },
+    "scripts/cutover.sh": {
+      "type": "script",
+      "role": "4-gate reversible production upstream switch. Gate A backup-gate verified, Gate B diff-readiness strict_failures:0; switches nginx upstream at CUTOVER marker, validates, reloads, smoke-checks, auto-rollback. DRY_RUN/SELF_TEST modes."
+    },
+    "scripts/test-glitchtip-ingest.sh": {
+      "type": "script",
+      "role": "ERR-03 forced-error ingest test: POSTs synthetic Sentry envelope via port-forward to GlitchTip, asserts 200/202, optionally polls issues API."
+    },
+    "k8s/staging/00-namespace.yaml": {
+      "type": "config",
+      "role": "solid-stats-staging Namespace (cluster-scoped; operator-applied, excluded from CD)."
+    },
+    "k8s/staging/01-ci-rbac.yaml": {
+      "type": "config",
+      "role": "ci-deployer ServiceAccount + RBAC for runtime CD (operator-applied, excluded from CD)."
+    },
+    "k8s/staging/01-obs-rbac.yaml": {
+      "type": "config",
+      "role": "obs namespaces + obs-ci-deployer RBAC (operator-applied, excluded from CD)."
+    },
+    "k8s/staging/02-priority-classes.yaml": {
+      "type": "config",
+      "role": "Cluster-scoped PriorityClasses incl. obs-background (operator-applied, excluded from CD)."
+    },
+    "k8s/staging/03-alloy-rbac.yaml": {
+      "type": "config",
+      "role": "Alloy ClusterRole + ClusterRoleBinding (operator-applied, excluded from CD)."
+    },
+    "k8s/staging/10-postgres.yaml": {
+      "type": "config",
+      "role": "PostgreSQL 17-alpine StatefulSet + Service + postgres-data PVC (20Gi)."
+    },
+    "k8s/staging/20-rabbitmq.yaml": {
+      "type": "config",
+      "role": "RabbitMQ 4-management StatefulSet + Service + rabbitmq-data PVC (5Gi)."
+    },
+    "k8s/staging/30-server-2.yaml": {
+      "type": "config",
+      "role": "server-2 ConfigMap + Service."
+    },
+    "k8s/staging/35-server-2-deployment.yaml": {
+      "type": "config",
+      "role": "server-2 Deployment (GHCR image pinned to SHA)."
+    },
+    "k8s/staging/36-web.yaml": {
+      "type": "config",
+      "role": "web ConfigMap + Service."
+    },
+    "k8s/staging/37-web-deployment.yaml": {
+      "type": "config",
+      "role": "web Deployment (GHCR image pinned to SHA)."
+    },
+    "k8s/staging/40-replay-parser-2.yaml": {
+      "type": "config",
+      "role": "replay-parser-2 Deployment."
+    },
+    "k8s/staging/50-replays-fetcher.yaml": {
+      "type": "config",
+      "role": "replays-fetcher CronJob (kept suspended until backup/restore validation passes)."
+    },
+    "k8s/staging/60-postgres-backup.yaml": {
+      "type": "config",
+      "role": "postgres-backup CronJob writing dump/list/manifest to S3 backups/postgres/."
+    },
+    "k8s/staging/restore-drill/70-restore-drill.yaml": {
+      "type": "config",
+      "role": "Restore-drill Job validating backup restorability."
+    },
+    "k8s/staging/s3-lifecycle/80-s3-lifecycle-probe-job.yaml": {
+      "type": "config",
+      "role": "S3 lifecycle probe Job."
+    },
+    "k8s/observability/10-prometheus.yaml": {
+      "type": "config",
+      "role": "Prometheus server (monitoring)."
+    },
+    "k8s/observability/20-kube-state-metrics.yaml": {
+      "type": "config",
+      "role": "kube-state-metrics."
+    },
+    "k8s/observability/30-node-exporter.yaml": {
+      "type": "config",
+      "role": "node-exporter DaemonSet."
+    },
+    "k8s/observability/40-postgres-exporter.yaml": {
+      "type": "config",
+      "role": "postgres-exporter."
+    },
+    "k8s/observability/50-grafana.yaml": {
+      "type": "config",
+      "role": "Grafana Deployment + Service."
+    },
+    "k8s/observability/60-grafana-dashboards.yaml": {
+      "type": "config",
+      "role": "Grafana dashboard ConfigMaps (vendored JSONs from dashboards/)."
+    },
+    "k8s/observability/61-grafana-logs-dashboard.yaml": {
+      "type": "config",
+      "role": "Grafana logs dashboard ConfigMap."
+    },
+    "k8s/observability/70-loki.yaml": {
+      "type": "config",
+      "role": "Loki StatefulSet (log store)."
+    },
+    "k8s/observability/80-alloy.yaml": {
+      "type": "config",
+      "role": "Grafana Alloy DaemonSet (log collection -> Loki)."
+    },
+    "k8s/observability/90-glitchtip-postgres.yaml": {
+      "type": "config",
+      "role": "GlitchTip PostgreSQL StatefulSet (error-tracking)."
+    },
+    "k8s/observability/91-glitchtip.yaml": {
+      "type": "config",
+      "role": "GlitchTip web + worker Deployments + Service (error-tracking)."
+    },
+    "k8s/observability/92-glitchtip-migrate.yaml": {
+      "type": "config",
+      "role": "GlitchTip migrate Job."
+    },
+    "k8s/observability/93-glitchtip-seed.yaml": {
+      "type": "config",
+      "role": "GlitchTip seed Job (org/project/superuser)."
+    },
+    "k8s/observability/95-netpol-monitoring.yaml": {
+      "type": "config",
+      "role": "monitoring namespace NetworkPolicy (NET-02)."
+    },
+    "k8s/observability/96-netpol-error-tracking.yaml": {
+      "type": "config",
+      "role": "error-tracking namespace NetworkPolicy (NET-02)."
+    },
+    "config/nginx/sites-available/stats-staging-solid-stats.conf": {
+      "type": "config",
+      "role": "Public stats vhost; carries the CUTOVER upstream marker switched by cutover.sh."
+    },
+    "config/nginx/sites-available/grafana-stats-staging-solid-stats.conf": {
+      "type": "config",
+      "role": "Public Grafana subdomain vhost (proxies to in-cluster Grafana)."
+    },
+    "config/nginx/sites-available/errors-stats-staging-solid-stats.conf": {
+      "type": "config",
+      "role": "Public errors (GlitchTip) subdomain vhost."
+    },
+    "config/s3/backups-lifecycle.json": {
+      "type": "data",
+      "role": "S3 lifecycle policy: Expiration on backups/postgres/ + AbortIncompleteMultipartUpload."
+    },
+    "config/systemd/certbot-deploy-hook.sh": {
+      "type": "script",
+      "role": "certbot deploy hook reloading nginx on renewal."
+    },
+    "config/systemd/certbot-renew-failure.service": {
+      "type": "config",
+      "role": "systemd unit firing on certbot renew failure."
+    },
+    "config/systemd/certbot.service.d/onfailure.conf": {
+      "type": "config",
+      "role": "certbot.service OnFailure drop-in wiring the renew-failure unit."
+    }
+  }
+}

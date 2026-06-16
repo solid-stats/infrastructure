@@ -1,0 +1,45 @@
+{
+  "_meta": {
+    "updated_at": "2026-06-16T11:49:24.248Z",
+    "version": 2
+  },
+  "languages": [
+    "Bash",
+    "Python 3",
+    "YAML"
+  ],
+  "frameworks": [
+    "Kubernetes (k3s)"
+  ],
+  "tools": [
+    "kubectl",
+    "Helm (template inputs under k8s/observability/values)",
+    "GitHub Actions",
+    "Prometheus",
+    "Grafana",
+    "Loki",
+    "Grafana Alloy",
+    "GlitchTip",
+    "kube-state-metrics",
+    "node-exporter",
+    "postgres-exporter",
+    "nginx (host edge)",
+    "certbot / Let's Encrypt",
+    "ufw",
+    "PostgreSQL 17",
+    "RabbitMQ 4",
+    "Timeweb S3"
+  ],
+  "build_system": "none (declarative manifests + scripts; no compile step)",
+  "test_framework": "custom Python/Bash validators (scripts/validate-*.py, scripts/validate-*.sh)",
+  "package_manager": "none (Python stdlib only; no requirements.txt / package.json)",
+  "content_formats": [
+    "YAML (Kubernetes manifests, Helm values)",
+    "JSON (Grafana dashboards, S3 lifecycle policy)",
+    "Bash scripts (operational + CI helpers)",
+    "Python scripts (secret renderers, offline validators)",
+    "nginx vhost configs",
+    "systemd units / drop-ins",
+    "Markdown (README, AGENTS, docs runbooks)"
+  ]
+}

@@ -1,0 +1,190 @@
+{
+  "_meta": {
+    "updated_at": "2026-06-16T11:49:24.356Z",
+    "version": 2
+  },
+  "entries": {
+    "kubectl": {
+      "version": "host-provided",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "deploy-staging.yml",
+        "deploy-observability.yml",
+        "scripts/*.sh"
+      ]
+    },
+    "k3s": {
+      "version": "preinstalled on staging VPS",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "all k8s manifests"
+      ]
+    },
+    "python3-stdlib": {
+      "version": "system python3",
+      "type": "production",
+      "invocation": "python3 scripts/*.py",
+      "used_by": [
+        "render-staging-secrets.py",
+        "render-obs-secrets.py",
+        "split-obs-secrets.py",
+        "validate-staging.py",
+        "validate-obs-manifests.py",
+        "validate-edge.py",
+        "validate-obs-edge.py",
+        "validate-s3-lifecycle.py"
+      ]
+    },
+    "openssh": {
+      "version": "host-provided",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "scripts/ssh-tunnel-up.sh"
+      ]
+    },
+    "postgres:17-alpine": {
+      "version": "17-alpine",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "k8s/staging/10-postgres.yaml"
+      ]
+    },
+    "rabbitmq:4-management": {
+      "version": "4-management",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "k8s/staging/20-rabbitmq.yaml"
+      ]
+    },
+    "GHCR app images": {
+      "version": "pinned by SHA",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "35-server-2-deployment.yaml",
+        "37-web-deployment.yaml",
+        "40-replay-parser-2.yaml",
+        "50-replays-fetcher.yaml"
+      ]
+    },
+    "prometheus": {
+      "version": "helm-templated",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "k8s/observability/10-prometheus.yaml"
+      ]
+    },
+    "grafana": {
+      "version": "helm-templated",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "k8s/observability/50-grafana.yaml"
+      ]
+    },
+    "loki": {
+      "version": "helm-templated",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "k8s/observability/70-loki.yaml"
+      ]
+    },
+    "grafana-alloy": {
+      "version": "helm-templated",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "k8s/observability/80-alloy.yaml"
+      ]
+    },
+    "glitchtip": {
+      "version": "pinned image",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "91-glitchtip.yaml",
+        "92-glitchtip-migrate.yaml",
+        "93-glitchtip-seed.yaml"
+      ]
+    },
+    "kube-state-metrics": {
+      "version": "helm-templated",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "k8s/observability/20-kube-state-metrics.yaml"
+      ]
+    },
+    "node-exporter": {
+      "version": "helm-templated",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "k8s/observability/30-node-exporter.yaml"
+      ]
+    },
+    "postgres-exporter": {
+      "version": "helm-templated",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "k8s/observability/40-postgres-exporter.yaml"
+      ]
+    },
+    "nginx": {
+      "version": "host-provided",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "config/nginx/sites-available/*.conf",
+        "scripts/bootstrap-edge.sh",
+        "scripts/cutover.sh"
+      ]
+    },
+    "certbot": {
+      "version": "host-provided",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "config/systemd/*",
+        "scripts/bootstrap-edge.sh",
+        "scripts/bootstrap-obs-edge.sh"
+      ]
+    },
+    "ufw": {
+      "version": "host-provided",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "scripts/bootstrap-edge.sh",
+        "scripts/teardown-edge.sh"
+      ]
+    },
+    "Timeweb S3": {
+      "version": "managed service",
+      "type": "production",
+      "invocation": "implicit",
+      "used_by": [
+        "60-postgres-backup.yaml",
+        "config/s3/backups-lifecycle.json",
+        "scripts/apply-s3-lifecycle.sh"
+      ]
+    },
+    "GitHub Actions": {
+      "version": "ubuntu-latest runners",
+      "type": "development",
+      "invocation": "implicit",
+      "used_by": [
+        "deploy-staging.yml",
+        "deploy-observability.yml"
+      ]
+    }
+  }
+}

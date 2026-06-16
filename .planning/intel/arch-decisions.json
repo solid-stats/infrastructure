@@ -1,0 +1,64 @@
+{
+  "_meta": {
+    "updated_at": "2026-06-16T11:49:24.393Z",
+    "version": 2
+  },
+  "entries": {
+    "overview": {
+      "pattern": "Declarative GitOps-style infrastructure repo for a k3s staging cluster",
+      "description": "Source of truth for Solid Stats staging runtime wiring. Owns Kubernetes manifests, observability stack, host edge config, operational scripts, and backup/restore runbooks. Application repos own source and images; this repo composes those images into a reliable runtime. No application source or HTTP API lives here."
+    },
+    "data-flow": {
+      "flow": "push to master -> GitHub Actions -> ssh-tunnel-up.sh (local-forward to closed k3s API) -> kubeconfig-setup.sh (SA token) -> render secrets -> kubectl apply k8s/** -> verify rollouts",
+      "description": "Two independent CD pipelines: runtime (solid-stats-staging) and observability (monitoring + error-tracking). The k3s API is firewalled closed; all CI access flows through a fail-closed SSH local-forward gate."
+    },
+    "conventions": {
+      "naming": "Numeric filename prefixes (00-, 10-, 20-...) define kubectl apply ordering. nginx vhosts named <subdomain>-solid-stats.conf.",
+      "file-organization": "One environment per directory (k8s/staging, k8s/observability). values/ + dashboards/ are helm/template inputs, not directly applied. config/ holds host-side nginx/systemd/s3 artifacts.",
+      "imports": "Scripts are #!/usr/bin/env bash with set -euo pipefail; Python is stdlib-only. Required env vars checked via parameter expansion / required() helper; exit 64 on missing config.",
+      "secrets": "No secret values in git. Secrets rendered from GitHub environment secrets at deploy time via render-*-secrets.py; trap-removed temp files; split per namespace for scoped tokens."
+    },
+    "deployment-boundary": {
+      "operator-vs-ci": "Five manifests are operator-bootstrapped and excluded from CD globs: 00-namespace, 01-ci-rbac, 01-obs-rbac, 02-priority-classes, 03-alloy-rbac (cluster-scoped or RBAC the CI tokens cannot create).",
+      "description": "CI uses least-privilege scoped ServiceAccount tokens: ci-deployer (runtime), obs-ci-deployer (monitoring), obs-ci-deployer-et (error-tracking, cannot touch monitoring)."
+    },
+    "validation": {
+      "strategy": "Offline static validators (validate-staging.py, validate-obs-manifests.py, validate-*-edge.py, validate-s3-lifecycle.py) run in CI with no cluster access; live assertion harnesses (validate-phase-12/13/15/16.sh, validate-stack.sh) run post-apply against the cluster.",
+      "description": "Completion claims require fresh evidence from scripts, kubectl dry-runs, rollout state, backup logs, or S3 checks."
+    },
+    "safety-gates": {
+      "backup-gate": "start-controlled-full-run.sh refuses unless docs/backup-gate.md is 'Status: verified'.",
+      "cutover-gate": "cutover.sh enforces backup-gate verified + diff-readiness strict_failures:0 before any nginx upstream switch; reversible with auto-rollback and DRY_RUN/SELF_TEST modes.",
+      "replays-fetcher": "Kept suspended until manual backup and restore-list validation pass."
+    },
+    "component:Runtime workloads": {
+      "path": "k8s/staging/",
+      "responsibility": "PostgreSQL (17) + RabbitMQ (4) StatefulSets, server-2 / web / replay-parser-2 Deployments, replays-fetcher + postgres-backup CronJobs."
+    },
+    "component:Observability metrics": {
+      "path": "k8s/observability/ (10-50, 95)",
+      "responsibility": "Prometheus, kube-state-metrics, node-exporter, postgres-exporter, Grafana + dashboards, monitoring NetworkPolicy. Pods carry priorityClassName obs-background."
+    },
+    "component:Observability logs": {
+      "path": "k8s/observability/ (61,70,80)",
+      "responsibility": "Loki log store fed by Grafana Alloy DaemonSet; Grafana logs dashboard."
+    },
+    "component:Error tracking": {
+      "path": "k8s/observability/ (90-96)",
+      "responsibility": "GlitchTip web/worker + dedicated PostgreSQL + migrate/seed Jobs in error-tracking namespace, with its own NetworkPolicy and scoped CI token."
+    },
+    "component:Host edge": {
+      "path": "config/nginx, config/systemd, scripts/bootstrap-edge.sh, scripts/bootstrap-obs-edge.sh, scripts/cutover.sh",
+      "responsibility": "VPS nginx vhosts (stats, grafana, errors subdomains), certbot/Let's Encrypt TLS with renewal hooks + failure alerting, ufw rules, reversible production cutover. Adopt-reconcile idempotent bootstrap run as root on the VPS."
+    },
+    "component:Backup and DR": {
+      "path": "k8s/staging/60-postgres-backup.yaml, restore-drill/, config/s3, scripts/backup-postgres-now.sh, scripts/restore-drill.sh",
+      "responsibility": "Scheduled PostgreSQL dumps to Timeweb S3 (backups/postgres/), one-off manual backup, restore drill, and S3 lifecycle retention."
+    },
+    "entry-points": {
+      "ci": ".github/workflows/deploy-staging.yml, .github/workflows/deploy-observability.yml",
+      "operator": "scripts/bootstrap-edge.sh, scripts/cutover.sh, scripts/backup-postgres-now.sh, scripts/restore-drill.sh, scripts/start-controlled-full-run.sh",
+      "docs": "README.md, AGENTS.md, docs/staging.md, docs/backup-restore.md, docs/diff-readiness.md"
+    }
+  }
+}
