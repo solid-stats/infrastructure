@@ -91,13 +91,16 @@
       ".agents/skills/kubernetes-specialist"
     ],
     "gsd-planner": [
-      ".agents/skills/kubernetes-specialist"
+      ".agents/skills/kubernetes-specialist",
+      ".agents/skills/solidstats-shared-planning-standards"
     ],
     "gsd-plan-checker": [
-      ".agents/skills/kubernetes-specialist"
+      ".agents/skills/kubernetes-specialist",
+      ".agents/skills/solidstats-shared-planning-standards"
     ],
     "gsd-executor": [
-      ".agents/skills/kubernetes-specialist"
+      ".agents/skills/kubernetes-specialist",
+      ".agents/skills/solidstats-shared-planning-standards"
     ],
     "gsd-verifier": [
       ".agents/skills/kubernetes-specialist"

@@ -12,6 +12,12 @@
       "sourceType": "github",
       "skillPath": "solidstats-process-project-standards/SKILL.md",
       "computedHash": "4333ac10b8f09bea8e3bfc79f3ad041de5b19a95eac4d14d8a810eae98bf33d6"
+    },
+    "solidstats-shared-planning-standards": {
+      "source": "solid-stats/skills",
+      "sourceType": "github",
+      "skillPath": "solidstats-shared-planning-standards/SKILL.md",
+      "computedHash": "73ae57f7279ea007fd0e0605b349072b47ee679c7e90ffdb4d979aa177e169a5"
     }
   }
 }
