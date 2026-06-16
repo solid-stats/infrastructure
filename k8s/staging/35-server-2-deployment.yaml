@@ -64,7 +64,7 @@ spec:
               memory: 16Mi
       containers:
         - name: server-2
-          image: ghcr.io/solid-stats/server-2:e31b1297c9b81b32b5d362a45295711922f4b9bf
+          image: ghcr.io/solid-stats/server-2:0fe3326a4bf11dcabaf89a465bc98bbd5bf086ca
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -74,6 +74,14 @@ spec:
                 name: server-2-config
             - secretRef:
                 name: server-2-runtime
+          env:
+            # Pin V8 old-space to ~75% of the 1Gi limit. The ingest parse-result
+            # consumer loads a full OCAP artifact into heap per message at
+            # PREFETCH_COUNT=10 (+ per-result recalc); the prior 512Mi pod (no
+            # heap cap) OOM'd on the F5 reconciler's orphan-recovery burst
+            # (2026-06-16). Deterministic cap + the 1Gi limit below give headroom.
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=768"
           readinessProbe:
             httpGet:
               path: /ready
@@ -88,15 +96,18 @@ spec:
             periodSeconds: 20
           resources:
             # PREP-04: Guaranteed QoS — requests == limits on all containers.
-            # ASSUMED values (A2 from 12-RESEARCH.md) — Plan 05 MUST confirm against
-            # live `kubectl top pods` P95 before rollout. Limits MUST be >= P95 to
-            # avoid CFS throttle (Pitfall 1) or OOM.
+            # Memory raised 512Mi -> 1Gi (2026-06-16): the 512Mi pod OOM'd
+            # (V8 heap-limit, ~255MB) when the F5 reconciler re-queued the orphan
+            # backlog and the parse-result consumer loaded ~PREFETCH_COUNT=10 full
+            # OCAP artifacts into heap concurrently (+ per-result recalc). Paired
+            # with NODE_OPTIONS=--max-old-space-size=768 above. CPU left at 250m
+            # (not the OOM driver). Re-confirm vs live `kubectl top pods` P95.
             requests:
-              cpu: 250m    # raised from 100m; ASSUMED — verify vs live P95
-              memory: 512Mi  # raised from 256Mi; ASSUMED — verify vs live P95
+              cpu: 250m
+              memory: 1Gi
             limits:
-              cpu: 250m    # lowered from "1"; ASSUMED — MUST be >= observed P95
-              memory: 512Mi  # lowered from 1Gi; ASSUMED — MUST be >= observed P95
+              cpu: 250m
+              memory: 1Gi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
