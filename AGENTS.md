@@ -1,3 +1,25 @@
+# infrastructure
+
+Source-of-truth repository for the Solid Stats staging runtime: the
+`k8s/staging/` Kubernetes (k3s) manifests, runtime wiring (secrets, env, network
+isolation), deployment scripts and operational runbooks, the PostgreSQL backup
+schedule, and observability.
+
+**Boundary — this repo owns:** Kubernetes staging manifests, runtime wiring,
+deployment scripts and runbooks (Bash/Python), and the staging CI/CD pipeline. It
+must **not**: own application source code or build container images (the app
+repos do that), manage the production environment (out of scope for v1), or store
+secret values in git (secrets come from the GitHub environment at deploy time
+only). Image SHAs in `k8s/staging/` are pinned and updated explicitly — never
+auto-pull `latest`. See the cross-app boundary map (§D) in
+solidstats-shared-project-standards for the full platform-tier boundaries.
+
+**Shared standards** for every SolidStats repo live in the
+[`skills`](https://github.com/solid-stats/skills) repo — start with
+`solidstats-shared-project-standards`.
+
+---
+
 <!-- GSD:project-start source:PROJECT.md -->
 ## Project
 
