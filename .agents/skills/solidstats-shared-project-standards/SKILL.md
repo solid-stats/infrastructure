@@ -1,5 +1,5 @@
 ---
-name: solidstats-process-project-standards
+name: solidstats-shared-project-standards
 description: >
   Universal project standards for every SolidStats repository (server-2, replays-fetcher,
   replay-parser-2, web, infrastructure). Covers GSD workflow obligations, session hygiene, git
@@ -18,12 +18,14 @@ description: >
 
 # SolidStats Project Standards — Universal Baseline
 
-These standards apply to **every SolidStats repository** (server-2, replays-fetcher,
-replay-parser-2, web, infrastructure) and every session. They define *how work happens* across
-the platform, not how any single stack is written — the per-stack skills own the code details.
+These standards apply to **every repo in the `solid-stats` org** and every session. They define
+*how work happens* across the platform, not how any single stack is written — the per-stack
+skills own the code details.
 
-Read this skill at the start of any session, and keep it in mind throughout. The rules here
-are non-negotiable across all five repos.
+The org is not one flat set of repos: there are five **platform services** that run the product,
+a few **supporting** repos, and one **legacy** repo. §J defines the three tiers and what
+documentation each owes; most of the rules below target the platform services. Read this skill at
+the start of any session and keep it in mind throughout.
 
 ---
 
@@ -40,6 +42,19 @@ development is outside the process.
   during a session, update the relevant planning file before the session ends.
 - **Skills-first.** Before acting on any task, scan available skills. Use a skill even when
   there's only a small chance it helps — the cost is low, the benefit is standardized work.
+- **The skill is the source of truth.** For its stack, the installed `solidstats-*` skill
+  (conventions or review) **outranks the existing code** — surrounding or legacy code is not a
+  style reference, and matching it does not make a change correct. When code and skill disagree,
+  never silently follow the code; exactly one of two things is true:
+  1. **The code is wrong** → bring the code into line with the skill.
+  2. **The skill doesn't yet account for something the code legitimately needs** → the code may
+     be right and the skill incomplete → stop, work out how to capture that case, and fix the
+     skill itself. Skill edits go in the `solid-stats/skills` repo, then re-sync — never the
+     vendored `.agents/skills/**` copy (overwritten on the next sync) — and are recorded in that
+     skill's `CHANGELOG.md`.
+  Either way, surface the conflict and route the fix to one side — never quietly follow the code
+  and move on. This is the working-time face of the authoring rule that conventions are
+  *prescriptive*: code is brought into line with the skill, not the reverse.
 
 ---
 
@@ -81,7 +96,7 @@ Scope: the phase number, feature area, or affected layer (e.g. `feat(17-03): …
 
 ## D. Cross-App Boundary Map
 
-SolidStats is a five-repo platform. Each repo has a strict ownership boundary. Crossing it
+The platform tier is five services (§J); each has a strict ownership boundary. Crossing it
 introduces hidden coupling that is hard to untangle later.
 
 | Repo | Owns | Must NOT |
@@ -164,15 +179,20 @@ the quality gates in this repo. Challenge, explain, propose alternatives — the
 
 ## H. Documentation Language
 
-All SolidStats repos follow the same documentation language standard:
+Language follows the reader. The test for any doc is: who reads it — a user, or an engineer?
 
-- **Code, comments, planning docs, skill bodies, README files:** English only.
-- **GSD workflow responses** (conversations within a GSD session): Russian.
-- **Skill trigger phrases** (`description` field in `SKILL.md`): RU + EN mandatory. Every
-  skill must trigger on both languages — the team works in a RU context.
-
-When writing any documentation, planning artifact, or code comment: English, no exceptions.
-When responding in a GSD session or replying to the user: Russian.
+- **Every repo README is bilingual.** A README is the repo's front door, read by users (the
+  RU-speaking Solid Games community), not an internal engineering doc. So each repo carries a
+  Russian `README.md` (primary) plus an English `README.en.md` mirror, edited together in one
+  change so they never drift. This is the same pattern the `.github` org profile already uses
+  (`profile/README.md` + `profile/README.en.md`) — the profile is just the org-level README.
+- **Everything internal is English only** — code, comments, planning docs, skill bodies and
+  references, `AGENTS.md`, and all technical `docs/`. These are read by the people and agents
+  building the platform, not by users.
+- **GSD workflow responses** (conversations within a GSD session) and replies to the user:
+  Russian.
+- **Skill trigger phrases** (`description` field in `SKILL.md`): RU + EN mandatory. Every skill
+  triggers on both languages — the team works in a RU context.
 
 ---
 
@@ -205,7 +225,7 @@ mcp__context7__query-docs({ context7CompatibleLibraryID: "/fastify/fastify", top
 
 | Repo | Libraries to look up via Context7 |
 |------|-----------------------------------|
-| **server-2** | fastify, @sinclair/typebox, @fastify/type-provider-typebox, @fastify/swagger, kysely, pg, amqplib, pino, envalid, prom-client, @aws-sdk/client-s3 |
+| **server-2** | fastify, zod, fastify-type-provider-zod, @fastify/swagger, kysely, pg, amqplib, pino, envalid, prom-client, @aws-sdk/client-s3 |
 | **replays-fetcher** | zod, commander, @aws-sdk/client-s3, pg |
 | **web** | @tanstack/start, @tanstack/router, @tanstack/react-query, @tanstack/react-table, @tanstack/react-form, @ark-ui/react, vanilla-extract, openapi-typescript, openapi-fetch, openapi-react-query |
 | **replay-parser-2** | tokio, serde, serde_json, thiserror, lapin, aws-sdk-s3, axum, tracing, tracing-subscriber |
@@ -249,6 +269,45 @@ at tool-call time.
 - For a library you've just looked up in the same session and the answer hasn't changed.
 - For stable standard library APIs (e.g. Node.js `fs`, Rust `std::collections`) that are
   unlikely to differ from training data.
+
+---
+
+## J. Repo Taxonomy & Documentation Standard
+
+The `solid-stats` org is more than the five platform services, and not every repo owes the same
+documentation. A runtime service carries more than a shared config package, which carries more
+than a frozen legacy repo. Classifying each repo into a tier tells you at a glance what it owes.
+The boundary map (§D) covers only the platform tier; this covers the whole org.
+
+**Three tiers:**
+
+- **Platform services (5)** — `server-2`, `replays-fetcher`, `replay-parser-2`, `web`,
+  `infrastructure`. They run the product; each owns a runtime boundary (§D) and is a GSD project
+  with its own `.planning/`.
+- **Supporting (3)** — `plans` (cross-project planning), `skills` (this skill set), `ts-toolchain`
+  (shared TypeScript config). They support the platform but own no runtime boundary.
+- **Legacy (1)** — `sg-replay-parser`. Superseded by `replay-parser-2`; frozen.
+
+**Per-tier documentation:**
+
+| Tier | README | AGENTS.md + CLAUDE.md stub | LICENSE | `.planning/` |
+|------|--------|---------------------------|---------|--------------|
+| Platform service | bilingual (`README.md` RU + `README.en.md` EN) | yes — shared header + repo body | yes | yes (GSD) |
+| Supporting | bilingual (RU + EN) | yes — shared header + repo body | only if it ships reusable code (`ts-toolchain`) | optional (`plans` is docs, not a GSD project) |
+| Legacy | bilingual; deprecation banner pointing forward | leave as-is | keep existing | frozen |
+
+- **AGENTS.md opens with a shared header**, then continues with repo-specific guidance: what the
+  repo is, its boundary (link to §D for platform repos), and a pointer to this skill set. The
+  header makes any repo legible to an agent landing in it cold; the body stays per-repo. Don't
+  rewrite a working body to fit a template — add the header above it.
+- **CLAUDE.md is a two-line stub** that imports AGENTS.md (`See @AGENTS.md …`). One source of
+  agent guidance per repo, not two kept in sync by hand.
+- **Governance is centralized.** `CONTRIBUTING` / `SECURITY` / `CODE_OF_CONDUCT` / issue + PR
+  templates live once in the `.github` org repo and apply to every repo through GitHub's
+  org-default fallback. Don't copy them into individual repos — duplicates drift.
+- **The org profile reflects reality.** The `.github` `profile/README.*` repo table groups
+  Platform and Supporting and keeps the legacy line. When a repo is added, moves tier, or is
+  retired, update the profile (both language files, per §H) in the same change.
 
 ---
 
