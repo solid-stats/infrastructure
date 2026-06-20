@@ -115,8 +115,8 @@ live access path anywhere outside .planning/ (historical planning notes are left
 </objective>
 
 <execution_context>
-@/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/workflows/execute-plan.md
-@/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/templates/summary.md
+@.claude/gsd-core/workflows/execute-plan.md
+@.claude/gsd-core/templates/summary.md
 </execution_context>
 
 <context>
@@ -166,7 +166,7 @@ Ground truth for the new transport (from ssh-tunnel-up.sh / deploy-staging.yml):
 Follow repo Script Style — for the .sh files in this task, comment-only edits; do not alter executable behavior. NO secret values anywhere.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && test ! -e scripts/wg-tunnel-up.sh && grep -q 'test -f scripts/ssh-tunnel-up.sh' .github/workflows/deploy-staging.yml && ! grep -lq 'wg-tunnel-up.sh' .github/workflows/deploy-staging.yml README.md AGENTS.md && python3 -c "import yaml; yaml.safe_load(open('.github/workflows/deploy-staging.yml')); print('yaml ok')" && bash -n scripts/validate-phase-13.sh && bash -n scripts/resource-preflight.sh && echo PASS</automated>
+    <automated>cd . && test ! -e scripts/wg-tunnel-up.sh && grep -q 'test -f scripts/ssh-tunnel-up.sh' .github/workflows/deploy-staging.yml && ! grep -lq 'wg-tunnel-up.sh' .github/workflows/deploy-staging.yml README.md AGENTS.md && python3 -c "import yaml; yaml.safe_load(open('.github/workflows/deploy-staging.yml')); print('yaml ok')" && bash -n scripts/validate-phase-13.sh && bash -n scripts/resource-preflight.sh && echo PASS</automated>
   </verify>
   <done>scripts/wg-tunnel-up.sh is gone; the validate job tests for ssh-tunnel-up.sh but not wg-tunnel-up.sh; README + AGENTS.md describe the SSH local-forward with no WireGuard wording; both preflight/validate scripts pass bash -n and their WireGuard comments now read SSH; deploy-staging.yml parses as valid YAML.</done>
 </task>
@@ -189,7 +189,7 @@ docs/operator-bootstrap.md:
 NO secret values anywhere. Follow the existing Markdown table / heading style in the file.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && ! grep -niq 'wireguard\|wg_private\|wg_peer\|wg_endpoint\|51820\|wg syncconf\|10\.8\.0\.2' docs/observability.md docs/operator-bootstrap.md && grep -q '10.8.0.1' docs/operator-bootstrap.md && grep -q 'tls-san' docs/operator-bootstrap.md && grep -q 'ssh-tunnel-up.sh' docs/operator-bootstrap.md && grep -q 'permitopen' docs/operator-bootstrap.md && echo PASS</automated>
+    <automated>cd . && ! grep -niq 'wireguard\|wg_private\|wg_peer\|wg_endpoint\|51820\|wg syncconf\|10\.8\.0\.2' docs/observability.md docs/operator-bootstrap.md && grep -q '10.8.0.1' docs/operator-bootstrap.md && grep -q 'tls-san' docs/operator-bootstrap.md && grep -q 'ssh-tunnel-up.sh' docs/operator-bootstrap.md && grep -q 'permitopen' docs/operator-bootstrap.md && echo PASS</automated>
   </verify>
   <done>observability.md and operator-bootstrap.md contain no WireGuard/WG_*/51820/10.8.0.2 references; operator-bootstrap Step 5 (10.8.0.1 tls-san patch) is intact; Step 6 documents the four DEPLOY_SSH_* secrets and the restrict,port-forwarding,permitopen="127.0.0.1:6443",command="/bin/false" forward-only VPS user with no secret values; the WireGuard handshake troubleshooting row is gone.</done>
 </task>
@@ -208,7 +208,7 @@ In the "=== 7. ufw firewall rules ===" block (currently lines ~142-165):
 Follow repo Script Style — keep `set -euo pipefail`, the FATAL-on-failure pattern for the remaining ufw calls, and idempotency. Do not touch any block other than section 7 and the section-7-related closing echo. NO secret values.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && bash -n scripts/bootstrap-edge.sh && ! grep -q 'wg0' scripts/bootstrap-edge.sh && ! grep -Eq 'ufw allow [^2489]*6443' scripts/bootstrap-edge.sh && grep -q 'ufw allow 22/tcp' scripts/bootstrap-edge.sh && grep -q 'ufw allow 80/tcp' scripts/bootstrap-edge.sh && grep -q 'ufw allow 443/tcp' scripts/bootstrap-edge.sh && grep -q 'ufw default deny incoming' scripts/bootstrap-edge.sh && echo PASS</automated>
+    <automated>cd . && bash -n scripts/bootstrap-edge.sh && ! grep -q 'wg0' scripts/bootstrap-edge.sh && ! grep -Eq 'ufw allow [^2489]*6443' scripts/bootstrap-edge.sh && grep -q 'ufw allow 22/tcp' scripts/bootstrap-edge.sh && grep -q 'ufw allow 80/tcp' scripts/bootstrap-edge.sh && grep -q 'ufw allow 443/tcp' scripts/bootstrap-edge.sh && grep -q 'ufw default deny incoming' scripts/bootstrap-edge.sh && echo PASS</automated>
   </verify>
   <done>bootstrap-edge.sh passes bash -n; no `wg0` reference and no 6443 ufw allow rule remain; the 22/80/443 rules, default-deny-incoming, --force enable gate, and SKIP_UFW guard are intact; a comment documents that 6443 stays private behind the SSH local-forward.</done>
 </task>
@@ -232,7 +232,7 @@ scripts/teardown-edge.sh (line ~97 and the closing echo ~103):
 Follow repo Script Style / Python style already in those files. NO secret values.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && python3 -m py_compile scripts/validate-edge.py && bash -n scripts/teardown-edge.sh && ! grep -q 'wg0' scripts/validate-edge.py scripts/teardown-edge.sh && grep -q 'ufw allow 80' scripts/validate-edge.py && grep -q 'ufw allow 443' scripts/validate-edge.py && echo PASS</automated>
+    <automated>cd . && python3 -m py_compile scripts/validate-edge.py && bash -n scripts/teardown-edge.sh && ! grep -q 'wg0' scripts/validate-edge.py scripts/teardown-edge.sh && grep -q 'ufw allow 80' scripts/validate-edge.py && grep -q 'ufw allow 443' scripts/validate-edge.py && echo PASS</automated>
   </verify>
   <done>validate-edge.py compiles and no longer asserts the wg0 6443 literal (instead asserts 6443 is not publicly exposed), keeping its 80/443/nginx-t/lineage checks; teardown-edge.sh passes bash -n and no longer references the wg0 6443 rule; neither file contains `wg0`.</done>
 </task>
@@ -279,7 +279,7 @@ present — do not alter). Comment/echo-string edits ONLY; do not change any
 assertion, flag, or executable line. NO secret values.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && for f in scripts/validate-stack.sh scripts/validate-phase-12.sh scripts/validate-phase-15.sh scripts/validate-phase-16.sh scripts/restore-drill.sh; do bash -n "$f" || exit 1; done && ! grep -niE 'wireguard|wg0|wg-tunnel-up|51820' scripts/validate-stack.sh scripts/validate-phase-12.sh scripts/validate-phase-15.sh scripts/validate-phase-16.sh scripts/restore-drill.sh && grep -q 'ssh-tunnel-up.sh\|local-forward' scripts/validate-stack.sh && echo PASS</automated>
+    <automated>cd . && for f in scripts/validate-stack.sh scripts/validate-phase-12.sh scripts/validate-phase-15.sh scripts/validate-phase-16.sh scripts/restore-drill.sh; do bash -n "$f" || exit 1; done && ! grep -niE 'wireguard|wg0|wg-tunnel-up|51820' scripts/validate-stack.sh scripts/validate-phase-12.sh scripts/validate-phase-15.sh scripts/validate-phase-16.sh scripts/restore-drill.sh && grep -q 'ssh-tunnel-up.sh\|local-forward' scripts/validate-stack.sh && echo PASS</automated>
   </verify>
   <done>All five scripts pass `bash -n`; none contains WireGuard/wg0/wg-tunnel-up/51820; each prerequisite comment/echo now names the SSH local-forward (or kubectl-reachable) equivalent; no executable line changed.</done>
 </task>
@@ -369,7 +369,7 @@ After this task, none of these six docs may contain WireGuard/WG_*/51820/wg0/
 wg-quick/wg syncconf/wireguard-access. NO secret values anywhere.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && ! grep -niE 'wireguard|wg_private|wg_peer|wg_endpoint|wg0|wg-quick|wg syncconf|51820|wireguard-access' docs/staging.md docs/glitchtip.md docs/s3-lifecycle.md docs/backup-restore.md docs/resource-protection.md docs/sa-token-rotation.md && grep -q 'DEPLOY_SSH_PRIVATE_KEY' docs/staging.md && grep -q 'k3s-api-access.md' docs/staging.md && grep -q 'permitopen' docs/sa-token-rotation.md && echo PASS</automated>
+    <automated>cd . && ! grep -niE 'wireguard|wg_private|wg_peer|wg_endpoint|wg0|wg-quick|wg syncconf|51820|wireguard-access' docs/staging.md docs/glitchtip.md docs/s3-lifecycle.md docs/backup-restore.md docs/resource-protection.md docs/sa-token-rotation.md && grep -q 'DEPLOY_SSH_PRIVATE_KEY' docs/staging.md && grep -q 'k3s-api-access.md' docs/staging.md && grep -q 'permitopen' docs/sa-token-rotation.md && echo PASS</automated>
   </verify>
   <done>The six docs contain no WireGuard/WG_*/wg0/51820/wireguard-access references; staging.md lists the four DEPLOY_SSH_* secrets and links to ./k3s-api-access.md; sa-token-rotation.md's title and Step 2 document CI SSH-key rotation against the forward-only VPS user with no WG commands; all passing-mention prerequisites read SSH local-forward. No secret values.</done>
 </task>
@@ -448,7 +448,7 @@ NO secret values (no private keys, no real public keys, no endpoints/IPs beyond 
 already-public 10.8.0.1 SAN literal and 127.0.0.1 loopback). Follow repo Markdown style.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && test ! -e docs/wireguard-access.md && test -e docs/k3s-api-access.md && ! grep -niE 'wireguard|wg0|51820|wg-quick' docs/edge-bootstrap.md docs/k3s-api-access.md && grep -q 'permitopen="127.0.0.1:6443"' docs/k3s-api-access.md && grep -q '10.8.0.1' docs/k3s-api-access.md && ! grep -rn 'wireguard-access' --include='*.md' docs/ README.md && ! grep -q 'wg0' docs/edge-bootstrap.md && echo PASS</automated>
+    <automated>cd . && test ! -e docs/wireguard-access.md && test -e docs/k3s-api-access.md && ! grep -niE 'wireguard|wg0|51820|wg-quick' docs/edge-bootstrap.md docs/k3s-api-access.md && grep -q 'permitopen="127.0.0.1:6443"' docs/k3s-api-access.md && grep -q '10.8.0.1' docs/k3s-api-access.md && ! grep -rn 'wireguard-access' --include='*.md' docs/ README.md && ! grep -q 'wg0' docs/edge-bootstrap.md && echo PASS</automated>
   </verify>
   <done>docs/wireguard-access.md no longer exists; docs/k3s-api-access.md documents the SSH-local-forward CI + operator paths, the forward-only VPS user (restrict,port-forwarding,permitopen="127.0.0.1:6443",command="/bin/false"), and the 10.8.0.1 SAN dependency, with no secret values and no WG text; docs/edge-bootstrap.md describes 6443 as private behind the SSH local-forward with no wg0 pre-check/rule and matches the reworked bootstrap-edge.sh + teardown-edge.sh; no non-.planning Markdown link points at wireguard-access.md.</done>
 </task>
@@ -459,7 +459,7 @@ already-public 10.8.0.1 SAN literal and 127.0.0.1 loopback). Follow repo Markdow
 Phase-level (run after all seven tasks):
 
 ```
-cd /home/afgan0r/Projects/SolidGames/infrastructure
+cd .
 python3 scripts/validate-staging.py           # full structure validator (py_compiles validate-edge.py, bash -n's listed scripts incl. ssh-tunnel-up.sh)
 bash -n scripts/bootstrap-edge.sh             # firewall script syntax
 # bash -n every edited shell script:

@@ -59,8 +59,8 @@ future restoration.
 </objective>
 
 <execution_context>
-@/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/workflows/execute-plan.md
-@/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/templates/summary.md
+@.claude/gsd-core/workflows/execute-plan.md
+@.claude/gsd-core/templates/summary.md
 </execution_context>
 
 <context>
@@ -168,7 +168,7 @@ section comments (`# --- N. ... ---`) matching wg-tunnel-up.sh's numbering style
 After writing, make it executable.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && bash -n scripts/ssh-tunnel-up.sh && grep -q 'ExitOnForwardFailure=yes' scripts/ssh-tunnel-up.sh && grep -q 'StrictHostKeyChecking=yes' scripts/ssh-tunnel-up.sh && grep -q 'exit 64' scripts/ssh-tunnel-up.sh && grep -q '16443' scripts/ssh-tunnel-up.sh && test -x scripts/ssh-tunnel-up.sh && ! grep -Eq 'StrictHostKeyChecking[= ](no|accept-new)' scripts/ssh-tunnel-up.sh && echo TUNNEL_OK</automated>
+    <automated>cd . && bash -n scripts/ssh-tunnel-up.sh && grep -q 'ExitOnForwardFailure=yes' scripts/ssh-tunnel-up.sh && grep -q 'StrictHostKeyChecking=yes' scripts/ssh-tunnel-up.sh && grep -q 'exit 64' scripts/ssh-tunnel-up.sh && grep -q '16443' scripts/ssh-tunnel-up.sh && test -x scripts/ssh-tunnel-up.sh && ! grep -Eq 'StrictHostKeyChecking[= ](no|accept-new)' scripts/ssh-tunnel-up.sh && echo TUNNEL_OK</automated>
   </verify>
   <done>
 scripts/ssh-tunnel-up.sh exists, is executable, passes `bash -n`, opens an
@@ -209,7 +209,7 @@ workflow overrides) byte-for-byte intact:
 Do NOT touch the credentials/context/use-context blocks or the auth verify.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && bash -n scripts/kubeconfig-setup.sh && grep -q 'K8S_API_SERVER:=https://127.0.0.1:16443' scripts/kubeconfig-setup.sh && grep -q 'K8S_TLS_SERVER_NAME:=10.8.0.1' scripts/kubeconfig-setup.sh && grep -q 'tls-server-name="\$K8S_TLS_SERVER_NAME"' scripts/kubeconfig-setup.sh && grep -q 'system:anonymous' scripts/kubeconfig-setup.sh && ! grep -q 'insecure-skip-tls-verify' scripts/kubeconfig-setup.sh && echo KUBECONFIG_OK</automated>
+    <automated>cd . && bash -n scripts/kubeconfig-setup.sh && grep -q 'K8S_API_SERVER:=https://127.0.0.1:16443' scripts/kubeconfig-setup.sh && grep -q 'K8S_TLS_SERVER_NAME:=10.8.0.1' scripts/kubeconfig-setup.sh && grep -q 'tls-server-name="\$K8S_TLS_SERVER_NAME"' scripts/kubeconfig-setup.sh && grep -q 'system:anonymous' scripts/kubeconfig-setup.sh && ! grep -q 'insecure-skip-tls-verify' scripts/kubeconfig-setup.sh && echo KUBECONFIG_OK</automated>
   </verify>
   <done>
 The default server is https://127.0.0.1:16443, K8S_TLS_SERVER_NAME defaults to
@@ -268,7 +268,7 @@ Confirm both YAML files remain syntactically valid and the python validator
 passes.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && python3 -c "import yaml,sys; [yaml.safe_load(open(f)) for f in ['.github/workflows/deploy-staging.yml','.github/workflows/deploy-observability.yml']]; print('YAML_OK')" && test "$(grep -c 'Open SSH tunnel' .github/workflows/deploy-staging.yml)" -eq 2 && grep -q 'Open SSH tunnel' .github/workflows/deploy-observability.yml && ! grep -q 'wg-tunnel-up.sh' .github/workflows/deploy-staging.yml && grep -q 'test -f scripts/ssh-tunnel-up.sh' .github/workflows/deploy-staging.yml && grep -q 'test -f scripts/wg-tunnel-up.sh' .github/workflows/deploy-staging.yml && ! grep -q 'wireguard-tools' .github/workflows/deploy-staging.yml && ! grep -q 'wireguard-tools' .github/workflows/deploy-observability.yml && grep -q 'ssh-tunnel-up.sh' scripts/validate-staging.py && python3 scripts/validate-staging.py && echo WORKFLOWS_OK</automated>
+    <automated>cd . && python3 -c "import yaml,sys; [yaml.safe_load(open(f)) for f in ['.github/workflows/deploy-staging.yml','.github/workflows/deploy-observability.yml']]; print('YAML_OK')" && test "$(grep -c 'Open SSH tunnel' .github/workflows/deploy-staging.yml)" -eq 2 && grep -q 'Open SSH tunnel' .github/workflows/deploy-observability.yml && ! grep -q 'wg-tunnel-up.sh' .github/workflows/deploy-staging.yml && grep -q 'test -f scripts/ssh-tunnel-up.sh' .github/workflows/deploy-staging.yml && grep -q 'test -f scripts/wg-tunnel-up.sh' .github/workflows/deploy-staging.yml && ! grep -q 'wireguard-tools' .github/workflows/deploy-staging.yml && ! grep -q 'wireguard-tools' .github/workflows/deploy-observability.yml && grep -q 'ssh-tunnel-up.sh' scripts/validate-staging.py && python3 scripts/validate-staging.py && echo WORKFLOWS_OK</automated>
   </verify>
   <done>
 Both workflows use a single "Open SSH tunnel" step (twice in deploy-staging.yml:

@@ -50,8 +50,8 @@ validator coverage extended to namespaced RBAC.
 </objective>
 
 <execution_context>
-@/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/workflows/execute-plan.md
-@/home/afgan0r/Projects/SolidGames/infrastructure/.claude/gsd-core/templates/summary.md
+@.claude/gsd-core/workflows/execute-plan.md
+@.claude/gsd-core/templates/summary.md
 </execution_context>
 
 <context>
@@ -109,7 +109,7 @@ empty Roles, so removal from the CD path is functionally inert; the same definit
 to the operator-bootstrap file in Task 2.
   </action>
   <verify>
-    <automated>test "$(grep -rE '^kind: (Role|RoleBinding)$' /home/afgan0r/Projects/SolidGames/infrastructure/k8s/observability/ | wc -l)" -eq 0 && grep -q 'kind: Deployment' /home/afgan0r/Projects/SolidGames/infrastructure/k8s/observability/40-postgres-exporter.yaml && grep -q 'kind: Deployment' /home/afgan0r/Projects/SolidGames/infrastructure/k8s/observability/50-grafana.yaml && echo OK</automated>
+    <automated>test "$(grep -rE '^kind: (Role|RoleBinding)$' k8s/observability/ | wc -l)" -eq 0 && grep -q 'kind: Deployment' k8s/observability/40-postgres-exporter.yaml && grep -q 'kind: Deployment' k8s/observability/50-grafana.yaml && echo OK</automated>
   </verify>
   <done>
 No `kind: Role` or `kind: RoleBinding` document remains anywhere under k8s/observability/.
@@ -150,7 +150,7 @@ in this file — the deployer Role must not gain roles/rolebindings verbs (rejec
 alternative).
   </action>
   <verify>
-    <automated>test "$(grep -cE '^kind: (Role|RoleBinding)$' /home/afgan0r/Projects/SolidGames/infrastructure/k8s/staging/01-obs-rbac.yaml)" -ge 4 && grep -q 'name: postgres-exporter' /home/afgan0r/Projects/SolidGames/infrastructure/k8s/staging/01-obs-rbac.yaml && grep -Eq 'roles|rolebindings' /home/afgan0r/Projects/SolidGames/infrastructure/k8s/staging/01-obs-rbac.yaml && echo OK</automated>
+    <automated>test "$(grep -cE '^kind: (Role|RoleBinding)$' k8s/staging/01-obs-rbac.yaml)" -ge 4 && grep -q 'name: postgres-exporter' k8s/staging/01-obs-rbac.yaml && grep -Eq 'roles|rolebindings' k8s/staging/01-obs-rbac.yaml && echo OK</automated>
   </verify>
   <done>
 01-obs-rbac.yaml now contains the postgres-exporter Role+RoleBinding and grafana Role+RoleBinding
@@ -181,7 +181,7 @@ Do not change any other check (secret values, namespace, priority class, render 
 membership drives all behavior; the docstring/comment/message are wording only.
   </action>
   <verify>
-    <automated>cd /home/afgan0r/Projects/SolidGames/infrastructure && python3 -c "import re; s=open('scripts/validate-obs-manifests.py').read(); assert re.search(r'_FORBIDDEN_OBS_KINDS\s*=\s*\{[^}]*\"Role\"[^}]*\"RoleBinding\"', s) or re.search(r'_FORBIDDEN_OBS_KINDS\s*=\s*\{[^}]*\"RoleBinding\"[^}]*\"Role\"', s), 'Role/RoleBinding not in set'; print('SET OK')" && python3 scripts/validate-obs-manifests.py</automated>
+    <automated>cd . && python3 -c "import re; s=open('scripts/validate-obs-manifests.py').read(); assert re.search(r'_FORBIDDEN_OBS_KINDS\s*=\s*\{[^}]*\"Role\"[^}]*\"RoleBinding\"', s) or re.search(r'_FORBIDDEN_OBS_KINDS\s*=\s*\{[^}]*\"RoleBinding\"[^}]*\"Role\"', s), 'Role/RoleBinding not in set'; print('SET OK')" && python3 scripts/validate-obs-manifests.py</automated>
   </verify>
   <done>
 `_FORBIDDEN_OBS_KINDS` contains ClusterRole, ClusterRoleBinding, Role, RoleBinding. The docstring
