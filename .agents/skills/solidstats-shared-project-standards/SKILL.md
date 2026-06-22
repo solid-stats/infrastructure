@@ -55,6 +55,14 @@ development is outside the process.
   Either way, surface the conflict and route the fix to one side — never quietly follow the code
   and move on. This is the working-time face of the authoring rule that conventions are
   *prescriptive*: code is brought into line with the skill, not the reverse.
+- **Capturing the skill fix — don't let it evaporate.** When the skill is the thing that's wrong —
+  it states a wrong fact, lacks a rule the code legitimately needs, or following it caused a bug —
+  proactively **offer to capture that via `solidstats-process-skill-feedback`** (a one-line,
+  non-blocking nudge; capture only on a yes). That records the divergence into the target skill's
+  `corrections-log.md` so the fix survives after you move on: a **fact** can be promoted into the
+  skill at one occurrence, a **preference** after it recurs. This is only for *skill* divergences —
+  the test is whether fixing it means editing a `solidstats-*` SKILL.md; a fact about the product or
+  codebase goes to memory / MemPalace instead.
 
 ---
 
@@ -198,72 +206,50 @@ Language follows the reader. The test for any doc is: who reads it — a user, o
 
 ## I. MCP Usage
 
-SolidStats development relies on MCP tools to access current documentation. **Never use
-training data as the primary source for library APIs** — it has a cutoff and may reflect
-outdated or incorrect APIs. Prefer MCP tools for any external library lookup.
+SolidStats development verifies library APIs against **current documentation, never training
+data** — training data has a cutoff and may reflect outdated or incorrect APIs. Look the docs
+up proactively; don't wait for a type error.
 
-### Context7 — library documentation (primary MCP)
+### Library documentation — free official sources only
 
-Use Context7 whenever you need to look up or verify a library's current API, configuration
-options, migration guide, or best practices. This applies proactively — don't wait for a
-type error to check the docs.
+For any library / framework / SDK / API / CLI question (current API, configuration options,
+migration guide, best practice), pull the current docs from **free sources**:
 
-**Common lookup triggers:** adding a new dependency, upgrading a package, using a method
-you're not 100% sure about, hitting an unexpected type error, writing a new integration.
+- **WebFetch / WebSearch** against the library's **official docs** and its `llms.txt`.
+- The repo's `README` / `docs/` (and release notes) via the **`gh`** CLI for source-of-truth usage.
+- GitHub issues / PRs for bug reports, migrations, and error-message answers not yet in the docs.
 
-**How to use (two-step pattern):**
+**Do NOT use Context7 or any paid documentation MCP** — free official sources are the standard
+across every SolidStats repo, not a paid lookup service.
 
-```
-# Step 1: resolve the library ID
-mcp__context7__resolve-library-id({ libraryName: "fastify" })
+**Common lookup triggers:** adding a new dependency, upgrading a package, using a method you're
+not 100% sure about, hitting an unexpected type error, writing a new integration.
 
-# Step 2: query the docs
-mcp__context7__query-docs({ context7CompatibleLibraryID: "/fastify/fastify", topic: "plugins" })
-```
+**Key libraries by repo — verify these against current docs, not training data:**
 
-**Key libraries by repo — always look these up via Context7, not training data:**
-
-| Repo | Libraries to look up via Context7 |
-|------|-----------------------------------|
+| Repo | Libraries to verify against current docs |
+|------|------------------------------------------|
 | **server-2** | fastify, zod, fastify-type-provider-zod, @fastify/swagger, kysely, pg, amqplib, pino, envalid, prom-client, @aws-sdk/client-s3 |
 | **replays-fetcher** | zod, commander, @aws-sdk/client-s3, pg |
-| **web** | @tanstack/start, @tanstack/router, @tanstack/react-query, @tanstack/react-table, @tanstack/react-form, @ark-ui/react, vanilla-extract, openapi-typescript, openapi-fetch, openapi-react-query |
+| **web** | @tanstack/start, @tanstack/router, @tanstack/react-query, @tanstack/react-table, @tanstack/react-form, @ark-ui/react, tailwindcss, tailwind-variants, openapi-typescript, openapi-fetch, openapi-react-query |
 | **replay-parser-2** | tokio, serde, serde_json, thiserror, lapin, aws-sdk-s3, axum, tracing, tracing-subscriber |
 | **infrastructure** | Kubernetes API reference, kubectl |
 
-### WebSearch / WebFetch — for what Context7 doesn't cover
+### Loading the tools (deferred in Claude Code)
 
-Use WebSearch or WebFetch for:
-- GitHub issues, bug reports, and PRs for a library
-- Release notes and migration guides not yet in Context7
-- Stack Overflow / forum answers for specific error messages
-- Documentation for tools without a Context7 entry (e.g. k3s, MinIO, Timeweb S3)
-
-### Loading MCP tools: Claude Code vs. standalone agents
-
-**In Claude Code (main session):** Context7, WebSearch, and WebFetch appear as *deferred
-tools* — their schemas are not loaded until requested. Load them explicitly before use:
+`WebSearch` and `WebFetch` appear as *deferred tools* — their schemas aren't loaded until
+requested. Load them before the first lookup (the same in the main session and in spawned
+subagents like gsd-executor / gsd-planner / gsd-phase-researcher):
 
 ```
-ToolSearch({ query: "select:mcp__context7__resolve-library-id,mcp__context7__query-docs", max_results: 2 })
 ToolSearch({ query: "select:WebSearch,WebFetch", max_results: 2 })
 ```
 
-**In subagents spawned by Claude Code** (gsd-executor, gsd-planner, gsd-phase-researcher,
-etc.): the same mechanism applies — the tools are available but deferred. Always call
-`ToolSearch` to load Context7 before the first documentation lookup.
+In standalone agents outside a Claude Code session (e.g. CI, remote triggers), use the agent's
+own HTTP/fetch capability or the `gh` CLI against official docs and repo sources — never add a
+paid documentation MCP.
 
-**In standalone agents outside a Claude Code session** (e.g. CI, remote triggers): install
-the Context7 MCP server explicitly and add it to the agent's MCP config:
-
-```bash
-npx -y @upstash/context7-mcp@latest
-```
-
-Then configure the agent's MCP settings to include the Context7 server so it's available
-at tool-call time.
-
-### When NOT to use Context7
+### When NOT to look it up
 
 - For SolidStats-specific code or business logic (no external library is involved).
 - For a library you've just looked up in the same session and the answer hasn't changed.

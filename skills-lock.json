@@ -7,6 +7,12 @@
       "skillPath": "skills/kubernetes-specialist/SKILL.md",
       "computedHash": "9c5eb68fc9d553ee29e745258bc6198563158c4b2c57436d63647e61010b5f0a"
     },
+    "solidstats-process-skill-feedback": {
+      "source": "solid-stats/skills",
+      "sourceType": "github",
+      "skillPath": "solidstats-process-skill-feedback/SKILL.md",
+      "computedHash": "b6bbb2059e2ebd0f8efca508e756b0dfa12f08ff438407b92e1434304976d4e0"
+    },
     "solidstats-shared-planning-standards": {
       "source": "solid-stats/skills",
       "sourceType": "github",
@@ -17,7 +23,7 @@
       "source": "solid-stats/skills",
       "sourceType": "github",
       "skillPath": "solidstats-shared-project-standards/SKILL.md",
-      "computedHash": "467a2ed93687fd453f34c347ac93c61f76197b44b9d2dc586801a47565ad38af"
+      "computedHash": "8a6698199e45261176a884f6f849b61e4499fa18582c222536a8dcf328f31b5e"
     }
   }
 }
