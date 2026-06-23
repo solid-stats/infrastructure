@@ -49,7 +49,7 @@ spec:
               # Pinned to the watch-split image (master): adds the page-1 watch daemon
               # used by 52-replays-fetcher-watch.yaml; the run-once sweep path is unchanged.
               # Both workloads share this exact SHA so cron and watch stay version-locked.
-              image: ghcr.io/solid-stats/replays-fetcher:4ba0613925f19ed55a123b4b90c24208814c9ac4
+              image: ghcr.io/solid-stats/replays-fetcher:6a500655a2c4db28a96ad67671589aaaa7034b03
               imagePullPolicy: IfNotPresent
               args: ["run-once"]
               env:
