@@ -32,7 +32,7 @@ spec:
         - name: replays-fetcher-watch
           # Same pinned SHA as the run-once CronJob in 50-...yaml — cron and watch stay
           # version-locked. `watch` is appended to the image ENTRYPOINT `node dist/cli.mjs`.
-          image: ghcr.io/solid-stats/replays-fetcher:9f091bf1b913a2f04029b9b24ec8009130351495
+          image: ghcr.io/solid-stats/replays-fetcher:4ba0613925f19ed55a123b4b90c24208814c9ac4
           imagePullPolicy: IfNotPresent
           args: ["watch"]
           env:

@@ -64,7 +64,7 @@ spec:
               memory: 16Mi
       containers:
         - name: server-2
-          image: ghcr.io/solid-stats/server-2:0fe3326a4bf11dcabaf89a465bc98bbd5bf086ca
+          image: ghcr.io/solid-stats/server-2:161b84869a484140035bd5148f55947e688d58ac
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
