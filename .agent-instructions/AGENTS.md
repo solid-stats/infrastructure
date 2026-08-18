@@ -101,6 +101,31 @@ Language follows the reader. The test for any doc is: who reads it — a user, o
 - **Skill trigger phrases** (`description` field in `SKILL.md`): RU + EN mandatory. Every skill
   triggers on both languages — the team works in a RU context.
 
+## MemPalace
+
+Every SolidStats repo has its own MemPalace **wing, named after the repo itself**
+(`web`, `server-2`, `replays-fetcher`, `replay-parser-2`, `infrastructure`, `skills`) — use the
+generic `mcp__mempalace__*` tools, scoped to that wing; there is no isolated per-project MCP
+server here (unlike VocalClub's `vocalclub_memory`). Never file a durable fact into the wrong
+repo's wing, and never invent a new wing name — if a fact spans repos, use a cross-wing tunnel
+(`mempalace_create_tunnel`) instead of duplicating the drawer.
+
+- **Recall before diagnosing or building**, not just when a hook happens to inject a snippet.
+  Run an explicit `mempalace_search` seeded from the task's real identifiers (symptom, service
+  name, ticket) at the start of the session — a pattern-match to "we just touched this" is not
+  recall, and a miss is not proof of absence (follow up with `mempalace_list_drawers` /
+  `mempalace_kg_query` before concluding nothing is stored).
+- **Capture only durable, verified conclusions** at closure — a decision, a root cause, a
+  resolved gotcha — not raw session transcripts, planning artifacts, or GSD's own
+  `CONTEXT.md`/`PLAN.md`/`SUMMARY.md` files. Dedup with `mempalace_check_duplicate` before
+  filing.
+- **GSD's `mempalace` config block** (`.planning/config.json`) governs whether/when a GSD
+  workflow recalls and captures automatically for that repo; the common defaults live in
+  `agent-instructions`' `gsd/common-config.json` (`mempalace.enabled`), while the richer
+  per-repo flags (`capture_artifacts`, `mirror_kg`, `cross_project_tunnels`,
+  `auto_capture_hooks`) are tuned per repo and stay local — a backend service and a frontend
+  repo do not need identical capture behavior.
+
 ## MCP / Documentation Lookup
 
 SolidStats development verifies library APIs against **current documentation, never training
