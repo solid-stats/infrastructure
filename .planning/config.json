@@ -153,6 +153,7 @@
     "enabled": true
   },
   "mempalace": {
-    "enabled": true
+    "enabled": true,
+    "cross_project_tunnels": true
   }
 }
