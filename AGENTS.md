@@ -14,9 +14,12 @@ only). Image SHAs in `k8s/staging/` are pinned and updated explicitly — never
 auto-pull `latest`. See the cross-app boundary map (§D) in
 solidstats-shared-project-standards for the full platform-tier boundaries.
 
-**Shared standards** for every SolidStats repo live in the
+Cross-repo rules (skills-first, git, security, docs language, MCP lookup) live in
+`solid-stats/agent-instructions`, imported below. Stack-specific skills live in the
 [`skills`](https://github.com/solid-stats/skills) repo — start with
 `solidstats-shared-project-standards`.
+
+@.agent-instructions/AGENTS.md
 
 ---
 
