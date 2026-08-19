@@ -26,7 +26,7 @@ status: complete
 actuals:
   tokens: 33400
   tasks: 3
-  commits: 6
+  commits: 11
 ---
 
 # Phase 19 Plan 03: Close CD and Monitoring Gaps Summary
@@ -54,10 +54,13 @@ Prometheus coverage for MCP, Qdrant, snapshots, and PVC capacity.
 3. `fdf857c` — fix(19-03): preserve tunnel helper executable mode
 4. `094b976` — feat(19-03): add memory metrics observer
 5. `6cae3d9` — feat(19-03): wire Prometheus memory monitoring
+6. `116f946` — refactor(19-03): make memory observer import-safe
+7. `278ba9e` — test(19-03): deepen memory runtime contract coverage
+8. `d1e389b` — test(19-03): isolate tunnel startup failure probe
 
 ## Verification
 
-- `timeout 30s python3 tests/test-memory-runtime-contract.py` — passed (8 tests).
+- `timeout 30s python3 tests/test-memory-runtime-contract.py` — passed (11 tests).
 - `timeout 10s python3 scripts/validate-memory-manifests.py`
   `--allow-operator-placeholders` — passed (26 resources).
 - `timeout 10s python3 scripts/validate-obs-manifests.py` — passed.
@@ -71,6 +74,16 @@ Kube-router default-deny behavior remains unverified until an operator supplies
 real substitutions and probes the live cluster. The required UAT must prove
 that only Prometheus reaches observer TCP 9108, only the observer reaches
 MCP/Qdrant, and all other relevant traffic is denied.
+
+## Compliance Follow-up
+
+- The observer is extracted from its ConfigMap and executed with deterministic
+  fake HTTP responses and clocks. Tests cover healthy, malformed, empty,
+  timeout, and counter paths without requests leaving the process.
+- Deployment tests now prove identity and RBAC ordering before every dry-run
+  and apply, plus tunnel startup-failure and wrong-forward refusal paths.
+- Prometheus tests require all recording rules, alerts, PVC selectors, the
+  backup-suspension gate, authenticated node proxying, and identity separation.
 
 ## Deviations from Plan
 
