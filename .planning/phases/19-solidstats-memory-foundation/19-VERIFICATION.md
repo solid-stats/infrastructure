@@ -1,54 +1,79 @@
 ---
 phase: 19-solidstats-memory-foundation
-verified: 2026-08-19T19:32:38Z
+verified: 2026-08-19T20:22:45Z
 status: gaps_found
-score: 2/5 must-haves verified
+score: 4/7 must-haves verified
 behavior_unverified: 1
 overrides_applied: 0
+re_verification:
+  previous_status: gaps_found
+  previous_score: 2/5
+  gaps_closed:
+    - "A dedicated authenticated memory deployment workflow exists."
+  gaps_remaining:
+    - "OPS-04 monitoring is not operationally complete."
+  regressions:
+    - "The observer cannot reach MemPalace through default-deny ingress."
+    - "The snapshot-freshness alert selects a nonexistent CronJob."
 gaps:
-  - truth: "A dedicated deploy path can apply the isolated memory workload boundary using the namespace-scoped CI identity."
+  - truth: >-
+      Prometheus actively scrapes a namespace-local observer for MCP and Qdrant
+      signals under default-deny NetworkPolicies.
     status: failed
-    reason: "The only deploy job has no cluster authentication or apply command and intentionally ends with `exit 1`; supplying every required GitHub value still produces a failed deployment."
+    reason: >-
+      The observer has egress to MemPalace TCP 8765, but no NetworkPolicy allows
+      observer ingress to the MemPalace pod. Default-deny blocks every MCP probe.
     artifacts:
-      - path: ".github/workflows/deploy-memory.yml"
-        issue: "The final step prints an operator message and executes `exit 1` instead of invoking an authenticated, namespace-scoped apply path."
+      - path: "k8s/memory/30-network-policy.yaml"
+        issue: "No ingress rule selects MemPalace and permits solidstats-memory-observer on TCP 8765."
+      - path: "scripts/validate-memory-manifests.py"
+        issue: "Checks observer egress but not reciprocal MemPalace ingress."
     missing:
-      - >-
-        An operator-authorized, authenticated apply mechanism that excludes bootstrap
-        resources and uses only the memory namespace identity.
-  - truth: "Static Prometheus scraping covers MCP readiness/latency/errors, Qdrant health/collection state, snapshot freshness, and PVC capacity."
+      - "A least-privilege MemPalace ingress rule for the observer on TCP 8765 and a regression assertion."
+  - truth: >-
+      Snapshot freshness is alerted whenever the enabled backup fails to produce a
+      recent Qdrant snapshot.
     status: failed
-    reason: "Only a disconnected ConfigMap handoff for two `/healthz` URLs exists. No Prometheus configuration consumes it, and no latency, error, collection-state, snapshot-freshness, or PVC-capacity signal is configured."
+    reason: >-
+      Prometheus selects cronjob=qdrant-snapshot, while the only CronJob is named
+      solidstats-memory-backup. The alert condition has no matching CronJob series.
     artifacts:
-      - path: "k8s/memory/50-monitoring.yaml"
-        issue: "Contains two health targets and an explicit gate for alerts, not the OPS-04 scrape and alert coverage."
+      - path: "k8s/observability/values/prometheus-values.yaml"
+        issue: "Uses qdrant-snapshot instead of solidstats-memory-backup."
       - path: "k8s/observability/10-prometheus.yaml"
-        issue: "Has no SolidStats-memory scrape configuration or reference to the handoff ConfigMap."
+        issue: "Committed rendered configuration repeats the wrong CronJob label."
+      - path: "tests/test-memory-runtime-contract.py"
+        issue: "Asserts the incorrect label instead of relating the rule to the backup manifest."
     missing:
-      - >-
-        Operator-approved Prometheus scrape/probe integration plus observed metric and
-        alert definitions for every OPS-04 signal.
+      - "Correct backup CronJob selector in values/rendered config and a cross-manifest regression test."
 behavior_unverified_items:
   - truth: >-
-      Default-deny policies permit only DNS, MemPalace-to-Qdrant, host-nginx-to-MCP,
-      and Prometheus scrape paths under kube-router.
+      Default-deny policies allow only the documented DNS, observer, Qdrant,
+      host-nginx, and Prometheus paths under kube-router.
     test: >-
-      After the measured host CIDR is rendered in an isolated cluster, exercise DNS,
-      Qdrant access, nginx MCP access, and Prometheus scraping while attempting
-      disallowed traffic.
-    expected: "All required paths work and every other ingress/egress path is denied."
+      Render measured CIDRs in an isolated cluster and exercise every permitted
+      path plus representative denied traffic.
+    expected: "Allowed paths work; non-allowed ingress and egress traffic is denied."
     why_human: >-
-      Static manifests prove selectors and declared rules, but not kube-router
-      source-address semantics or runtime policy enforcement.
+      Static sources cannot establish kube-router source-address rewriting or
+      runtime enforcement.
+human_verification:
+  - test: >-
+      Run a fresh Helm render from the pinned Prometheus chart and compare its
+      generated configuration with committed 10-prometheus.yaml.
+    expected: "Observer jobs, node-volume job, recording rules, and alert rules are preserved exactly."
+    why_human: >-
+      Source/rendered text parity is tested locally, but the pinned chart was not
+      fetched or rendered during Phase 19 offline execution.
 ---
 
 # Phase 19: SolidStats Memory Foundation Verification Report
 
 **Phase Goal:** Add repository-local policy, validation, and plans for a dedicated
 namespace/runtime/storage/network/backup/monitoring/CD boundary.
-**Verified:** 2026-08-19T19:32:38Z
+**Verified:** 2026-08-19T20:22:45Z
 **Status:** gaps_found
-**Re-verification:** No — initial verification
+**Re-verification:** Yes — after gap closure plan 19-03
 
 ## Goal Achievement
 
@@ -57,121 +82,139 @@ namespace/runtime/storage/network/backup/monitoring/CD boundary.
 <!-- markdownlint-disable MD013 -->
 | # | Truth | Status | Evidence |
 | --- | --- | --- | --- |
-| 1 | The migration contract freezes the accepted rooms/wings and rejects incomplete or checksum-drifted offline bundles. | ✓ VERIFIED | `migration-policy.json` fixes the six rooms, five archives, `SolidStats`, frozen writes, and disabled features; `validate-solidstats-memory-policy.py` and all 7 unit tests passed. |
-| 2 | A source-only isolated runtime/storage boundary exists and refuses unmeasured runtime values. | ✓ VERIFIED | `k8s/memory/` contains 22 validated resources. Separate PVCs, private Qdrant StatefulSet, internal MemPalace Deployment, hardened pod specs, and strict placeholder rejection are present. A synthetic render also passed strict validation. |
-| 3 | Default-deny ingress/egress permits precisely the intended runtime paths under kube-router. | ⚠️ PRESENT_BEHAVIOR_UNVERIFIED | The policy set and strict host-CIDR gate are present, but no cluster probe can establish kube-router source semantics or actual allow/deny behavior. |
-| 4 | The dedicated memory deployment workflow can deploy the isolated workload boundary. | ✗ FAILED | `deploy-memory.yml` renders manifests but neither authenticates to a cluster nor applies them; its final command is `exit 1`. |
-| 5 | Monitoring covers all OPS-04 signals. | ✗ FAILED | `50-monitoring.yaml` is an unconsumed health-target handoff only; no scrape configuration or coverage for latency, errors, collection state, snapshot freshness, or PVC capacity exists. |
+| 1 | Policy and offline bundle integrity are enforced. | ✓ VERIFIED | Policy validator and its 7 tests passed. ROADMAP and REQUIREMENTS now consistently assign MIG-03..07 to Phase 19 and MIG-01..02 to Phase 20. |
+| 2 | A source-only isolated runtime/storage boundary rejects unmeasured values. | ✓ VERIFIED | `k8s/memory/` validates 26 resources with private Qdrant, separate PVCs, hardening, and strict placeholder rejection. |
+| 3 | A dedicated workflow proves exact memory identity and namespace-only mutation. | ✓ VERIFIED | Uses `K8S_MEMORY_TOKEN`, exact `auth whoami`, negative `can-i` checks, server-side dry-run/apply, allowlisted manifests, and managed cleanup. |
+| 4 | The managed SSH tunnel fails safely without signaling unrelated processes. | ✓ VERIFIED | 11 runtime-contract tests passed, including fake-SSH start/stop, stale PID, wrong-forward, and startup-failure cleanup. |
+| 5 | Observer actively collects MCP and Qdrant signals under default deny. | ✗ FAILED | Observer egress allows MemPalace TCP 8765, but MemPalace has no matching observer ingress allow. |
+| 6 | Rules alert on every OPS-04 signal, including enabled-backup freshness. | ✗ FAILED | Snapshot freshness selects nonexistent `qdrant-snapshot`, not `solidstats-memory-backup`. |
+| 7 | kube-router enforces the declared default-deny paths. | ⚠️ PRESENT_BEHAVIOR_UNVERIFIED | Explicitly retained as operator UAT; no live-cluster claim was made. |
+<!-- markdownlint-enable MD013 -->
 
-**Score:** 2/5 truths verified (1 present, behavior-unverified)
+**Score:** 4/7 truths verified (1 present, behavior-unverified)
 
 ### Required Artifacts
 
+<!-- markdownlint-disable MD013 -->
 | Artifact | Expected | Status | Details |
 | --- | --- | --- | --- |
-| `config/solidstats-memory/migration-policy.json` | Frozen migration/room/wing policy | ✓ VERIFIED | Exact policy values are checked by the offline validator. |
-| `scripts/validate-solidstats-memory-policy.py` | Fail-closed policy and bundle validator | ✓ VERIFIED | Validates required attestations, safe relative paths, lowercase SHA-256, existence, and matching digests. |
-| `k8s/memory/` | Isolated namespace/runtime/storage/network/backup/monitoring manifests | ⚠️ PARTIAL | Runtime, storage, network, and backup sources are substantive; monitoring is only a handoff and cannot meet OPS-04. |
-| `scripts/render-memory-manifests.py` and `scripts/validate-memory-manifests.py` | Disposable render plus strict structural validation | ✓ VERIFIED | Source passes only with explicit placeholder allowance; synthetic values render and pass strict validation. |
-| `.github/workflows/deploy-memory.yml` | Independent CD path | ✗ FAILED | Has validate/render stages but is deliberately non-deploying and always fails. |
-| `config/nginx/sites-available/solidstats-memory-mcp.conf.template` | Public HTTPS MCP edge preparation | ✓ VERIFIED | Restricts the public route to `/solidstats/mcp`, forwards Authorization, disables buffering, and strict mode rejects all unresolved edge values. |
+| `.github/workflows/deploy-memory.yml` | Authenticated namespace-only deploy | ✓ VERIFIED | Pre-mutation identity/RBAC gate, dry-run/apply, rollouts, and always cleanup are wired. |
+| `scripts/ssh-tunnel-up.sh` | Managed SSH PID lifecycle | ✓ VERIFIED | Atomic 0600 pidfile and command/forward/user/host validation before TERM/KILL; actual helper is exercised by tests. |
+| `k8s/memory/50-monitoring.yaml` | Executable observer | ⚠️ PARTIAL | Exporter fake-HTTP behavior is tested, but its MCP transport is blocked by missing reciprocal ingress. |
+| `k8s/memory/30-network-policy.yaml` | Exact observer/Prometheus paths | ✗ FAILED | Prometheus-to-observer and observer-to-Qdrant are reciprocal; observer-to-MemPalace is not. |
+| Prometheus values and rendered manifest | OPS-04 jobs, rules, and alerts | ✗ FAILED | Source/rendered configurations use the wrong snapshot CronJob selector. |
+| `tests/test-memory-runtime-contract.py` | Regression coverage | ⚠️ PARTIAL | All 11 tests run, but neither NetPol reciprocity nor actual backup CronJob identity is asserted. |
+<!-- markdownlint-enable MD013 -->
 
 ### Key Link Verification
 
+<!-- markdownlint-disable MD013 -->
 | From | To | Via | Status | Details |
 | --- | --- | --- | --- | --- |
-| MemPalace Deployment | Qdrant Service | `MEMPALACE_QDRANT_URL=http://qdrant:6333` and NetworkPolicy | ✓ WIRED | Qdrant is headless ClusterIP-only; MemPalace has Qdrant backend/key/namespace configuration. |
-| MemPalace PVC | MemPalace writable data path | `/data` mount and `MEMPALACE_DATA_DIR=/data/palace` | ✓ WIRED | Writable PVC is mounted at `/data`; `/tmp` is separately writable under a read-only root filesystem. |
-| Qdrant StatefulSet | Qdrant storage | `volumeClaimTemplates` mounted at `/qdrant/storage` | ✓ WIRED | Single-replica StatefulSet uses an RWO claim and Retain ownership policy. |
-| Host nginx template | MemPalace HTTP MCP | `/solidstats/mcp` proxies to upstream `/mcp` | ✓ WIRED (template) | It is intentionally uninstalled and strict validation rejects unresolved address/TLS values. |
-| Backup CronJob | Qdrant snapshot and S3 prefix | Snapshot API, checksums, `backups/solidstats-memory/` | ⚠️ GATED | Source is substantive and suspended; uploader image, collection, S3 CIDR, credentials, and restore drill remain operator gates. |
-| Memory monitoring handoff | Prometheus | ConfigMap target consumption | ✗ NOT WIRED | No observability manifest references `solidstats-memory-health-targets`. |
-| Deploy workflow | Namespace-scoped CI identity / cluster | Authenticated apply | ✗ NOT WIRED | Workflow contains no kubeconfig/SSH/kubectl/apply action and terminates non-zero. |
+| Workflow | memory CI identity | `K8S_MEMORY_TOKEN` → context → exact `auth whoami` | ✓ WIRED | Precedes every dry-run/apply and rejects foreign authority. |
+| Workflow | rendered manifests | Shared allowlist excluding bootstrap and secrets | ✓ WIRED | Same list is dry-run then applied; rendered Secret is handled separately. |
+| Workflow | SSH helper | One PID file and `if: always()` stop | ✓ WIRED | Runtime tests prove only validated SSH processes are signaled. |
+| Prometheus | observer | TCP 9108 and reciprocal policies | ✓ WIRED | Both sides select their intended identities. |
+| Observer | Qdrant | TCP 6333 and Qdrant ingress | ✓ WIRED | Egress and ingress selector agree. |
+| Observer | MemPalace | TCP 8765 | ✗ NOT WIRED | Egress exists; MemPalace ingress does not permit the observer. |
+| Snapshot alert | backup CronJob | `kube_cronjob_spec_suspend` | ✗ NOT WIRED | Rule selects `qdrant-snapshot`; manifest creates `solidstats-memory-backup`. |
+| Prometheus values | committed render | repository rendered-config contract | ⚠️ PRESENT | Marker parity passes, but a fresh pinned-chart render was not run offline. |
+<!-- markdownlint-enable MD013 -->
 
 ### Data-Flow Trace (Level 4)
 
-| Artifact | Data Variable | Source | Produces Real Data | Status |
-| --- | --- | --- | --- | --- |
-| MemPalace runtime | Qdrant URL/key/namespace and MCP token | Deploy-time rendered Kubernetes Secrets plus manifest literals | Yes after an authorized render/apply | ✓ FLOWING (source design) |
-| Backup CronJob | Snapshot, metadata archive, checksums | Qdrant API and MemPalace PVC | Not yet; job is suspended and uploader contract is unresolved | ⚠️ GATED |
-| Monitoring ConfigMap | `targets.yaml` | Hard-coded service health URLs | No Prometheus consumer and no observed metrics | ✗ DISCONNECTED |
-| Deploy workflow | Rendered manifests and secrets | GitHub environment variables/secrets | Stops before any cluster operation | ✗ DISCONNECTED |
+<!-- markdownlint-disable MD013 -->
+| Artifact | Data | Source | Status |
+| --- | --- | --- | --- |
+| Observer MCP metrics | readiness, duration, errors | MemPalace `/healthz` | ✗ DISCONNECTED by missing MemPalace ingress policy |
+| Observer Qdrant metrics | readiness, collection health, snapshot timestamp | Qdrant HTTP API | ✓ FLOWING (source design) |
+| Prometheus scrape | observer metrics | static observer Service target | ✓ FLOWING (source design) |
+| PVC capacity | `kubelet_volume_stats_*` | authenticated Kubernetes API node proxy | ✓ FLOWING (source design) |
+| Snapshot freshness | timestamp plus CronJob suspension | recording/alerting rules | ✗ DISCONNECTED by wrong CronJob label |
+<!-- markdownlint-enable MD013 -->
 
 ### Behavioral Spot-Checks
 
+<!-- markdownlint-disable MD013 -->
 | Behavior | Command | Result | Status |
 | --- | --- | --- | --- |
-| Policy invariants | `timeout 10s python3 scripts/validate-solidstats-memory-policy.py` | PASS | ✓ PASS |
-| Policy regression suite | `timeout 10s python3 -m unittest tests/test-solidstats-memory-policy.py` | 7 tests passed | ✓ PASS |
-| Source manifest boundary | `timeout 10s python3 scripts/validate-memory-manifests.py --allow-operator-placeholders` | 22 resources validated | ✓ PASS |
-| Strict manifest gate | `timeout 10s python3 scripts/validate-memory-manifests.py` | Rejected 7 unresolved operator placeholders | ✓ PASS (expected rejection) |
-| Rendered manifest boundary | Synthetic values → render → strict validate | 22 resources validated | ✓ PASS |
-| Nginx gate | `timeout 10s python3 scripts/validate-memory-nginx.py` | Rejected 4 unresolved edge placeholders | ✓ PASS (expected rejection) |
-| Cluster/edge/backup behavior | Live cluster or nginx execution | Forbidden by this verification scope | ? SKIP |
+| Migration policy | `timeout 10s python3 scripts/validate-solidstats-memory-policy.py` | PASS | ✓ PASS |
+| Migration tests | `timeout 10s python3 -m unittest tests/test-solidstats-memory-policy.py` | 7 passed | ✓ PASS |
+| Deploy/observer/Prometheus contracts | `timeout 30s python3 tests/test-memory-runtime-contract.py` | 11 passed | ✓ PASS |
+| Memory source manifests | memory validator with allowed placeholders | 26 resources | ✓ PASS |
+| Observability source/render contract | `timeout 10s python3 scripts/validate-obs-manifests.py` | 22 files | ✓ PASS |
+| Strict operator gates | strict memory and nginx validators | Both rejected placeholders | ✓ PASS (expected) |
+| Runtime policy and Helm render | live cluster/fetched chart | outside offline scope | ? SKIP |
+<!-- markdownlint-enable MD013 -->
 
 ### Requirements Coverage
 
+<!-- markdownlint-disable MD013 -->
 | Requirement | Source Plan | Status | Evidence |
 | --- | --- | --- | --- |
-| ISO-01 | 19-01 | ⚠️ DEFERRED | Policy names `solidstats_memory`; actual registration/removal of the legacy alias is explicitly deferred to Phase 21. |
-| ISO-02 | 19-01, 19-02 | ✓ SATISFIED (source boundary) | Dedicated `solidstats-memory` manifests/PVCs and deploy-time secret renderer are outside `k8s/staging/`. |
-| ISO-03 | 19-02 | ⚠️ DEFERRED | Private Qdrant and nginx template exist; public HTTPS exposure must wait for Phase 21/operator evidence. |
-| ISO-04 | 19-02 | ? NEEDS HUMAN | Static default-deny rules are present; kube-router behavior is untested. |
-| RUN-01 | 19-02 | ⚠️ GATED | Correct HTTP MCP command/probe exists, but immutable MemPalace image is deliberately unresolved. |
-| RUN-02 | 19-02 | ✓ SATISFIED (source boundary) | One unprivileged StatefulSet, private REST/gRPC Service, health probes, RWO claim, and Retain policy are present. |
-| RUN-03 | 19-02 | ⚠️ GATED | Required hardening is statically present; an actual local-build MemPalace image has not proven its writable-path/runtime compatibility. |
-| RUN-04 | 19-02 | ✓ SATISFIED (source boundary) | MemPalace claim is separate from Qdrant claim and mounted at `/data` with `/data/palace` configured. |
-| RUN-05 | 19-02 | ✓ SATISFIED | No ResourceQuota/LimitRange is introduced; docs retain the measurement and allocatable-evidence gate. |
-| MIG-03..07 | 19-01 | ✓ SATISFIED (policy gate) | Policy and validator freeze active/archive scope, disable specified automation/KG/tunnels, require exact-ID deletion approval, and require bundle evidence/checksums. |
-| OPS-01 | 19-02 | ✗ BLOCKED | CI Role is namespace scoped, but the workflow cannot deploy with it. |
-| OPS-04 | 19-02 | ✗ BLOCKED | No consumed scrape configuration or required signal coverage exists. |
-
-### Requirement Traceability Mismatch
-
-ROADMAP.md assigns `MIG-03..07` to Phase 19, while REQUIREMENTS.md maps the
-complete `MIG-01..07` range to Phase 20. Plan 19-01 nevertheless declares and
-implements policy gates for `MIG-03..07`. This report credits only those policy
-gates; it does not claim the Phase 20 transform/parity work has occurred. The
-roadmap and requirements traceability table need one authoritative assignment
-before migration work is planned or phase completion is asserted.
+| ISO-01 | 19-01 | ⚠️ DEFERRED | Policy uses `solidstats_memory`; registration/legacy-alias removal is Phase 21 cutover work. |
+| ISO-02 | 19-01..03 | ✓ SATISFIED (source boundary) | Dedicated namespace, separate runtime identities, and memory-only deploy identity exist. |
+| ISO-03 | 19-02 | ⚠️ DEFERRED | Qdrant is private and nginx is fail-closed; public TLS is Phase 21. |
+| ISO-04 | 19-02, 19-03 | ✗ BLOCKED | Observer-to-MCP is statically incomplete; kube-router UAT is also pending. |
+| RUN-01 | 19-02 | ⚠️ GATED | HTTP command/probes exist; immutable MemPalace image remains intentionally unresolved. |
+| RUN-02 | 19-02 | ✓ SATISFIED (source boundary) | Private single unprivileged StatefulSet has REST/gRPC, probes, RWO PVC, and Retain policy. |
+| RUN-03 | 19-02, 19-03 | ✓ SATISFIED (source boundary) | Runtime/observer/backup identities are separate and hardened with explicit writable volumes. |
+| RUN-04 | 19-02 | ✓ SATISFIED (source boundary) | MemPalace and Qdrant retain separate claims. |
+| RUN-05 | 19-02 | ✓ SATISFIED | No ResourceQuota/LimitRange was added before required sizing evidence. |
+| MIG-03..07 | 19-01 | ✓ SATISFIED (policy gate) | Policy/validator enforce rooms, archives, disabled features, deletion approval, and evidence/checksums. |
+| OPS-01 | 19-02, 19-03 | ✓ SATISFIED (offline contract) | Exact namespaced identity is proved before mutation and foreign authority is rejected. |
+| OPS-04 | 19-02, 19-03 | ✗ BLOCKED | MCP probe and snapshot-freshness alert wiring are broken. |
+<!-- markdownlint-enable MD013 -->
 
 ### Anti-Patterns Found
 
-| File | Line | Pattern | Severity | Impact |
-| --- | --- | --- | --- | --- |
-| `.github/workflows/deploy-memory.yml` | 70 | Unconditional `exit 1` | 🛑 Blocker | The advertised deploy workflow cannot succeed. |
-| `k8s/memory/50-monitoring.yaml` | 1-20 | Static, unconsumed handoff only | 🛑 Blocker | OPS-04 signals are neither scraped nor alerted on. |
-| `k8s/memory/*`, validators, docs | various | `MEMORY_OPERATOR_*` placeholders | ℹ️ Intended gate | Strict validators reject unresolved values; these are not stubs. |
+<!-- markdownlint-disable MD013 -->
+| File | Pattern | Severity | Impact |
+| --- | --- | --- | --- |
+| `k8s/memory/30-network-policy.yaml` | Egress-only observer-to-MemPalace policy | 🛑 Blocker | Default deny prevents MCP observation. |
+| Prometheus values/render | CronJob label drift | 🛑 Blocker | Snapshot freshness alert resolves no enabled backup CronJob. |
+| `MEMORY_OPERATOR_*` values | Strictly rejected operational inputs | ℹ️ Intended gate | Validated fail-closed; not a stub. |
+| Fresh pinned-chart Helm render | Not run offline | ⚠️ Warning | Needs operator/CI confirmation before future chart regeneration. |
 <!-- markdownlint-enable MD013 -->
 
 ### Human Verification Required
 
 ### 1. kube-router policy enforcement
 
-**Test:** Render the measured host CIDR in an isolated cluster, then exercise all
-permitted and denied DNS, Qdrant, nginx MCP, and Prometheus flows.
+**Test:** After fixing the reciprocal policy and rendering real values, exercise
+all allowed and denied flows in an isolated cluster.
 
-**Expected:** Required flows succeed; every other ingress and egress flow is denied.
+**Expected:** Only documented paths are reachable under default deny.
 
-**Why human:** The source proves only the declared selectors/CIDRs. Runtime
-source-address rewriting and enforcement are cluster-dependent.
+**Why human:** kube-router source-address and enforcement behavior cannot be
+proven from source files.
+
+### 2. Pinned-chart render parity
+
+**Test:** Fetch the pinned chart in approved CI/operator context and run the
+documented Helm render comparison.
+
+**Expected:** Committed Prometheus configuration retains every memory job and rule.
+
+**Why human:** Phase 19 did not fetch the chart during offline work.
 
 ### Gaps Summary
 
-Phase 19 establishes a substantive source-only policy/runtime boundary, and the
-placeholder gates are correctly fail-closed. It does not achieve the full CD or
-monitoring portions of its declared contract: the workflow cannot apply anything,
-and OPS-04 has neither an actual Prometheus integration nor the required signals.
-These are not future-phase deferrals: the later roadmap phases cover migration and
-restore/cutover, not a replacement deploy workflow or OPS-04 implementation.
+Plan 19-03 closed the nonfunctional deployment workflow: exact identity checks,
+least-privilege preflight, and executable PID lifecycle tests are substantive.
+OPS-04 remains blocked by two observable source defects: a missing reciprocal
+observer-to-MemPalace ingress policy and a nonexistent CronJob selector in the
+snapshot-freshness alert. Neither is an intentional placeholder or a live-only
+uncertainty.
 
 ## Next Action
 
-Run `$gsd-plan-phase 19 --gaps` to create a focused closure plan for the deploy
-path and OPS-04 monitoring integration. Keep the kube-router enforcement check
-as an operator-gated UAT item after the required CIDR is measured.
+Run `$gsd-plan-phase 19 --gaps` to add the observer-to-MemPalace ingress rule,
+correct the CronJob selector, and add cross-manifest regression coverage. Then
+re-run the offline suite. Retain kube-router UAT and pinned-chart render parity
+as operator verification items.
 
 ---
 
-_Verified: 2026-08-19T19:32:38Z_
+_Verified: 2026-08-19T20:22:45Z_
 _Verifier: the agent (gsd-verifier)_
