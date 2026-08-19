@@ -5,15 +5,15 @@ milestone_name: SolidStats Memory Isolation
 current_phase: 20
 current_phase_name: Local Corpus Migration
 status: ready_to_execute
-stopped_at: Completed 20-01-PLAN.md
-last_updated: "2026-08-19T23:09:39.408Z"
+stopped_at: Completed 20-02-PLAN.md
+last_updated: "2026-08-19T23:20:30.985Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 20 plans verified and ready to execute
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 12
-  completed_plans: 7
+  completed_plans: 8
   percent: 25
 ---
 
@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 20 — Local Corpus Migration
-Plan: 2 of 6 — contract tests and evidence schemas
+Plan: 3 of 6 — contract tests and evidence schemas
 Status: Ready to execute
 Last activity: 2026-08-20 — Phase 20 plans verified and ready to execute
 
@@ -94,6 +94,7 @@ Last activity: 2026-08-20 — Phase 20 plans verified and ready to execute
 | Plan         | Duration | Tasks   | Files   |
 | ------------ | -------- | ------- | ------- |
 | Phase 20 P01 | 7m       | 3 tasks | 3 files |
+| Phase 20 P02 | 5        | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -152,6 +153,7 @@ Recent decisions affecting current work:
 - [Phase ?]: PLACEHOLDER tokens (NODE_IP_PLACEHOLDER, K8S_API_EGRESS_PLACEHOLDER) in netpol manifests for 17-03 NET-01 probe resolution
 - [Phase ?]: Synthetic parity is non-production evidence; real parity remains operator-gated.
 - [Phase ?]: Bundle validation binds source and collection evidence to pinned checksums.
+- [Phase ?]: Source recall fixtures are deterministic and retain no query text.
 
 ### Pending Todos
 
@@ -242,8 +244,8 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-19T23:09:39.401Z
-Stopped at: Completed 20-01-PLAN.md
+Last session: 2026-08-19T23:20:30.978Z
+Stopped at: Completed 20-02-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
