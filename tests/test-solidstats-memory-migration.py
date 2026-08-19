@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 import uuid
@@ -17,6 +18,7 @@ SPEC = importlib.util.spec_from_file_location("memory_policy_validator", MODULE_
 assert SPEC and SPEC.loader
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)
+INVENTORY_PATH = ROOT / "scripts" / "inventory-solidstats-memory.py"
 UUID_NAMESPACE = uuid.UUID("c06c3fc7-5c14-4dc4-84c2-24a5f72d8dc1")
 
 
@@ -328,6 +330,152 @@ class MappingContractTests(unittest.TestCase):
                 "parity-report.json recall comparison must contain ranked fixtures",
                 VALIDATOR.validate_bundle(bundle),
             )
+
+
+def load_inventory_module() -> object:
+    spec = importlib.util.spec_from_file_location("memory_inventory", INVENTORY_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class InventoryContractTests(unittest.TestCase):
+    def write_snapshot(self, root: Path) -> tuple[Path, Path, Path]:
+        snapshot = root / "snapshot"
+        oracle = root / "oracle"
+        output = root / "inventory"
+        snapshot.mkdir()
+        (oracle / "mempalace" / "backends").mkdir(parents=True)
+        (oracle / "pyproject.toml").write_text(
+            '[project]\nname = "mempalace"\nversion = "3.5.0"\n',
+            encoding="utf-8",
+        )
+        (oracle / "mempalace" / "backends" / "qdrant.py").write_text(
+            'uuid.uuid5(namespace, str(doc_id))\n'
+            'payload["mempalace_id"] = doc_id\n',
+            encoding="utf-8",
+        )
+        collection = {
+            "collection": {
+                "embedder": {"model": "synthetic-v1", "metric": "cosine"},
+                "name": "synthetic-records",
+                "namespace": "solidstats",
+                "palace_id": "synthetic-palace",
+            },
+            "records": [
+                {
+                    "document": "synthetic alpha",
+                    "id": "source-1",
+                    "metadata": {
+                        "archive_state": "active",
+                        "room": "decisions",
+                        "source_timestamp": "2026-08-20T00:00:00Z",
+                        "wing": "SolidStats",
+                    },
+                    "vector": [0.0, 1.0, 0.0],
+                },
+                {
+                    "document": "synthetic beta",
+                    "id": "source-2",
+                    "metadata": {
+                        "archive_state": "historical",
+                        "room": "conventions",
+                        "source_timestamp": "2026-08-20T00:00:01Z",
+                        "wing": "infrastructure-archive",
+                    },
+                    "vector": [1.0, 0.0, 0.0],
+                },
+            ],
+        }
+        write_json(snapshot / "chroma-collection.json", collection)
+        (snapshot / "freeze-attestation.json").write_text(
+            '{"write_freeze_at":"2026-08-20T00:00:00Z"}', encoding="utf-8"
+        )
+        return snapshot, oracle, output
+
+    def test_inventory_preserves_synthetic_records_without_values_in_summary(self) -> None:
+        inventory = load_inventory_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            snapshot, oracle, output = self.write_snapshot(Path(temporary))
+            result = inventory.build_source_inventory(
+                snapshot_dir=snapshot,
+                freeze_attestation=snapshot / "freeze-attestation.json",
+                oracle_source_dir=oracle,
+                output_dir=output,
+            )
+            self.assertEqual(2, result["record_count"])
+            records = (output / "source-records.jsonl").read_text(encoding="utf-8")
+            vectors = (output / "source-vectors.jsonl").read_text(encoding="utf-8")
+            summary = (output / "source-inventory.json").read_text(encoding="utf-8")
+            self.assertIn('"id":"source-1"', records)
+            self.assertIn('"vector":[0.0,1.0,0.0]', vectors)
+            self.assertNotIn("synthetic alpha", summary)
+            self.assertNotIn("synthetic-v1", summary)
+
+    def test_inventory_rejects_duplicate_ids_and_symlinked_input(self) -> None:
+        inventory = load_inventory_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, oracle, output = self.write_snapshot(root)
+            collection_path = snapshot / "chroma-collection.json"
+            collection = json.loads(collection_path.read_text(encoding="utf-8"))
+            collection["records"].append(collection["records"][0])
+            write_json(collection_path, collection)
+            with self.assertRaisesRegex(ValueError, "record-2-[0-9a-f]{64}"):
+                inventory.build_source_inventory(
+                    snapshot_dir=snapshot,
+                    freeze_attestation=snapshot / "freeze-attestation.json",
+                    oracle_source_dir=oracle,
+                    output_dir=output,
+                )
+            collection_path.unlink()
+            outside = root / "outside.json"
+            outside.write_text("{}", encoding="utf-8")
+            collection_path.symlink_to(outside)
+            with self.assertRaisesRegex(ValueError, "unsafe snapshot component"):
+                inventory.build_source_inventory(
+                    snapshot_dir=snapshot,
+                    freeze_attestation=snapshot / "freeze-attestation.json",
+                    oracle_source_dir=oracle,
+                    output_dir=root / "second-output",
+                )
+
+    def test_deterministic_recall_fixtures_cover_available_filter_strata(self) -> None:
+        inventory = load_inventory_module()
+        records = [
+            {"id": "source-2", "metadata": {"archive_state": "historical", "room": "conventions", "wing": "infrastructure-archive"}, "vector": [1.0, 0.0]},
+            {"id": "source-1", "metadata": {"archive_state": "active", "room": "decisions", "wing": "SolidStats"}, "vector": [0.0, 1.0]},
+        ]
+        first = inventory.derive_recall_fixtures(records, max_queries=10, top_k=2)
+        second = inventory.derive_recall_fixtures(list(reversed(records)), max_queries=10, top_k=2)
+        self.assertEqual(first, second)
+        self.assertEqual({}, first[0]["filters"])
+        self.assertTrue(any("wing" in fixture["filters"] for fixture in first))
+        self.assertTrue(any("room" in fixture["filters"] for fixture in first))
+        self.assertTrue(any("archive_state" in fixture["filters"] for fixture in first))
+        self.assertEqual(["source-1", "source-2"], first[0]["source_ordered_ids"])
+
+    def test_cli_check_only_avoids_corpus_and_rejects_secret_named_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, oracle, output = self.write_snapshot(root)
+            command = [
+                "python3", str(INVENTORY_PATH), "--snapshot-dir", str(snapshot),
+                "--freeze-attestation", str(snapshot / "freeze-attestation.json"),
+                "--oracle-source-dir", str(oracle), "--output-dir", str(output),
+                "--check-only",
+            ]
+            completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=5)
+            self.assertEqual(0, completed.returncode, completed.stderr)
+            self.assertFalse(output.exists())
+            collection_path = snapshot / "chroma-collection.json"
+            collection = json.loads(collection_path.read_text(encoding="utf-8"))
+            collection["records"][0]["metadata"]["api_token"] = "synthetic-secret"
+            write_json(collection_path, collection)
+            completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=5)
+            self.assertNotEqual(0, completed.returncode)
+            self.assertNotIn("synthetic-secret", completed.stderr)
 
 
 if __name__ == "__main__":
