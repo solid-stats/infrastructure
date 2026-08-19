@@ -30,16 +30,16 @@ result: pending
 expected: Render Prometheus chart v29.11.0 in the approved networked environment
 and confirm the observer jobs, node-volume job, recording rules, and alerts match
 the committed manifest.
-result: issue
-observed: Fresh Helm render differs from the committed manifest. The chart emits
-  memory alerts under `data.alerting_rules.yml`, while the committed manifest
-  places them under `data.rules`.
+result: passed
+observed: A fresh Helm v29.11.0 render is byte-identical to the committed
+  manifest. Memory alerts load from `data.alerting_rules.yml` and recording
+  rules load from `data.recording_rules.yml`.
 
 ## Summary
 
 total: 2
-passed: 0
-issues: 1
+passed: 1
+issues: 0
 pending: 1
 skipped: 0
 blocked: 0
@@ -48,6 +48,6 @@ blocked: 0
 
 - truth: The committed Prometheus manifest is an exact render of pinned chart
   v29.11.0 and loads the memory alert rules through the chart-owned key.
-  status: failed
-  reason: Fresh Helm output and `10-prometheus.yaml` disagree on the alert rule
-    data key; `data.rules` is not the chart-rendered alerting file.
+  status: resolved
+  reason: Plan 19-05 mechanically regenerated the manifest and added offline
+    source/render ownership checks; fresh Helm parity now passes.
