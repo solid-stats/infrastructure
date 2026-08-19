@@ -99,7 +99,11 @@ data:
         def log_message(self, format, *args):
             return
 
-    ThreadingHTTPServer(("0.0.0.0", 9108), MetricsHandler).serve_forever()
+    def main():
+        ThreadingHTTPServer(("0.0.0.0", 9108), MetricsHandler).serve_forever()
+
+    if __name__ == "__main__":
+        main()
 ---
 apiVersion: v1
 kind: Service
