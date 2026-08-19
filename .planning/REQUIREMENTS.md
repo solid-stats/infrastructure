@@ -38,10 +38,10 @@
 
 ## Migration
 
-- [ ] **MIG-01**: Legacy SolidStats writes are frozen before export; old reads may
+- [x] **MIG-01**: Legacy SolidStats writes are frozen before export; old reads may
   continue until cutover.
 
-- [ ] **MIG-02**: Export, build, transform, and verification run locally; the VPS
+- [x] **MIG-02**: Export, build, transform, and verification run locally; the VPS
   never runs old and new long-running stacks together. The exact transform stays
   blocked until its source mapping is reviewed.
 

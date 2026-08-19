@@ -386,7 +386,14 @@ strategy, transform locally, and prove identifier/metadata/vector/recall parity
 in isolated Qdrant.
 **Depends on:** Phase 19
 **Requirements:** MIG-01..02
-**Plans:** 6 plans ready to execute
+**Plans:** 1/6 plans executed ready to execute
+
+- [x] 20-01-PLAN.md
+- [ ] 20-02-PLAN.md
+- [ ] 20-03-PLAN.md
+- [ ] 20-04-PLAN.md
+- [ ] 20-05-PLAN.md
+- [ ] 20-06-PLAN.md
 
 #### Phase 21: Restore, Cutover & Recovery
 
@@ -433,6 +440,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 17. Network Isolation & Stack Validation | v3.0 | 3/3 | Complete | 2026-06-14 |
 | 18. App-side Error SDK | v3.0 | 1/1 | Complete | 2026-06-14 |
 | 19. SolidStats Memory Foundation | v4.0 | 6/6 | Complete | 2026-08-20 |
-| 20. Local Corpus Migration | v4.0 | 0/6 | Planned | |
+| 20. Local Corpus Migration | v4.0 | 1/6 | In Progress | |
 | 21. Restore, Cutover & Recovery | v4.0 | 0/TBD | Blocked on Phase 20 | |
 | 22. Archive Distillation | v4.0 | 0/TBD | Blocked on Phase 21 | |
