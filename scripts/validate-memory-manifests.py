@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST_DIR = ROOT / "k8s" / "memory"
+WORKFLOW = ROOT / ".github" / "workflows" / "deploy-memory.yml"
 NAMESPACE = "solidstats-memory"
 EXPECTED = {
     "00-namespace.yaml",
@@ -93,8 +94,10 @@ def require_workload_safety(docs: dict[str, str]) -> None:
     require(QDRANT_IMAGE in docs["StatefulSet/qdrant"], "Qdrant image digest is not pinned to the verified artifact")
     require("type: ClusterIP" in docs["Service/qdrant"], "Qdrant must be a private ClusterIP service")
     require("type: LoadBalancer" not in docs["Service/qdrant"] and "type: NodePort" not in docs["Service/qdrant"], "Qdrant is publicly exposed")
+    require("type: ClusterIP" in docs["Service/mempalace"], "MemPalace must use an internal ClusterIP service")
     require("mountPath: /qdrant/storage" in docs["StatefulSet/qdrant"], "Qdrant storage mount is missing")
     require("claimName: mempalace-data" in docs["Deployment/mempalace"], "MemPalace PVC is missing")
+    require("persistentVolumeClaimRetentionPolicy:" in docs["StatefulSet/qdrant"], "Qdrant PVC Retain policy is missing")
     require("name: MEMPALACE_BACKEND\n              value: qdrant" in docs["Deployment/mempalace"], "MemPalace backend is not Qdrant")
     require("name: MEMPALACE_QDRANT_NAMESPACE\n              value: SolidStats" in docs["Deployment/mempalace"], "MemPalace namespace is incorrect")
 
@@ -138,6 +141,24 @@ def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
     require("metric-name alerts" in monitoring, "monitoring gate is undocumented")
 
 
+def require_rbac_and_workflow_contract(docs: dict[str, str]) -> None:
+    role = docs["Role/memory-ci-deployer"]
+    binding = docs["RoleBinding/memory-ci-deployer"]
+    require("namespace: solidstats-memory" in role and "namespace: solidstats-memory" in binding, "CI RBAC must be namespace-scoped")
+    require('resources: ["namespaces"]' not in role and '"delete"' not in role, "CI RBAC exceeds the deployment boundary")
+    workflow = WORKFLOW.read_text()
+    for expected in (
+        "K8S_NAMESPACE: solidstats-memory",
+        "infrastructure-memory-deploy-${{ github.ref }}",
+        "validate-memory-manifests.py --allow-operator-placeholders",
+        "render-memory-manifests.py --output-dir rendered-memory",
+        "validate-memory-manifests.py --manifest-dir rendered-memory",
+        "00-namespace.yaml and 01-ci-rbac.yaml are operator bootstrap",
+    ):
+        require(expected in workflow, f"memory workflow is missing: {expected}")
+    require("solid-stats-staging" not in workflow and "namespace: monitoring" not in workflow, "memory workflow crosses another namespace")
+
+
 def require_no_secret_values(manifest_dir: Path) -> None:
     for path in manifest_dir.glob("*.yaml"):
         text = path.read_text()
@@ -156,6 +177,7 @@ def main() -> None:
     require_workload_safety(docs)
     require_network_contract(docs, bool(placeholders))
     require_backup_monitoring_contract(docs)
+    require_rbac_and_workflow_contract(docs)
     require_no_secret_values(args.manifest_dir)
     if placeholders and not args.allow_operator_placeholders:
         raise ValidationError(f"unresolved operator placeholders: {', '.join(placeholders)}")

@@ -19,6 +19,35 @@ Runtime artifacts belong under `k8s/memory/` in namespace
 is exposed through host nginx at HTTPS `/solidstats/mcp`. Application images are
 built outside this repository; deployment requires an immutable image digest.
 
+## Runtime Artifact Gates
+
+The isolated runtime boundary is intentionally source-only until the operator
+supplies all measured values. Validate its source structure without a cluster:
+
+```sh
+python3 scripts/validate-memory-manifests.py --allow-operator-placeholders
+python3 scripts/validate-memory-nginx.py --allow-operator-placeholders
+```
+
+The strict manifest validator rejects all `MEMORY_OPERATOR_*` placeholders.
+The deploy workflow renders them only into a disposable directory from protected
+GitHub environment variables, then validates that rendered directory before any
+cluster action. `00-namespace.yaml` and `01-ci-rbac.yaml` are operator bootstrap
+files and are excluded from CI application.
+
+The nginx template is not an installed site. Before it can be used, measure the
+source CIDR that kube-router presents to MemPalace, resolve the host-routable
+MemPalace ClusterIP, provide certificate paths and the public server name, then
+perform an explicitly authorized nginx validation and reload. The template maps
+the public `POST /solidstats/mcp` route to MemPalace's internal `/mcp`, forwards
+the bearer `Authorization` header, and disables proxy buffering for streaming.
+
+The suspended backup CronJob also remains gated on an immutable uploader image,
+the Qdrant collection name, object-store egress CIDR, credentials, storage
+sizing, and an isolated restore drill. Its static monitoring ConfigMap records
+only the verified `/healthz` endpoints; metric-name alerts wait for an observed
+metrics surface.
+
 ## Policy Gate
 
 ```sh

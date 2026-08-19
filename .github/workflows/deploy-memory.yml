@@ -27,7 +27,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/validate-memory-manifests.py --allow-operator-placeholders
-          python3 -m py_compile scripts/render-memory-secrets.py scripts/render-memory-manifests.py scripts/validate-memory-manifests.py
+          python3 scripts/validate-memory-nginx.py --allow-operator-placeholders
+          python3 -m py_compile scripts/render-memory-secrets.py scripts/render-memory-manifests.py scripts/validate-memory-manifests.py scripts/validate-memory-nginx.py
           ! rg -n --glob '*.yaml' --glob '*.yml' '(password|token|secret|api[_-]?key): [^${].+' k8s/memory .github/workflows/deploy-memory.yml
 
   deploy:
@@ -63,5 +64,7 @@ jobs:
       - name: Apply namespace-scoped workload resources
         run: |
           set -euo pipefail
+          # 00-namespace.yaml and 01-ci-rbac.yaml are operator bootstrap
+          # resources. CI must never apply namespace or RBAC bootstrap files.
           echo "Operator action required: configure the namespace-scoped CI identity and apply rendered-memory/."
           exit 1
