@@ -1,0 +1,55 @@
+# Operator-applied bootstrap manifest. The deploy workflow excludes this file.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: memory-ci-deployer
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: memory-ci-deployer
+    app.kubernetes.io/part-of: solidstats-memory
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: memory-ci-deployer-token
+  namespace: solidstats-memory
+  annotations:
+    kubernetes.io/service-account.name: memory-ci-deployer
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: memory-ci-deployer
+  namespace: solidstats-memory
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "persistentvolumeclaims", "secrets", "serviceaccounts", "services"]
+    verbs: ["create", "get", "list", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["create", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["create", "get", "list", "patch", "update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: memory-ci-deployer
+  namespace: solidstats-memory
+subjects:
+  - kind: ServiceAccount
+    name: memory-ci-deployer
+    namespace: solidstats-memory
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: memory-ci-deployer

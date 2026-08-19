@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mempalace
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: mempalace
+    app.kubernetes.io/part-of: solidstats-memory
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mempalace-data
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: mempalace
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mempalace
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: mempalace
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: mempalace
+  ports:
+    - name: http-mcp
+      port: 8765
+      targetPort: http-mcp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mempalace
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: mempalace
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mempalace
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mempalace
+        app.kubernetes.io/part-of: solidstats-memory
+    spec:
+      serviceAccountName: mempalace
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mempalace
+          image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST
+          imagePullPolicy: IfNotPresent
+          args: ["serve", "--transport", "http", "--host", "0.0.0.0", "--port", "8765"]
+          ports:
+            - name: http-mcp
+              containerPort: 8765
+          env:
+            - name: MEMPALACE_BACKEND
+              value: qdrant
+            - name: MEMPALACE_QDRANT_URL
+              value: http://qdrant:6333
+            - name: MEMPALACE_QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mempalace-runtime
+                  key: MEMPALACE_QDRANT_API_KEY
+            - name: MEMPALACE_QDRANT_NAMESPACE
+              value: SolidStats
+            - name: MEMPALACE_MCP_HTTP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mempalace-runtime
+                  key: MEMPALACE_MCP_HTTP_TOKEN
+            - name: MEMPALACE_DATA_DIR
+              value: /data/palace
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http-mcp
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http-mcp
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: mempalace-data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: mempalace-data
+          persistentVolumeClaim:
+            claimName: mempalace-data
+        - name: tmp
+          emptyDir: {}

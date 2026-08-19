@@ -1,0 +1,10 @@
+# Operator-applied bootstrap manifest. CI must never apply this file.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: solidstats-memory
+  labels:
+    app.kubernetes.io/part-of: solidstats-memory
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
