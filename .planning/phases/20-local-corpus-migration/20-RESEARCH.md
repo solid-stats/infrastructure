@@ -281,22 +281,30 @@ This guard is an implementation recommendation to protect D-03; its exact compar
 | A1 | A local Qdrant target must be newly empty for a reliable parity run. | Anti-Patterns | Stale points could produce a false pass. |
 | A2 | The proposed JSON canonicalization is adequate for all frozen source metadata. | Code Examples | Metadata comparison could reject valid values or conceal a representation mismatch. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Can the operator supply a complete post-freeze snapshot and provenance sidecars?**
-   - What we know: Phase policy demands a Chroma-to-Qdrant bundle with freeze, embedding, checksum, and parity attestations. [VERIFIED: scripts/validate-solidstats-memory-policy.py:97-113]
-   - What's unclear: Actual snapshot layout, corpus count, bytes, palace ID, collection name, timestamp keys, model identity, source metric, and vector serialization.
-   - Recommendation: Make the first execution plan an operator checkpoint plus read-only inventory; no transform task starts until the inventory report is complete.
+1. **Snapshot and provenance resolution — Plan 20-03 operator gate.**
+   The source boundary is satisfied only when Plan 20-03 Task 1 records operator-approved,
+   machine-checkable evidence for the complete post-freeze snapshot and every required identity,
+   configuration, embedder, checksum, and immutability sidecar. No inventory, transform, or parity
+   task may infer that evidence or start before the checkpoint passes. This resolves the research
+   question into a fail-closed execution decision; it does not claim that the live evidence is
+   currently available. [VERIFIED: scripts/validate-solidstats-memory-policy.py:97-113]
 
-2. **Which vector strategy passes D-07?**
-   - What we know: Qdrant's source adapter creates a collection with `"distance": "Cosine"` and requires explicit embeddings for writes. [CITED: https://raw.githubusercontent.com/MemPalace/mempalace/v3.5.0/mempalace/backends/qdrant.py]
-   - What's unclear: Whether the frozen Chroma vectors share model, metric, and serialization semantics with the v3.5.0 Qdrant target.
-   - Recommendation: Default to local re-embedding unless the inventory proves every D-07 condition; record the chosen branch in the manifest.
+2. **Vector-strategy resolution — D-07/D-08 inventory decision.**
+   Plans 20-04 and 20-05 decide the branch from the frozen inventory: reuse passes only when the
+   complete embedding identity/configuration, dimension, source metric, target Cosine semantics,
+   and serialization evidence required by D-07 all match. Any absent or incompatible predicate
+   selects D-08 local re-embedding with a pinned model and recorded reason. The branch remains
+   unknown until the inventory exists, but its decision rule is closed and admits no operator
+   override. [CITED: https://raw.githubusercontent.com/MemPalace/mempalace/v3.5.0/mempalace/backends/qdrant.py]
 
-3. **How will the v3.5.0 environment and isolated Qdrant run locally?**
-   - What we know: MemPalace 3.4.1 is installed, Docker/Compose are installed, and the Docker daemon is not accessible to this session. [VERIFIED: local command probes on 2026-08-20]
-   - What's unclear: The approved v3.5.0 artifact, its checksum, and a Docker-capable local execution context.
-   - Recommendation: Add explicit `checkpoint:human-verify` tasks for the pinned execution environment and local container access; do not work around either gate with VPS access.
+3. **Local-runtime resolution — Plan 20-03 prerequisites.**
+   Plan 20-03 Task 2 must prove an approved, checksummed MemPalace v3.5.0 artifact and usable local
+   Docker-daemon access before any real transform, import, or parity work. The installed 3.4.1
+   runtime, inaccessible Docker daemon, a VPS, or a shared target cannot satisfy the prerequisite.
+   This is a blocking execution decision and does not claim that either local prerequisite has
+   already been supplied. [VERIFIED: local command probes on 2026-08-20]
 
 ## Environment Availability
 

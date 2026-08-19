@@ -4,16 +4,16 @@ milestone: v4.0
 milestone_name: SolidStats Memory Isolation
 current_phase: 20
 current_phase_name: Local Corpus Migration
-status: planning
-stopped_at: Phase 20 context gathered (assumptions mode)
-last_updated: "2026-08-19T21:55:22.416Z"
+status: ready_to_execute
+stopped_at: Phase 20 planning complete; Plan 20-01 is next
+last_updated: "2026-08-19T22:54:40Z"
 last_activity: 2026-08-20
-last_activity_desc: Phase 20 migration context captured
+last_activity_desc: Phase 20 plans verified and ready to execute
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 6
-  completed_plans: 6
+  completed_plans: 0
   percent: 25
 ---
 
@@ -31,9 +31,9 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 20 — Local Corpus Migration
-Plan: Not started
-Status: Ready for evidence review and planning
-Last activity: 2026-08-20 — Phase 20 migration context captured
+Plan: 1 of 6 — contract tests and evidence schemas
+Status: Ready to execute
+Last activity: 2026-08-20 — Phase 20 plans verified and ready to execute
 
 ## Performance Metrics
 
@@ -51,6 +51,7 @@ Last activity: 2026-08-20 — Phase 20 migration context captured
 | 08 | 3 | - | - |
 | 09 | 1 | - | - |
 | 19 | 6 | - | - |
+| 20 | 0 | - | - |
 
 **Recent Trend:**
 
@@ -234,9 +235,9 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-19T21:55:22.409Z
-Stopped at: Phase 20 context gathered (assumptions mode)
-Resume file: .planning/phases/20-local-corpus-migration/20-CONTEXT.md
+Last session: 2026-08-19T22:54:40Z
+Stopped at: Phase 20 planning complete; Plan 20-01 is next
+Resume file: .planning/phases/20-local-corpus-migration/20-01-PLAN.md
 
 ## Operator Next Steps
 
