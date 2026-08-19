@@ -479,6 +479,39 @@ class InventoryContractTests(unittest.TestCase):
             self.assertNotEqual(0, completed.returncode)
             self.assertNotIn("synthetic-secret", completed.stderr)
 
+    def test_inventory_rejects_secret_shaped_metadata_values_before_writing(self) -> None:
+        inventory = load_inventory_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, oracle, output = self.write_snapshot(root)
+            collection_path = snapshot / "chroma-collection.json"
+            collection = json.loads(collection_path.read_text(encoding="utf-8"))
+            collection["records"][0]["metadata"]["note"] = "API_TOKEN=synthetic-secret"
+            write_json(collection_path, collection)
+            with self.assertRaisesRegex(ValueError, "record-1-[0-9a-f]{64}") as context:
+                inventory.build_source_inventory(
+                    snapshot_dir=snapshot,
+                    freeze_attestation=snapshot / "freeze-attestation.json",
+                    oracle_source_dir=oracle,
+                    output_dir=output,
+                )
+            self.assertNotIn("synthetic-secret", str(context.exception))
+            self.assertFalse(output.exists())
+
+    def test_inventory_applies_configured_record_bound_before_output(self) -> None:
+        inventory = load_inventory_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            snapshot, oracle, output = self.write_snapshot(Path(temporary))
+            with self.assertRaisesRegex(ValueError, "record limit exceeded"):
+                inventory.build_source_inventory(
+                    snapshot_dir=snapshot,
+                    freeze_attestation=snapshot / "freeze-attestation.json",
+                    oracle_source_dir=oracle,
+                    output_dir=output,
+                    max_records=1,
+                )
+            self.assertFalse(output.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
