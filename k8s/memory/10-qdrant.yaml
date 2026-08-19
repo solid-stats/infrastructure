@@ -63,7 +63,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: qdrant
-          image: ghcr.io/qdrant/qdrant:v1.19.0-unprivileged@sha256:18a245d16eb663d4f6ad054123371243248d8256a8067f352cd6e88d512fee0b
+          image: ghcr.io/qdrant/qdrant/qdrant:v1.19.0-unprivileged@sha256:18a245d16eb663d4f6ad054123371243248d8256a8067f352cd6e88d512fee0b
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

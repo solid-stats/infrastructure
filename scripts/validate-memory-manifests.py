@@ -27,7 +27,7 @@ IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$")
 SIZE_RE = re.compile(r"^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei)$")
 COLLECTION_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
 QDRANT_IMAGE = (
-    "ghcr.io/qdrant/qdrant:v1.19.0-unprivileged@"
+    "ghcr.io/qdrant/qdrant/qdrant:v1.19.0-unprivileged@"
     "sha256:18a245d16eb663d4f6ad054123371243248d8256a8067f352cd6e88d512fee0b"
 )
 
