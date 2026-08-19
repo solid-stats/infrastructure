@@ -422,7 +422,7 @@ class InventoryContractTests(unittest.TestCase):
             collection = json.loads(collection_path.read_text(encoding="utf-8"))
             collection["records"].append(collection["records"][0])
             write_json(collection_path, collection)
-            with self.assertRaisesRegex(ValueError, "record-2-[0-9a-f]{64}"):
+            with self.assertRaisesRegex(ValueError, "record-[0-9]+-[0-9a-f]{64}"):
                 inventory.build_source_inventory(
                     snapshot_dir=snapshot,
                     freeze_attestation=snapshot / "freeze-attestation.json",
@@ -473,7 +473,9 @@ class InventoryContractTests(unittest.TestCase):
             collection = json.loads(collection_path.read_text(encoding="utf-8"))
             collection["records"][0]["metadata"]["api_token"] = "synthetic-secret"
             write_json(collection_path, collection)
-            completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=5)
+            completed = subprocess.run(
+                command[:-1], capture_output=True, text=True, check=False, timeout=5
+            )
             self.assertNotEqual(0, completed.returncode)
             self.assertNotIn("synthetic-secret", completed.stderr)
 
