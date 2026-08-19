@@ -353,3 +353,39 @@ spec:
       ports:
         - port: 6443
           protocol: TCP
+---
+# Policy 12: Allow Prometheus to scrape the three metrics targets selected by
+# default-deny-ingress. The selector is intentionally limited to their stable
+# app.kubernetes.io/name labels; all other monitoring pods remain ingress-denied.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-target-ingress
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: solid-stats
+    solid-stats.io/environment: staging
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - alloy
+          - kube-state-metrics
+          - prometheus-postgres-exporter
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+              app.kubernetes.io/component: server
+      ports:
+        - port: 12345
+          protocol: TCP
+        - port: 8080
+          protocol: TCP
+        - port: 9187
+          protocol: TCP

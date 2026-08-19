@@ -5,6 +5,8 @@
 #   1. No secret values — Secret documents must have empty/absent stringData/data
 #   2. Namespace — every namespaced resource declares namespace: monitoring
 #   3. PriorityClass — every pod-bearing spec has priorityClassName: obs-background
+#   4. Prometheus target ingress — the default-denied exporters admit only
+#      Prometheus on their metrics ports
 #
 # Runs in CI validate job and per-commit (no cluster access needed).
 # Exits 0 on success; exits 1 with a clear message on any violation.
@@ -21,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OBS_DIR = ROOT / "k8s" / "observability"
 PROMETHEUS_VALUES = OBS_DIR / "values" / "prometheus-values.yaml"
 PROMETHEUS_MANIFEST = OBS_DIR / "10-prometheus.yaml"
+MONITORING_NETWORK_POLICY = OBS_DIR / "95-netpol-monitoring.yaml"
 
 # Forbidden-token patterns (T-13-03: stored as variables, not comments).
 # These fire when a Secret document has a non-empty stringData/data value.
@@ -263,6 +266,101 @@ def _check_cadvisor_scrape_config() -> list[str]:
     return errors
 
 
+def _check_prometheus_target_ingress_policy() -> list[str]:
+    """Require the least-privilege ingress rule for default-denied scrape targets."""
+    errors = []
+    if not MONITORING_NETWORK_POLICY.is_file():
+        return [
+            "k8s/observability/95-netpol-monitoring.yaml: missing Prometheus target "
+            "ingress NetworkPolicy"
+        ]
+
+    policy = next(
+        (
+            doc
+            for doc in _split_documents(MONITORING_NETWORK_POLICY.read_text())
+            if _top_value(doc, "kind") == "NetworkPolicy"
+            and "  name: allow-prometheus-target-ingress" in doc
+        ),
+        "",
+    )
+    if not policy:
+        return [
+            "k8s/observability/95-netpol-monitoring.yaml: missing "
+            "allow-prometheus-target-ingress NetworkPolicy"
+        ]
+
+    target_selector = """  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - alloy
+          - kube-state-metrics
+          - prometheus-postgres-exporter"""
+    target_values = re.findall(r"(?m)^          - (.+)$", policy)
+    if target_selector not in policy or target_values != [
+        "alloy",
+        "kube-state-metrics",
+        "prometheus-postgres-exporter",
+    ]:
+        errors.append(
+            "k8s/observability/95-netpol-monitoring.yaml: "
+            "allow-prometheus-target-ingress must select exactly alloy, "
+            "kube-state-metrics, and prometheus-postgres-exporter"
+        )
+
+    expected_ingress = """  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+              app.kubernetes.io/component: server
+      ports:"""
+    if expected_ingress not in policy:
+        errors.append(
+            "k8s/observability/95-netpol-monitoring.yaml: "
+            "allow-prometheus-target-ingress must admit only the Prometheus server"
+        )
+
+    if "  policyTypes:\n    - Ingress\n  ingress:" not in policy:
+        errors.append(
+            "k8s/observability/95-netpol-monitoring.yaml: "
+            "allow-prometheus-target-ingress must be ingress-only"
+        )
+
+    ingress_body = policy.split("  ingress:\n", 1)[-1]
+    has_extra_source = any(
+        marker in policy
+        for marker in ("\n        - namespaceSelector:", "\n        - ipBlock:")
+    )
+    if (
+        f"\n{ingress_body}".count("\n    - ") != 1
+        or policy.count("\n        - podSelector:") != 1
+        or has_extra_source
+    ):
+        errors.append(
+            "k8s/observability/95-netpol-monitoring.yaml: "
+            "allow-prometheus-target-ingress must not admit additional sources"
+        )
+
+    allowed_ports = (12345, 8080, 9187)
+    if policy.count("\n        - port:") != len(allowed_ports) or "endPort:" in policy:
+        errors.append(
+            "k8s/observability/95-netpol-monitoring.yaml: "
+            "allow-prometheus-target-ingress must not allow additional ports"
+        )
+
+    for port in allowed_ports:
+        if f"        - port: {port}\n          protocol: TCP" not in policy:
+            errors.append(
+                "k8s/observability/95-netpol-monitoring.yaml: "
+                f"allow-prometheus-target-ingress must allow Prometheus TCP {port}"
+            )
+
+    return errors
+
+
 def validate() -> int:
     if not OBS_DIR.is_dir():
         print(f"note: {OBS_DIR.relative_to(ROOT)} does not exist yet — no manifests to validate")
@@ -288,6 +386,7 @@ def validate() -> int:
             all_errors.extend(_check_priority_class(doc, yaml_path))
 
     all_errors.extend(_check_cadvisor_scrape_config())
+    all_errors.extend(_check_prometheus_target_ingress_policy())
 
     if all_errors:
         for err in all_errors:

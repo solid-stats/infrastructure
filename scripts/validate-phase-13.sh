@@ -87,7 +87,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # MET-02/03/04: Scrape targets UP (kube-state-metrics, node-exporter,
-#               postgres-exporter, rabbitmq)
+#               postgres-exporter, rabbitmq, Alloy)
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- MET-02/03/04: Scrape targets ---"
@@ -130,6 +130,9 @@ check_target_health "node-exporter" "MET-02: node-exporter"
 
 # MET-03: postgres-exporter
 check_target_health "postgres-exporter" "MET-03: postgres-exporter"
+
+# Alloy metrics
+check_target_health "alloy" "Alloy"
 
 # MET-04: rabbitmq native plugin
 check_target_health "rabbitmq" "MET-04: rabbitmq"
