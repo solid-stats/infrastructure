@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 
 
@@ -123,7 +124,9 @@ def validate_bundle(bundle_dir: Path) -> list[str]:
         ):
             errors.append(f"unsafe bundle path: {relative!r}")
             continue
-        if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+        if not isinstance(expected_digest, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", expected_digest
+        ):
             errors.append(f"invalid sha256 for {relative}")
             continue
         candidate = bundle_dir / relative
