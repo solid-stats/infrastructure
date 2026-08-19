@@ -136,10 +136,174 @@ def _memory_backup_cronjob_name() -> str:
 
 def _snapshot_alert_expression(text: str) -> str | None:
     match = re.search(
-        r"- alert: SolidStatsMemorySnapshotMissingOrStale\s*\n\s+expr:\s*(.+)\n\s+for:",
+        r"- alert: SolidStatsMemorySnapshotMissingOrStale\s*\n\s+expr:\s*(.*?)\n\s+for:",
         text,
+        re.DOTALL,
     )
-    return match.group(1).strip() if match else None
+    return re.sub(r"\s+", " ", match.group(1)).strip() if match else None
+
+
+def _literal_data_blocks(document: str, header: str) -> dict[str, str]:
+    """Return literal scalar blocks directly below a two-space YAML mapping."""
+    lines = document.splitlines()
+    try:
+        start = next(index for index, line in enumerate(lines) if line == header)
+    except StopIteration:
+        return {}
+
+    blocks: dict[str, str] = {}
+    current_key: str | None = None
+    current_lines: list[str] = []
+    for line in lines[start + 1:]:
+        if line and not line.startswith("  "):
+            break
+        key_match = re.match(r"^  ([^:]+): \|$", line)
+        if key_match:
+            if current_key is not None:
+                blocks[current_key] = "\n".join(current_lines) + "\n"
+            current_key = key_match.group(1)
+            current_lines = []
+        elif current_key is not None:
+            if line.startswith("    "):
+                current_lines.append(line[4:])
+            elif not line:
+                current_lines.append("")
+    if current_key is not None:
+        blocks[current_key] = "\n".join(current_lines) + "\n"
+    return blocks
+
+
+def _prometheus_server_data_blocks(manifest_text: str) -> dict[str, str]:
+    """Extract only ConfigMap/prometheus-server data literal blocks."""
+    documents = [
+        document
+        for document in _split_documents(manifest_text)
+        if _top_value(document, "kind") == "ConfigMap"
+        and _metadata_name(document) == "prometheus-server"
+    ]
+    if len(documents) != 1:
+        return {}
+    return _literal_data_blocks(documents[0], "data:")
+
+
+def _values_server_file_blocks(values_text: str) -> dict[str, str]:
+    """Extract YAML mappings below serverFiles without a YAML dependency."""
+    lines = values_text.splitlines()
+    try:
+        start = next(index for index, line in enumerate(lines) if line == "serverFiles:")
+    except StopIteration:
+        return {}
+
+    blocks: dict[str, str] = {}
+    current_key: str | None = None
+    current_lines: list[str] = []
+    for line in lines[start + 1:]:
+        if line and not line.startswith("  "):
+            break
+        key_match = re.match(r"^  ([^ :][^:]*):$", line)
+        if key_match:
+            if current_key is not None:
+                blocks[current_key] = "\n".join(current_lines) + "\n"
+            current_key = key_match.group(1)
+            current_lines = []
+        elif current_key is not None:
+            current_lines.append(line[2:] if line.startswith("  ") else line)
+    if current_key is not None:
+        blocks[current_key] = "\n".join(current_lines) + "\n"
+    return blocks
+
+
+def _memory_rule_names(block: str, declaration: str) -> list[str]:
+    """Extract the declared Prometheus alert or recording names from one file."""
+    return re.findall(rf"^\s*(?:-\s+)?{declaration}: ([^\s]+)\s*$", block, re.MULTILINE)
+
+
+def _rule_expression(block: str, declaration: str, name: str) -> str | None:
+    """Return a rule expression regardless of chart serialization key order."""
+    for item in re.split(r"(?m)^\s*-\s+", block):
+        if not re.search(
+            rf"(?:^|\n)\s*{declaration}: {re.escape(name)}\s*$",
+            item,
+            re.MULTILINE,
+        ):
+            continue
+        expression = re.search(
+            r"(?:^|\n)\s*expr:\s*(.*?)(?=\n\s*(?:for|record):|\Z)",
+            item,
+            re.DOTALL,
+        )
+        return re.sub(r"\s+", " ", expression.group(1)).strip() if expression else None
+    return None
+
+
+_MEMORY_ALERT_NAMES = {
+    "SolidStatsMemoryMCPNotReady",
+    "SolidStatsMemoryMCPLatencyHigh",
+    "SolidStatsMemoryMCPProbeErrors",
+    "SolidStatsMemoryQdrantUnhealthy",
+    "SolidStatsMemoryQdrantCollectionUnavailable",
+    "SolidStatsMemorySnapshotMissingOrStale",
+    "SolidStatsMemoryPVCCapacityHigh",
+    "SolidStatsMemoryPVCMetricsMissing",
+}
+_MEMORY_RECORDING_NAMES = {
+    "solidstats_memory:mcp_ready:max",
+    "solidstats_memory:mcp_probe_duration_seconds:max",
+    "solidstats_memory:mcp_probe_errors:rate5m",
+    "solidstats_memory:qdrant_ready:max",
+    "solidstats_memory:qdrant_collection_healthy:max",
+    "solidstats_memory:qdrant_snapshot_age_seconds:max",
+    "solidstats_memory:pvc_capacity_ratio:max",
+}
+
+
+def _check_memory_rule_files(
+    values_text: str, manifest_text: str, backup_cronjob: str
+) -> list[str]:
+    """Require memory rule definitions in their chart-owned ConfigMap files."""
+    errors: list[str] = []
+    source_blocks = _values_server_file_blocks(values_text)
+    rendered_blocks = _prometheus_server_data_blocks(manifest_text)
+    expected = (
+        ("alerting_rules.yml", "alert", _MEMORY_ALERT_NAMES),
+        ("recording_rules.yml", "record", _MEMORY_RECORDING_NAMES),
+    )
+    for key, declaration, names in expected:
+        source_block = source_blocks.get(key, "")
+        rendered_block = rendered_blocks.get(key, "")
+        source_names = _memory_rule_names(source_block, declaration)
+        rendered_names = _memory_rule_names(rendered_block, declaration)
+        if set(source_names) != names or len(source_names) != len(names):
+            errors.append(f"values {key} must define each memory {declaration} exactly once")
+        if set(rendered_names) != names or len(rendered_names) != len(names):
+            errors.append(f"rendered {key} must define each memory {declaration} exactly once")
+
+        for name in names:
+            source_expression = _rule_expression(source_block, declaration, name)
+            rendered_expression = _rule_expression(rendered_block, declaration, name)
+            if not source_expression or not rendered_expression or source_expression != rendered_expression:
+                errors.append(f"memory {declaration} source/render expression differs: {name}")
+
+    for key, block in rendered_blocks.items():
+        for declaration, names in (("alert", _MEMORY_ALERT_NAMES), ("record", _MEMORY_RECORDING_NAMES)):
+            found = set(_memory_rule_names(block, declaration)) & names
+            is_authoritative = (
+                key == "alerting_rules.yml" and declaration == "alert"
+            ) or (
+                key == "recording_rules.yml" and declaration == "record"
+            )
+            if found and not is_authoritative:
+                errors.append(f"memory {declaration} definitions appear under wrong ConfigMap key: {key}")
+
+    alert_expression = _snapshot_alert_expression(rendered_blocks.get("alerting_rules.yml", ""))
+    expected_expression = (
+        'kube_cronjob_spec_suspend{namespace="solidstats-memory",'
+        f'cronjob="{backup_cronjob}"}} == 0 and '
+        "solidstats_memory:qdrant_snapshot_age_seconds:max > 93600"
+    )
+    if alert_expression != expected_expression:
+        errors.append("rendered snapshot alert must select the sole memory backup CronJob")
+    return errors
 
 
 def _check_no_secret_values(doc: str, path: Path) -> list[str]:
@@ -314,23 +478,17 @@ def _check_memory_monitoring_contract() -> list[str]:
     except ValueError as error:
         errors.append(str(error))
         return errors
-    markers = (
-        "solidstats-memory-observer",
-        "kubernetes-nodes-volume-stats",
-        "solidstats_memory:mcp_ready:max",
-        "solidstats_memory:pvc_capacity_ratio:max",
-        "SolidStatsMemoryPVCMetricsMissing",
-        "SolidStatsMemorySnapshotMissingOrStale",
-        "kube_cronjob_spec_suspend",
-    )
+    markers = ("solidstats-memory-observer", "kubernetes-nodes-volume-stats")
     for marker in markers:
         if marker not in values_text or marker not in manifest_text:
             errors.append(f"memory Prometheus source/render is missing: {marker}")
     if "solidstats-memory-observer" not in policy_text or "port: 9108" not in policy_text:
         errors.append("monitoring NetworkPolicy lacks observer-only TCP 9108 egress")
 
-    values_expression = _snapshot_alert_expression(values_text)
-    rendered_expression = _snapshot_alert_expression(manifest_text)
+    source_blocks = _values_server_file_blocks(values_text)
+    rendered_blocks = _prometheus_server_data_blocks(manifest_text)
+    values_expression = _snapshot_alert_expression(source_blocks.get("alerting_rules.yml", ""))
+    rendered_expression = _snapshot_alert_expression(rendered_blocks.get("alerting_rules.yml", ""))
     expected_expression = (
         'kube_cronjob_spec_suspend{namespace="solidstats-memory",'
         f'cronjob="{backup_cronjob}"}} == 0 and '
@@ -348,6 +506,14 @@ def _check_memory_monitoring_contract() -> list[str]:
         )
     if values_expression != rendered_expression:
         errors.append("memory snapshot alert source/render expressions differ")
+    prometheus_config = rendered_blocks.get("prometheus.yml", "")
+    for rule_path in (
+        "/etc/config/alerting_rules.yml",
+        "/etc/config/recording_rules.yml",
+    ):
+        if rule_path not in prometheus_config:
+            errors.append(f"rendered prometheus.yml must reference {rule_path}")
+    errors.extend(_check_memory_rule_files(values_text, manifest_text, backup_cronjob))
     return errors
 
 

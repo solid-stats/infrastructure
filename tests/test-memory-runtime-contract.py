@@ -464,7 +464,6 @@ class PrometheusMemoryContractTests(unittest.TestCase):
             self.assertIn("bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token", text)
             self.assertIn('namespace="solidstats-memory"', text)
             self.assertIn('persistentvolumeclaim=~"mempalace-data|qdrant-data-qdrant-0"', text)
-            self.assertIn('kube_cronjob_spec_suspend{namespace="solidstats-memory",cronjob="solidstats-memory-backup"} == 0', text)
             for name in recording_rules + alerts:
                 self.assertIn(name, text)
         workflow = WORKFLOW.read_text()
@@ -491,6 +490,42 @@ class PrometheusMemoryContractTests(unittest.TestCase):
                     duplicated[wrong_key] = duplicated[correct_key]
                     with self.assertRaises(AssertionError):
                         self.assert_memory_rule_files(duplicated, values)
+
+        missing = deepcopy(data)
+        alert_rules = yaml.safe_load(missing["alerting_rules.yml"])
+        alert_rules["groups"][0]["rules"].pop()
+        missing["alerting_rules.yml"] = yaml.safe_dump(alert_rules, sort_keys=False)
+        with self.assertRaises(AssertionError):
+            self.assert_memory_rule_files(missing, values)
+
+        duplicate = deepcopy(data)
+        recording_rules = yaml.safe_load(duplicate["recording_rules.yml"])
+        recording_rules["groups"][0]["rules"].append(
+            deepcopy(recording_rules["groups"][0]["rules"][0])
+        )
+        duplicate["recording_rules.yml"] = yaml.safe_dump(recording_rules, sort_keys=False)
+        with self.assertRaises(AssertionError):
+            self.assert_memory_rule_files(duplicate, values)
+
+        drifted = deepcopy(data)
+        snapshot_rules = yaml.safe_load(drifted["alerting_rules.yml"])
+        snapshot = next(
+            rule
+            for rule in snapshot_rules["groups"][0]["rules"]
+            if rule.get("alert") == "SolidStatsMemorySnapshotMissingOrStale"
+        )
+        snapshot["expr"] = snapshot["expr"].replace(
+            'cronjob="solidstats-memory-backup"', 'cronjob="drift"'
+        )
+        drifted["alerting_rules.yml"] = yaml.safe_dump(snapshot_rules, sort_keys=False)
+        with self.assertRaises(AssertionError):
+            self.assert_memory_rule_files(drifted, values)
+
+        reordered = deepcopy(data)
+        reordered["alerting_rules.yml"] = yaml.safe_dump(
+            yaml.safe_load(reordered["alerting_rules.yml"]), sort_keys=True
+        )
+        self.assert_memory_rule_files(reordered, values)
 
 
 if __name__ == "__main__":
