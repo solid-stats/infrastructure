@@ -22,6 +22,15 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
 
 
+def refresh_manifest_digest(bundle: Path, name: str) -> None:
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for item in manifest["files"]:
+        if item["path"] == name:
+            item["sha256"] = VALIDATOR.sha256(bundle / name)
+    write_json(manifest_path, manifest)
+
+
 def write_synthetic_bundle(bundle: Path) -> dict[str, object]:
     records = bundle / "source-records.jsonl"
     records.write_text(
@@ -137,6 +146,89 @@ class MigrationContractTests(unittest.TestCase):
                 "parity-report.json target_run_id is required for a passing report",
                 VALIDATOR.validate_bundle(bundle),
             )
+
+
+class UntrustedBundleTests(unittest.TestCase):
+    def test_symlinked_bundle_file_is_rejected_before_reading(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bundle = root / "bundle"
+            bundle.mkdir()
+            write_synthetic_bundle(bundle)
+            outside = root / "outside.jsonl"
+            outside.write_text("{}\n", encoding="utf-8")
+            linked = bundle / "linked-records.jsonl"
+            linked.symlink_to(outside)
+            manifest_path = bundle / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for item in manifest["files"]:
+                if item["path"] == "source-records.jsonl":
+                    item["path"] = linked.name
+                    item["sha256"] = VALIDATOR.sha256(linked)
+            write_json(manifest_path, manifest)
+            errors = VALIDATOR.validate_bundle(bundle)
+            self.assertIn("bundle path contains a symlink: linked-records.jsonl", errors)
+
+    def test_lossy_source_records_are_rejected_without_echoing_values(self) -> None:
+        cases = {
+            '{"document":"secret document","id":"source-1","metadata":[]}\n':
+                "source-records.jsonl record 1 metadata must be an object",
+            '{"document":"secret document","id":"source-1","metadata":{}}\n':
+                "source-records.jsonl record 1 source timestamp is required",
+            '{"id":"source-1","metadata":{"source_timestamp":"2026-08-20T00:00:00Z"}}\n':
+                "source-records.jsonl record 1 document must be a string",
+        }
+        for records_text, expected_error in cases.items():
+            with self.subTest(expected_error=expected_error), tempfile.TemporaryDirectory() as temporary:
+                bundle = Path(temporary)
+                write_synthetic_bundle(bundle)
+                records = bundle / "source-records.jsonl"
+                records.write_text(records_text, encoding="utf-8")
+                refresh_manifest_digest(bundle, records.name)
+                errors = VALIDATOR.validate_bundle(bundle)
+                self.assertIn(expected_error, errors)
+                self.assertNotIn("secret document", "\n".join(errors))
+
+    def test_duplicate_ids_and_non_lossless_metadata_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            write_synthetic_bundle(bundle)
+            records = bundle / "source-records.jsonl"
+            records.write_text(
+                '{"document":"first","id":"source-1",'
+                '"metadata":{"source_timestamp":"2026-08-20T00:00:00Z"}}\n'
+                '{"document":"second","id":"source-1",'
+                '"metadata":{"source_timestamp":"2026-08-20T00:00:00Z","value":NaN}}\n',
+                encoding="utf-8",
+            )
+            refresh_manifest_digest(bundle, records.name)
+            errors = VALIDATOR.validate_bundle(bundle)
+            self.assertIn("source-records.jsonl duplicate source ID at record 2", errors)
+            self.assertIn("source-records.jsonl record 2 metadata is not lossless JSON", errors)
+
+    def test_policy_bounds_stop_oversized_artifacts_before_parsing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            write_synthetic_bundle(bundle)
+            records = bundle / "source-records.jsonl"
+            records.write_bytes(b"x" * 2049)
+            refresh_manifest_digest(bundle, records.name)
+            errors = VALIDATOR.validate_bundle(bundle)
+            self.assertIn("source-records.jsonl exceeds max artifact bytes", errors)
+
+    def test_secret_shaped_report_values_are_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            write_synthetic_bundle(bundle)
+            parity_path = bundle / "parity-report.json"
+            parity = json.loads(parity_path.read_text(encoding="utf-8"))
+            parity["authorization"] = "Bearer private-test-token"
+            write_json(parity_path, parity)
+            refresh_manifest_digest(bundle, parity_path.name)
+            errors = VALIDATOR.validate_bundle(bundle)
+            diagnostics = "\n".join(errors)
+            self.assertIn("parity-report.json contains credential-shaped value at $.authorization", errors)
+            self.assertNotIn("private-test-token", diagnostics)
 
 
 if __name__ == "__main__":
