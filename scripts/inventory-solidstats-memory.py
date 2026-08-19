@@ -154,6 +154,8 @@ def _reject_secret_shape(value: object) -> bool:
         )
     if isinstance(value, list):
         return any(_reject_secret_shape(item) for item in value)
+    if isinstance(value, str):
+        return bool(SECRET_KEY_PATTERN.search(value))
     return False
 
 
@@ -236,7 +238,7 @@ def iter_chroma_records(
     records: Sequence[object], *, page_size: int, limits: InventoryLimits
 ) -> Iterator[tuple[int, Mapping[str, object]]]:
     """Yield bounded Chroma-shaped rows in deterministic source-page order."""
-    if not 0 < page_size <= limits.max_records:
+    if page_size <= 0:
         raise ValueError("invalid page size")
     if len(records) > limits.max_records:
         raise ValueError("record limit exceeded")
@@ -386,7 +388,7 @@ def build_source_inventory(
     _assert_safe_tree(snapshot_root, label="snapshot")
     freeze = _validate_freeze(snapshot_root, freeze_attestation)
     oracle = _validate_oracle(oracle_source_dir)
-    if not 0 < page_size <= limits.max_records:
+    if page_size <= 0:
         raise ValueError("invalid page size")
     if check_only:
         return {"check_only": True, "oracle": oracle, "freeze_attestation_digest": freeze["digest"]}
@@ -415,7 +417,11 @@ def build_source_inventory(
     source_records: list[dict[str, object]] = []
     vector_records: list[dict[str, object]] = []
     fixture_records: list[dict[str, object]] = []
-    for index, row in iter_chroma_records(collection_value["records"], page_size=page_size, limits=limits):
+    for index, row in iter_chroma_records(
+        collection_value["records"],
+        page_size=min(page_size, limits.max_records),
+        limits=limits,
+    ):
         source, vector = _validated_record(index, row, limits)
         metadata = source["metadata"]
         if metadata.get("room") not in active_rooms or metadata.get("wing") not in [common_wing, *archive_wings]:
