@@ -228,6 +228,16 @@ spec:
       ports:
         - port: 15692
           protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: solidstats-memory
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: solidstats-memory-observer
+      ports:
+        - port: 9108
+          protocol: TCP
 ---
 # Policy 8: Allow postgres-exporter egress to postgres in solid-stats-staging.
 # The exporter pod connects directly to postgres :5432 (not prometheus).

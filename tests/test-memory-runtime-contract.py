@@ -129,5 +129,23 @@ class SshTunnelLifecycleContractTests(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
 
 
+class MemoryObserverContractTests(unittest.TestCase):
+    def test_observer_exports_stable_metrics_without_upstream_payloads(self) -> None:
+        text = (ROOT / "k8s/memory/50-monitoring.yaml").read_text()
+        for marker in ("def probe_http", "def parse_collection_health", "def latest_snapshot_timestamp", "solidstats_memory_mcp_ready", "solidstats_memory_qdrant_latest_snapshot_timestamp_seconds"):
+            self.assertIn(marker, text)
+
+
+class PrometheusMemoryContractTests(unittest.TestCase):
+    def test_values_and_rendered_config_consume_all_memory_signals(self) -> None:
+        values = (ROOT / "k8s/observability/values/prometheus-values.yaml").read_text()
+        rendered = (ROOT / "k8s/observability/10-prometheus.yaml").read_text()
+        for text in (values, rendered):
+            self.assertIn("solidstats-memory-observer", text)
+            self.assertIn("kubernetes-nodes-volume-stats", text)
+            self.assertIn("SolidStatsMemoryPVCMetricsMissing", text)
+            self.assertIn("solidstats_memory:pvc_capacity_ratio:max", text)
+
+
 if __name__ == "__main__":
     unittest.main()

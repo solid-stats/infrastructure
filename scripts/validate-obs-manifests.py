@@ -263,6 +263,29 @@ def _check_cadvisor_scrape_config() -> list[str]:
     return errors
 
 
+def _check_memory_monitoring_contract() -> list[str]:
+    """Require the values, generated ConfigMap, and reciprocal policy to agree."""
+    errors = []
+    values_text = PROMETHEUS_VALUES.read_text()
+    manifest_text = PROMETHEUS_MANIFEST.read_text()
+    policy_text = (OBS_DIR / "95-netpol-monitoring.yaml").read_text()
+    markers = (
+        "solidstats-memory-observer",
+        "kubernetes-nodes-volume-stats",
+        "solidstats_memory:mcp_ready:max",
+        "solidstats_memory:pvc_capacity_ratio:max",
+        "SolidStatsMemoryPVCMetricsMissing",
+        "SolidStatsMemorySnapshotMissingOrStale",
+        "kube_cronjob_spec_suspend",
+    )
+    for marker in markers:
+        if marker not in values_text or marker not in manifest_text:
+            errors.append(f"memory Prometheus source/render is missing: {marker}")
+    if "solidstats-memory-observer" not in policy_text or "port: 9108" not in policy_text:
+        errors.append("monitoring NetworkPolicy lacks observer-only TCP 9108 egress")
+    return errors
+
+
 def validate() -> int:
     if not OBS_DIR.is_dir():
         print(f"note: {OBS_DIR.relative_to(ROOT)} does not exist yet — no manifests to validate")
@@ -288,6 +311,7 @@ def validate() -> int:
             all_errors.extend(_check_priority_class(doc, yaml_path))
 
     all_errors.extend(_check_cadvisor_scrape_config())
+    all_errors.extend(_check_memory_monitoring_contract())
 
     if all_errors:
         for err in all_errors:

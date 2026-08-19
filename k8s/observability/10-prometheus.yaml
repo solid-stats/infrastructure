@@ -51,6 +51,21 @@ data:
       tls_config:
         ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
         insecure_skip_verify: false
+    - job_name: kubernetes-nodes-volume-stats
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      kubernetes_sd_configs:
+      - role: node
+      relabel_configs:
+      - replacement: /api/v1/nodes/$1/proxy/metrics
+        source_labels:
+        - __meta_kubernetes_node_name
+        target_label: __metrics_path__
+      - replacement: kubernetes.default.svc:443
+        target_label: __address__
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: false
     - job_name: loki
       static_configs:
       - targets:
@@ -71,15 +86,61 @@ data:
       static_configs:
       - targets:
         - rabbitmq.solid-stats-staging.svc:15692
+    - job_name: solidstats-memory-observer
+      static_configs:
+      - targets:
+        - solidstats-memory-observer.solidstats-memory.svc.cluster.local:9108
     rule_files:
     - /etc/config/recording_rules.yml
     - /etc/config/alerting_rules.yml
     - /etc/config/rules
     - /etc/config/alerts
   recording_rules.yml: |
-    {}
+    groups:
+    - name: solidstats-memory-recording
+      rules:
+      - record: solidstats_memory:mcp_ready:max
+        expr: max(solidstats_memory_mcp_ready{job="solidstats-memory-observer"})
+      - record: solidstats_memory:mcp_probe_duration_seconds:max
+        expr: max(solidstats_memory_mcp_probe_duration_seconds{job="solidstats-memory-observer"})
+      - record: solidstats_memory:mcp_probe_errors:rate5m
+        expr: sum(rate(solidstats_memory_mcp_probe_errors_total{job="solidstats-memory-observer"}[5m]))
+      - record: solidstats_memory:qdrant_ready:max
+        expr: max(solidstats_memory_qdrant_ready{job="solidstats-memory-observer"})
+      - record: solidstats_memory:qdrant_collection_healthy:max
+        expr: max(solidstats_memory_qdrant_collection_healthy{job="solidstats-memory-observer"})
+      - record: solidstats_memory:qdrant_snapshot_age_seconds:max
+        expr: time() - max(solidstats_memory_qdrant_latest_snapshot_timestamp_seconds{job="solidstats-memory-observer"})
+      - record: solidstats_memory:pvc_capacity_ratio:max
+        expr: max(kubelet_volume_stats_used_bytes{namespace="solidstats-memory",persistentvolumeclaim=~"mempalace-data|qdrant-data-qdrant-0"} / kubelet_volume_stats_capacity_bytes{namespace="solidstats-memory",persistentvolumeclaim=~"mempalace-data|qdrant-data-qdrant-0"})
   rules: |
-    {}
+    groups:
+    - name: solidstats-memory-alerts
+      rules:
+      - alert: SolidStatsMemoryMCPNotReady
+        expr: solidstats_memory:mcp_ready:max == 0
+        for: 5m
+      - alert: SolidStatsMemoryMCPLatencyHigh
+        expr: solidstats_memory:mcp_probe_duration_seconds:max > 2
+        for: 10m
+      - alert: SolidStatsMemoryMCPProbeErrors
+        expr: solidstats_memory:mcp_probe_errors:rate5m > 0
+        for: 5m
+      - alert: SolidStatsMemoryQdrantUnhealthy
+        expr: solidstats_memory:qdrant_ready:max == 0
+        for: 5m
+      - alert: SolidStatsMemoryQdrantCollectionUnavailable
+        expr: solidstats_memory:qdrant_collection_healthy:max == 0
+        for: 5m
+      - alert: SolidStatsMemorySnapshotMissingOrStale
+        expr: kube_cronjob_spec_suspend{namespace="solidstats-memory",cronjob="qdrant-snapshot"} == 0 and solidstats_memory:qdrant_snapshot_age_seconds:max > 93600
+        for: 15m
+      - alert: SolidStatsMemoryPVCCapacityHigh
+        expr: solidstats_memory:pvc_capacity_ratio:max > 0.85
+        for: 15m
+      - alert: SolidStatsMemoryPVCMetricsMissing
+        expr: count(kubelet_volume_stats_capacity_bytes{namespace="solidstats-memory",persistentvolumeclaim=~"mempalace-data|qdrant-data-qdrant-0"}) < 2
+        for: 15m
 ---
 # Source: prometheus/templates/pvc.yaml
 apiVersion: v1
