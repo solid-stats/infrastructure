@@ -93,6 +93,7 @@ def require_workload_safety(docs: dict[str, str]) -> None:
         require("readinessProbe:" in doc and "livenessProbe:" in doc, f"{name} lacks probes")
     require(QDRANT_IMAGE in docs["StatefulSet/qdrant"], "Qdrant image digest is not pinned to the verified artifact")
     require("type: ClusterIP" in docs["Service/qdrant"], "Qdrant must be a private ClusterIP service")
+    require("clusterIP: None" in docs["Service/qdrant"], "Qdrant StatefulSet requires a headless governing service")
     require("type: LoadBalancer" not in docs["Service/qdrant"] and "type: NodePort" not in docs["Service/qdrant"], "Qdrant is publicly exposed")
     require("type: ClusterIP" in docs["Service/mempalace"], "MemPalace must use an internal ClusterIP service")
     require("mountPath: /qdrant/storage" in docs["StatefulSet/qdrant"], "Qdrant storage mount is missing")

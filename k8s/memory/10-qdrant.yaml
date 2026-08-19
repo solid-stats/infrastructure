@@ -18,6 +18,7 @@ metadata:
     app.kubernetes.io/part-of: solidstats-memory
 spec:
   type: ClusterIP
+  clusterIP: None
   selector:
     app.kubernetes.io/name: qdrant
   ports:
