@@ -211,7 +211,9 @@ class UntrustedBundleTests(unittest.TestCase):
             bundle = Path(temporary)
             write_synthetic_bundle(bundle)
             records = bundle / "source-records.jsonl"
-            records.write_bytes(b"x" * 2049)
+            records.write_bytes(
+                b"x" * (VALIDATOR.BUNDLE_BOUNDS["max_artifact_bytes"] + 1)
+            )
             refresh_manifest_digest(bundle, records.name)
             errors = VALIDATOR.validate_bundle(bundle)
             self.assertIn("source-records.jsonl exceeds max artifact bytes", errors)

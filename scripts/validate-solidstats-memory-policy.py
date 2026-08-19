@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import sys
+from urllib.parse import urlsplit
 
 
 EXPECTED_ACTIVE_ROOMS = [
@@ -44,6 +45,15 @@ ARCHIVE_DISTILLATION = {
     "shard_ledger_required": True,
 }
 BUNDLE_CONTRACT = {
+    "bounds": {
+        "max_artifact_bytes": 1024 * 1024,
+        "max_document_bytes": 256 * 1024,
+        "max_manifest_bytes": 64 * 1024,
+        "max_metadata_bytes": 64 * 1024,
+        "max_recall_fixture_count": 10_000,
+        "max_record_count": 1_000_000,
+        "max_vector_dimension": 65_536,
+    },
     "required_artifacts": [
         "source-inventory.json",
         "transform-manifest.json",
@@ -58,17 +68,27 @@ BUNDLE_CONTRACT = {
     ],
     "synthetic_parity_is_non_production": True,
 }
+BUNDLE_BOUNDS = BUNDLE_CONTRACT["bounds"]
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 UTC_TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+SECRET_KEY_PATTERN = re.compile(
+    r"(?:authorization|credential|password|secret|token|api[_-]?key|dsn|connection)",
+    re.IGNORECASE,
+)
 
 
-def load_json(path: Path) -> dict[str, object]:
+def load_json(
+    path: Path, *, label: str | None = None, max_bytes: int | None = None
+) -> dict[str, object]:
+    display_name = label or path.name
     try:
+        if max_bytes is not None and path.stat().st_size > max_bytes:
+            raise ValueError(f"{display_name} exceeds its byte limit")
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"cannot read JSON from {path}: {error}") from error
+        raise ValueError(f"cannot read JSON from {display_name}") from error
     if not isinstance(value, dict):
-        raise ValueError(f"{path} must contain a JSON object")
+        raise ValueError(f"{display_name} must contain a JSON object")
     return value
 
 
@@ -111,13 +131,152 @@ def is_sha256(value: object) -> bool:
 
 
 def resolve_bundle_path(bundle_dir: Path, relative: object) -> Path | None:
-    """Return a safe bundle path without following malformed references."""
+    """Return one existing regular file contained by the bundle root."""
     if not isinstance(relative, str):
         return None
     candidate = Path(relative)
     if candidate.is_absolute() or ".." in candidate.parts:
         return None
-    return bundle_dir / candidate
+    try:
+        root = bundle_dir.resolve(strict=True)
+    except OSError:
+        return None
+    unresolved = bundle_dir
+    for component in candidate.parts:
+        unresolved = unresolved / component
+        if unresolved.is_symlink():
+            return None
+    try:
+        resolved = (bundle_dir / candidate).resolve(strict=True)
+    except OSError:
+        return None
+    if root not in (resolved, *resolved.parents) or not resolved.is_file():
+        return None
+    return resolved
+
+
+def bundle_path_contains_symlink(bundle_dir: Path, relative: object) -> bool:
+    if not isinstance(relative, str):
+        return False
+    candidate = Path(relative)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return False
+    current = bundle_dir
+    for component in candidate.parts:
+        current = current / component
+        if current.is_symlink():
+            return True
+    return False
+
+
+def validate_source_records(records_path: Path, inventory: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    seen_ids: set[str] = set()
+    record_count = 0
+    try:
+        with records_path.open("r", encoding="utf-8") as source:
+            for line_number, raw_line in enumerate(source, start=1):
+                if len(raw_line.encode("utf-8")) > (
+                    BUNDLE_BOUNDS["max_document_bytes"]
+                    + BUNDLE_BOUNDS["max_metadata_bytes"]
+                    + 4096
+                ):
+                    errors.append(f"source-records.jsonl record {line_number} exceeds byte limit")
+                    break
+                if not raw_line.strip():
+                    errors.append(f"source-records.jsonl record {line_number} must be an object")
+                    continue
+                try:
+                    record = json.loads(
+                        raw_line,
+                        parse_constant=lambda _value: float("nan"),
+                    )
+                except (json.JSONDecodeError, ValueError):
+                    errors.append(f"source-records.jsonl record {line_number} is invalid JSON")
+                    continue
+                if not isinstance(record, dict):
+                    errors.append(f"source-records.jsonl record {line_number} must be an object")
+                    continue
+                record_count += 1
+                source_id = record.get("id")
+                if not isinstance(source_id, str) or not source_id:
+                    errors.append(f"source-records.jsonl record {line_number} ID is required")
+                elif source_id in seen_ids:
+                    errors.append(
+                        f"source-records.jsonl duplicate source ID at record {line_number}"
+                    )
+                else:
+                    seen_ids.add(source_id)
+                document = record.get("document")
+                if not isinstance(document, str):
+                    errors.append(
+                        f"source-records.jsonl record {line_number} document must be a string"
+                    )
+                elif len(document.encode("utf-8")) > BUNDLE_BOUNDS["max_document_bytes"]:
+                    errors.append(f"source-records.jsonl record {line_number} document exceeds byte limit")
+                metadata = record.get("metadata")
+                if not isinstance(metadata, dict):
+                    errors.append(
+                        f"source-records.jsonl record {line_number} metadata must be an object"
+                    )
+                    continue
+                try:
+                    canonical_metadata = json.dumps(
+                        metadata,
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                    if json.loads(canonical_metadata) != metadata:
+                        raise ValueError("metadata round trip")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    errors.append(
+                        f"source-records.jsonl record {line_number} metadata is not lossless JSON"
+                    )
+                    continue
+                if len(canonical_metadata.encode("utf-8")) > BUNDLE_BOUNDS["max_metadata_bytes"]:
+                    errors.append(f"source-records.jsonl record {line_number} metadata exceeds byte limit")
+                if not isinstance(metadata.get("source_timestamp"), str) or not UTC_TIMESTAMP_PATTERN.fullmatch(
+                    metadata["source_timestamp"]
+                ):
+                    errors.append(
+                        f"source-records.jsonl record {line_number} source timestamp is required"
+                    )
+                if record_count > BUNDLE_BOUNDS["max_record_count"]:
+                    errors.append("source-records.jsonl exceeds max record count")
+                    break
+    except OSError:
+        return ["source-records.jsonl cannot be read"]
+    if inventory.get("record_count") != record_count:
+        errors.append("source-inventory.json record_count must match source records")
+    return errors
+
+
+def is_credential_value(value: str) -> bool:
+    if value.lower().startswith("bearer ") or "://" in value:
+        parsed = urlsplit(value)
+        return parsed.username is not None or value.lower().startswith("bearer ")
+    return False
+
+
+def validate_evidence_secrets(value: object, artifact: str, path: str = "$") -> list[str]:
+    errors: list[str] = []
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            nested_path = f"{path}.{key}"
+            if SECRET_KEY_PATTERN.search(str(key)):
+                errors.append(
+                    f"{artifact} contains credential-shaped value at {nested_path}"
+                )
+                continue
+            errors.extend(validate_evidence_secrets(nested, artifact, nested_path))
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            errors.extend(validate_evidence_secrets(nested, artifact, f"{path}[{index}]"))
+    elif isinstance(value, str) and is_credential_value(value):
+        errors.append(f"{artifact} contains credential-shaped value at {path}")
+    return errors
 
 
 def validate_freeze_attestation(manifest: dict[str, object]) -> list[str]:
@@ -194,7 +353,11 @@ def validate_parity_report(parity: dict[str, object]) -> list[str]:
 def validate_bundle(bundle_dir: Path) -> list[str]:
     errors: list[str] = []
     try:
-        manifest = load_json(bundle_dir / "manifest.json")
+        manifest = load_json(
+            bundle_dir / "manifest.json",
+            label="manifest.json",
+            max_bytes=BUNDLE_BOUNDS["max_manifest_bytes"],
+        )
     except ValueError as error:
         return [str(error)]
     attestations = {
@@ -223,13 +386,16 @@ def validate_bundle(bundle_dir: Path) -> list[str]:
         expected_digest = item.get("sha256")
         candidate = resolve_bundle_path(bundle_dir, relative)
         if candidate is None:
+            if bundle_path_contains_symlink(bundle_dir, relative):
+                errors.append(f"bundle path contains a symlink: {relative}")
+                continue
             errors.append(f"unsafe bundle path: {relative!r}")
             continue
         if not is_sha256(expected_digest):
             errors.append(f"invalid sha256 for {relative}")
             continue
-        if not candidate.is_file():
-            errors.append(f"missing bundle file: {relative}")
+        if candidate.stat().st_size > BUNDLE_BOUNDS["max_artifact_bytes"]:
+            errors.append(f"{relative} exceeds max artifact bytes")
             continue
         if sha256(candidate) != expected_digest.lower():
             errors.append(f"checksum mismatch: {relative}")
@@ -257,14 +423,32 @@ def validate_bundle(bundle_dir: Path) -> list[str]:
     if errors:
         return errors
     try:
-        inventory = load_json(files_by_path["source-inventory.json"])
-        transform = load_json(files_by_path["transform-manifest.json"])
-        parity = load_json(files_by_path["parity-report.json"])
+        inventory = load_json(
+            files_by_path["source-inventory.json"], label="source-inventory.json"
+        )
+        transform = load_json(
+            files_by_path["transform-manifest.json"], label="transform-manifest.json"
+        )
+        parity = load_json(files_by_path["parity-report.json"], label="parity-report.json")
     except ValueError as error:
         return [str(error)]
     errors.extend(validate_inventory(inventory, manifest))
     errors.extend(validate_transform_manifest(transform, manifest))
     errors.extend(validate_parity_report(parity))
+    records_reference = inventory.get("source_records_reference")
+    records_path = resolve_bundle_path(bundle_dir, records_reference)
+    if records_path is None:
+        errors.append("source-inventory.json source_records_reference is unsafe")
+    elif records_reference not in files_by_path:
+        errors.append("source-inventory.json source records must be checksum-listed")
+    else:
+        errors.extend(validate_source_records(records_path, inventory))
+    for artifact, evidence in (
+        ("source-inventory.json", inventory),
+        ("transform-manifest.json", transform),
+        ("parity-report.json", parity),
+    ):
+        errors.extend(validate_evidence_secrets(evidence, artifact))
     return errors
 
 

@@ -46,6 +46,15 @@
       "transform_manifest_reference",
       "parity_report_reference"
     ],
+    "bounds": {
+      "max_artifact_bytes": 1048576,
+      "max_document_bytes": 262144,
+      "max_manifest_bytes": 65536,
+      "max_metadata_bytes": 65536,
+      "max_recall_fixture_count": 10000,
+      "max_record_count": 1000000,
+      "max_vector_dimension": 65536
+    },
     "synthetic_parity_is_non_production": true
   },
   "delete_legacy_requires_exact_ids": true,
