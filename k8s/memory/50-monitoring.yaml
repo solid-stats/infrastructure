@@ -1,0 +1,23 @@
+# The Prometheus installation owns its active configuration. This ConfigMap is
+# the isolated, static target handoff for an operator-applied monitoring change.
+# Only verified health endpoints are present; metric-path and metric-name alerts
+# remain blocked until their runtime surface is observed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: solidstats-memory-health-targets
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-health-targets
+    app.kubernetes.io/part-of: solidstats-memory
+    monitoring.solid-stats.io/static-targets: "true"
+data:
+  targets.yaml: |
+    - name: mempalace-health
+      url: http://mempalace.solidstats-memory.svc:8765/healthz
+    - name: qdrant-health
+      url: http://qdrant.solidstats-memory.svc:6333/healthz
+  alerts.md: |
+    Operator gate: add availability alerts only after the Prometheus probe
+    integration and its health-result metric have been observed. Do not create
+    metric-name alerts from this handoff.

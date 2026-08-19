@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: solidstats-memory-backup
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-backup
+    app.kubernetes.io/part-of: solidstats-memory
+automountServiceAccountToken: false
+---
+# The job remains suspended until collection naming, uploader image, object-store
+# egress, credentials, and a restore drill are explicitly approved.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: solidstats-memory-backup
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-backup
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  schedule: "0 5 * * *"
+  timeZone: Europe/Moscow
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: solidstats-memory-backup
+            app.kubernetes.io/part-of: solidstats-memory
+        spec:
+          restartPolicy: Never
+          serviceAccountName: solidstats-memory-backup
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: snapshot-and-package
+              image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  backup_id="$(date -u +%Y%m%dT%H%M%SZ)"
+                  work_dir="/tmp/${backup_id}"
+                  mkdir -p "${work_dir}"
+                  snapshot_json="${work_dir}/snapshot.json"
+                  curl --fail --show-error --silent \
+                    -X POST \
+                    -H "api-key: ${QDRANT_API_KEY}" \
+                    "${QDRANT_URL}/collections/${QDRANT_COLLECTION}/snapshots" \
+                    > "${snapshot_json}"
+                  snapshot_name="$(tr -d '[:space:]' < "${snapshot_json}" | sed -n 's/.*\"name\":\"\([^\"]*\)\".*/\1/p' | head -n 1)"
+                  test -n "${snapshot_name}"
+                  curl --fail --show-error --silent \
+                    -H "api-key: ${QDRANT_API_KEY}" \
+                    "${QDRANT_URL}/collections/${QDRANT_COLLECTION}/snapshots/${snapshot_name}" \
+                    -o "${work_dir}/qdrant.snapshot"
+                  tar --create --file "${work_dir}/mempalace-metadata.tar" \
+                    --directory /metadata palace
+                  sha256sum "${work_dir}/qdrant.snapshot" \
+                    "${work_dir}/mempalace-metadata.tar" > "${work_dir}/SHA256SUMS"
+                  printf '{\"backup_id\":\"%s\",\"collection\":\"%s\",\"snapshot\":\"%s\"}\n' \
+                    "${backup_id}" "${QDRANT_COLLECTION}" "${snapshot_name}" \
+                    > "${work_dir}/manifest.json"
+                  aws --endpoint-url "${S3_ENDPOINT}" s3 cp --recursive \
+                    "${work_dir}" "s3://${S3_BUCKET}/backups/solidstats-memory/${backup_id}/"
+              env:
+                - name: QDRANT_URL
+                  value: http://qdrant:6333
+                - name: QDRANT_COLLECTION
+                  value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME
+                - name: QDRANT_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: memory-backup-runtime
+                      key: QDRANT_API_KEY
+                - name: S3_ENDPOINT
+                  valueFrom:
+                    secretKeyRef:
+                      name: memory-backup-runtime
+                      key: S3_ENDPOINT
+                - name: S3_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: memory-backup-runtime
+                      key: S3_BUCKET
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: memory-backup-runtime
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: memory-backup-runtime
+                      key: AWS_SECRET_ACCESS_KEY
+                - name: AWS_EC2_METADATA_DISABLED
+                  value: "true"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: mempalace-data
+                  mountPath: /metadata
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: mempalace-data
+              persistentVolumeClaim:
+                claimName: mempalace-data
+            - name: tmp
+              emptyDir: {}
