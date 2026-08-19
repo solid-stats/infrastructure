@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import uuid
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,7 @@ SPEC = importlib.util.spec_from_file_location("memory_policy_validator", MODULE_
 assert SPEC and SPEC.loader
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)
+UUID_NAMESPACE = uuid.UUID("c06c3fc7-5c14-4dc4-84c2-24a5f72d8dc1")
 
 
 def write_json(path: Path, value: object) -> None:
@@ -46,27 +48,59 @@ def write_synthetic_bundle(bundle: Path) -> dict[str, object]:
         "source_snapshot_checksum": snapshot_checksum,
     }
     transform = {
+        "collection_derivation": {
+            "derived_collection": "mempalace-solidstats-synthetic",
+            "namespace": "solidstats",
+            "oracle_checksum": "a" * 64,
+            "oracle_revision": "v3.5.0",
+            "palace_id": "synthetic-palace",
+            "source_collection": "records",
+        },
         "mapping_oracle": {
             "checksum": "a" * 64,
             "revision": "v3.5.0",
         },
+        "mappings": [
+            {
+                "mempalace_id": "source-1",
+                "point_id": str(uuid.uuid5(UUID_NAMESPACE, "source-1")),
+                "source_id": "source-1",
+            }
+        ],
+        "source_record_count": 1,
         "source_inventory_reference": "source-inventory.json",
         "source_snapshot_checksum": snapshot_checksum,
         "vector_strategy": {
+            "corpus_checksum": snapshot_checksum,
+            "dimension": 3,
             "evidence": "synthetic-only",
+            "local_model_artifact": "synthetic-model.bin",
+            "model_checksum": "b" * 64,
+            "model_revision": "synthetic-v1",
             "strategy": "reembed",
         },
     }
     parity = {
-        "field_comparison": {"passed": True},
+        "field_comparison": {"passed": True, "source_fields": ["document", "metadata"]},
         "real_parity_evidence": False,
-        "recall_comparison": {"passed": True},
+        "recall_comparison": {
+            "comparator": "ordered-id-and-distance",
+            "fixtures": [
+                {
+                    "filters": {"wing": "SolidStats"},
+                    "ordered_ids": ["source-1"],
+                    "source_distances": [0.0],
+                    "target_distances": [0.0],
+                }
+            ],
+            "passed": True,
+        },
         "source_run_id": "synthetic-source-run",
         "status": "passed",
         "synthetic": True,
         "target_collection_evidence": {"derived": True, "name": "synthetic"},
         "target_run_id": "synthetic-target-run",
-        "vector_comparison": {"passed": True},
+        "vector_comparison": {"passed": True, "target_metric": "Cosine"},
     }
     for name, artifact in (
         ("source-inventory.json", inventory),
@@ -231,6 +265,67 @@ class UntrustedBundleTests(unittest.TestCase):
             diagnostics = "\n".join(errors)
             self.assertIn("parity-report.json contains credential-shaped value at $.authorization", errors)
             self.assertNotIn("private-test-token", diagnostics)
+
+
+class MappingContractTests(unittest.TestCase):
+    def test_mapping_requires_matching_payload_id_and_uuidv5_point_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            write_synthetic_bundle(bundle)
+            transform_path = bundle / "transform-manifest.json"
+            transform = json.loads(transform_path.read_text(encoding="utf-8"))
+            transform["mappings"][0]["mempalace_id"] = "wrong-id"
+            write_json(transform_path, transform)
+            refresh_manifest_digest(bundle, transform_path.name)
+            self.assertIn(
+                "transform-manifest.json mapping 1 mempalace_id must equal source_id",
+                VALIDATOR.validate_bundle(bundle),
+            )
+
+    def test_collection_requires_oracle_derived_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            write_synthetic_bundle(bundle)
+            transform_path = bundle / "transform-manifest.json"
+            transform = json.loads(transform_path.read_text(encoding="utf-8"))
+            transform["collection_derivation"] = {"target_collection": "manual-name"}
+            write_json(transform_path, transform)
+            refresh_manifest_digest(bundle, transform_path.name)
+            self.assertIn(
+                "transform-manifest.json collection derivation must include oracle evidence",
+                VALIDATOR.validate_bundle(bundle),
+            )
+
+    def test_vector_reuse_requires_full_compatibility_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            write_synthetic_bundle(bundle)
+            transform_path = bundle / "transform-manifest.json"
+            transform = json.loads(transform_path.read_text(encoding="utf-8"))
+            transform["vector_strategy"] = {
+                "dimension": 3,
+                "strategy": "reuse",
+            }
+            write_json(transform_path, transform)
+            refresh_manifest_digest(bundle, transform_path.name)
+            self.assertIn(
+                "transform-manifest.json reuse strategy lacks compatibility evidence",
+                VALIDATOR.validate_bundle(bundle),
+            )
+
+    def test_parity_requires_ranked_recall_comparison_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            write_synthetic_bundle(bundle)
+            parity_path = bundle / "parity-report.json"
+            parity = json.loads(parity_path.read_text(encoding="utf-8"))
+            parity["recall_comparison"] = {"passed": True}
+            write_json(parity_path, parity)
+            refresh_manifest_digest(bundle, parity_path.name)
+            self.assertIn(
+                "parity-report.json recall comparison must contain ranked fixtures",
+                VALIDATOR.validate_bundle(bundle),
+            )
 
 
 if __name__ == "__main__":
