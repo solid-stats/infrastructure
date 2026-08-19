@@ -55,6 +55,11 @@
       "max_record_count": 1000000,
       "max_vector_dimension": 65536
     },
+    "mapping_contract": {
+      "payload_id_field": "mempalace_id",
+      "point_id_strategy": "mempalace-v3.5.0-uuidv5",
+      "source_timestamp_metadata_key": "source_timestamp"
+    },
     "synthetic_parity_is_non_production": true
   },
   "delete_legacy_requires_exact_ids": true,

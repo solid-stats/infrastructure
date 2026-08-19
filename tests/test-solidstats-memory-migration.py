@@ -70,6 +70,8 @@ def write_synthetic_bundle(bundle: Path) -> dict[str, object]:
         "source_record_count": 1,
         "source_inventory_reference": "source-inventory.json",
         "source_snapshot_checksum": snapshot_checksum,
+        "source_timestamp_metadata_key": "source_timestamp",
+        "target_fields_excluded": ["updated_at"],
         "vector_strategy": {
             "corpus_checksum": snapshot_checksum,
             "dimension": 3,

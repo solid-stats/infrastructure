@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sys
 from urllib.parse import urlsplit
+import uuid
 
 
 EXPECTED_ACTIVE_ROOMS = [
@@ -66,6 +67,11 @@ BUNDLE_CONTRACT = {
         "transform_manifest_reference",
         "parity_report_reference",
     ],
+    "mapping_contract": {
+        "payload_id_field": "mempalace_id",
+        "point_id_strategy": "mempalace-v3.5.0-uuidv5",
+        "source_timestamp_metadata_key": "source_timestamp",
+    },
     "synthetic_parity_is_non_production": True,
 }
 BUNDLE_BOUNDS = BUNDLE_CONTRACT["bounds"]
@@ -75,6 +81,7 @@ SECRET_KEY_PATTERN = re.compile(
     r"(?:authorization|credential|password|secret|token|api[_-]?key|dsn|connection)",
     re.IGNORECASE,
 )
+MEMPALACE_UUID_NAMESPACE = uuid.UUID("c06c3fc7-5c14-4dc4-84c2-24a5f72d8dc1")
 
 
 def load_json(
@@ -169,7 +176,11 @@ def bundle_path_contains_symlink(bundle_dir: Path, relative: object) -> bool:
     return False
 
 
-def validate_source_records(records_path: Path, inventory: dict[str, object]) -> list[str]:
+def validate_source_records(
+    records_path: Path,
+    inventory: dict[str, object],
+    expected_source_ids: set[str] | None = None,
+) -> list[str]:
     errors: list[str] = []
     seen_ids: set[str] = set()
     record_count = 0
@@ -250,6 +261,8 @@ def validate_source_records(records_path: Path, inventory: dict[str, object]) ->
         return ["source-records.jsonl cannot be read"]
     if inventory.get("record_count") != record_count:
         errors.append("source-inventory.json record_count must match source records")
+    if expected_source_ids is not None and seen_ids != expected_source_ids:
+        errors.append("transform-manifest.json mappings must cover every source ID")
     return errors
 
 
@@ -327,7 +340,110 @@ def validate_transform_manifest(
     strategy = transform.get("vector_strategy")
     if not isinstance(strategy, dict) or not isinstance(strategy.get("strategy"), str):
         errors.append("transform-manifest.json vector strategy evidence is required")
+        return errors
+    errors.extend(validate_mapping_contract(transform, manifest))
+    errors.extend(validate_collection_derivation(transform))
+    errors.extend(validate_vector_strategy(strategy))
+    if transform.get("source_timestamp_metadata_key") != "source_timestamp":
+        errors.append("transform-manifest.json source timestamp metadata key is required")
+    excluded_fields = transform.get("target_fields_excluded")
+    if not isinstance(excluded_fields, list) or "updated_at" not in excluded_fields:
+        errors.append("transform-manifest.json must exclude target updated_at from source parity")
     return errors
+
+
+def validate_mapping_contract(
+    transform: dict[str, object], manifest: dict[str, object]
+) -> list[str]:
+    errors: list[str] = []
+    mappings = transform.get("mappings")
+    expected_count = transform.get("source_record_count")
+    if not isinstance(expected_count, int) or isinstance(expected_count, bool) or expected_count < 1:
+        return ["transform-manifest.json source_record_count must be a positive integer"]
+    if not isinstance(mappings, list) or len(mappings) != expected_count:
+        return ["transform-manifest.json mappings must match source_record_count"]
+    source_ids: set[str] = set()
+    point_ids: set[str] = set()
+    for index, mapping in enumerate(mappings, start=1):
+        if not isinstance(mapping, dict):
+            errors.append(f"transform-manifest.json mapping {index} must be an object")
+            continue
+        source_id = mapping.get("source_id")
+        payload_id = mapping.get("mempalace_id")
+        point_id = mapping.get("point_id")
+        if not isinstance(source_id, str) or not source_id:
+            errors.append(f"transform-manifest.json mapping {index} source_id is required")
+            continue
+        if source_id in source_ids:
+            errors.append(f"transform-manifest.json mapping {index} duplicates source_id")
+        source_ids.add(source_id)
+        if payload_id != source_id:
+            errors.append(
+                f"transform-manifest.json mapping {index} mempalace_id must equal source_id"
+            )
+        expected_point_id = str(uuid.uuid5(MEMPALACE_UUID_NAMESPACE, source_id))
+        if point_id != expected_point_id:
+            errors.append(
+                f"transform-manifest.json mapping {index} point_id must use MemPalace UUIDv5"
+            )
+        elif not isinstance(point_id, str):
+            errors.append(f"transform-manifest.json mapping {index} point_id must be a string")
+        elif point_id in point_ids:
+            errors.append(f"transform-manifest.json mapping {index} duplicates point_id")
+        if isinstance(point_id, str):
+            point_ids.add(point_id)
+    return errors
+
+
+def validate_collection_derivation(transform: dict[str, object]) -> list[str]:
+    derivation = transform.get("collection_derivation")
+    if not isinstance(derivation, dict):
+        return ["transform-manifest.json collection derivation must include oracle evidence"]
+    required_strings = (
+        "palace_id",
+        "namespace",
+        "source_collection",
+        "oracle_revision",
+        "derived_collection",
+    )
+    if any(not isinstance(derivation.get(key), str) or not derivation[key] for key in required_strings) or not is_sha256(
+        derivation.get("oracle_checksum")
+    ):
+        return ["transform-manifest.json collection derivation must include oracle evidence"]
+    return []
+
+
+def validate_vector_strategy(strategy: dict[str, object]) -> list[str]:
+    selected = strategy.get("strategy")
+    dimension = strategy.get("dimension")
+    if not isinstance(dimension, int) or isinstance(dimension, bool) or not 0 < dimension <= BUNDLE_BOUNDS[
+        "max_vector_dimension"
+    ]:
+        return ["transform-manifest.json vector dimension is invalid"]
+    if selected == "reuse":
+        required = (
+            "embedding_model",
+            "embedding_configuration",
+            "source_metric",
+            "serialization",
+        )
+        if (
+            any(not isinstance(strategy.get(key), str) or not strategy[key] for key in required)
+            or strategy.get("target_metric") != "Cosine"
+            or strategy.get("compatibility_verified") is not True
+        ):
+            return ["transform-manifest.json reuse strategy lacks compatibility evidence"]
+        return []
+    if selected == "reembed":
+        required = ("local_model_artifact", "model_revision")
+        if (
+            any(not isinstance(strategy.get(key), str) or not strategy[key] for key in required)
+            or not is_sha256(strategy.get("model_checksum"))
+            or not is_sha256(strategy.get("corpus_checksum"))
+        ):
+            return ["transform-manifest.json reembed strategy lacks pinned local model evidence"]
+        return []
+    return ["transform-manifest.json vector strategy must be reuse or reembed"]
 
 
 def validate_parity_report(parity: dict[str, object]) -> list[str]:
@@ -347,6 +463,40 @@ def validate_parity_report(parity: dict[str, object]) -> list[str]:
     for key in ("field_comparison", "vector_comparison", "recall_comparison"):
         if not isinstance(parity.get(key), dict) or parity[key].get("passed") is not True:
             errors.append(f"parity-report.json {key} must pass")
+    field_comparison = parity.get("field_comparison")
+    if not isinstance(field_comparison, dict) or not isinstance(
+        field_comparison.get("source_fields"), list
+    ) or not field_comparison["source_fields"]:
+        errors.append("parity-report.json field comparison must name source fields")
+    vector_comparison = parity.get("vector_comparison")
+    if not isinstance(vector_comparison, dict) or vector_comparison.get("target_metric") != "Cosine":
+        errors.append("parity-report.json vector comparison must record target Cosine")
+    recall_comparison = parity.get("recall_comparison")
+    fixtures = (
+        recall_comparison.get("fixtures") if isinstance(recall_comparison, dict) else None
+    )
+    if not isinstance(fixtures, list) or not fixtures:
+        errors.append("parity-report.json recall comparison must contain ranked fixtures")
+    elif len(fixtures) > BUNDLE_BOUNDS["max_recall_fixture_count"]:
+        errors.append("parity-report.json recall fixtures exceed maximum count")
+    elif not isinstance(recall_comparison.get("comparator"), str):
+        errors.append("parity-report.json recall comparison must record a comparator")
+    else:
+        for index, fixture in enumerate(fixtures, start=1):
+            if not isinstance(fixture, dict) or any(
+                key not in fixture
+                for key in ("filters", "ordered_ids", "source_distances", "target_distances")
+            ):
+                errors.append(f"parity-report.json recall fixture {index} is incomplete")
+                continue
+            if not isinstance(fixture["ordered_ids"], list) or not isinstance(
+                fixture["source_distances"], list
+            ) or not isinstance(fixture["target_distances"], list):
+                errors.append(f"parity-report.json recall fixture {index} is malformed")
+            elif len(fixture["ordered_ids"]) != len(fixture["source_distances"]) or len(
+                fixture["ordered_ids"]
+            ) != len(fixture["target_distances"]):
+                errors.append(f"parity-report.json recall fixture {index} has unequal rankings")
     return errors
 
 
@@ -442,7 +592,13 @@ def validate_bundle(bundle_dir: Path) -> list[str]:
     elif records_reference not in files_by_path:
         errors.append("source-inventory.json source records must be checksum-listed")
     else:
-        errors.extend(validate_source_records(records_path, inventory))
+        mappings = transform.get("mappings")
+        expected_source_ids = {
+            mapping["source_id"]
+            for mapping in mappings
+            if isinstance(mapping, dict) and isinstance(mapping.get("source_id"), str)
+        } if isinstance(mappings, list) else None
+        errors.extend(validate_source_records(records_path, inventory, expected_source_ids))
     for artifact, evidence in (
         ("source-inventory.json", inventory),
         ("transform-manifest.json", transform),
