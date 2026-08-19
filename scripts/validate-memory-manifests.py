@@ -5,6 +5,7 @@ import argparse
 import ipaddress
 import re
 import sys
+import textwrap
 from pathlib import Path
 
 
@@ -72,7 +73,7 @@ def validate_documents(manifest_dir: Path) -> dict[str, str]:
 
 def require_workload_safety(docs: dict[str, str]) -> None:
     workloads = [doc for key, doc in docs.items() if key.split("/", 1)[0] in {"Deployment", "StatefulSet", "CronJob"}]
-    require(len(workloads) == 3, "expected Qdrant, MemPalace, and backup workloads")
+    require(len(workloads) == 4, "expected Qdrant, MemPalace, observer, and backup workloads")
     for doc in workloads:
         name = field(doc, r"^metadata:\n(?:  .*\n)*?  name:\s*(.+)$") or "unnamed"
         require("serviceAccountName:" in doc and "serviceAccountName: default" not in doc, f"{name} lacks dedicated ServiceAccount")
@@ -111,7 +112,8 @@ def require_network_contract(docs: dict[str, str], source_has_placeholders: bool
         "NetworkPolicy/allow-mempalace-to-qdrant",
         "NetworkPolicy/allow-backup-to-qdrant",
         "NetworkPolicy/allow-backup-upload-egress",
-        "NetworkPolicy/allow-prometheus-scrape",
+        "NetworkPolicy/allow-prometheus-to-memory-observer",
+        "NetworkPolicy/allow-memory-observer-egress",
         "NetworkPolicy/allow-host-nginx-to-mcp",
     }
     require(required <= policies, f"network policies missing: {sorted(required - policies)}")
@@ -136,10 +138,13 @@ def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
     require("/collections/${QDRANT_COLLECTION}/snapshots" in backup, "backup misses Qdrant snapshot API")
     require("backups/solidstats-memory/" in backup, "backup prefix is incorrect")
     require("mempalace-metadata.tar" in backup and "SHA256SUMS" in backup, "backup misses metadata or checksums")
-    monitoring = docs["ConfigMap/solidstats-memory-health-targets"]
-    require("mempalace.solidstats-memory.svc:8765/healthz" in monitoring, "MemPalace health target missing")
-    require("qdrant.solidstats-memory.svc:6333/healthz" in monitoring, "Qdrant health target missing")
-    require("metric-name alerts" in monitoring, "monitoring gate is undocumented")
+    observer = docs["ConfigMap/solidstats-memory-observer"]
+    for marker in ("def probe_http", "def parse_collection_health", "def latest_snapshot_timestamp", "def collect_metrics", "class MetricsHandler", "solidstats_memory_mcp_ready", "solidstats_memory_qdrant_collection_healthy"):
+        require(marker in observer, f"observer misses {marker}")
+    compile(textwrap.dedent(observer.split("exporter.py: |", 1)[1]), "exporter.py", "exec")
+    deployment = docs["Deployment/solidstats-memory-observer"]
+    require("MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST" in deployment or not PLACEHOLDER_RE.search(deployment), "observer image is not rendered")
+    require("automountServiceAccountToken: false" in deployment and "port: 9108" in docs["Service/solidstats-memory-observer"], "observer boundary is incomplete")
 
 
 def require_rbac_and_workflow_contract(docs: dict[str, str]) -> None:
@@ -157,7 +162,8 @@ def require_rbac_and_workflow_contract(docs: dict[str, str]) -> None:
         "00-namespace.yaml and 01-ci-rbac.yaml are operator bootstrap",
     ):
         require(expected in workflow, f"memory workflow is missing: {expected}")
-    require("solid-stats-staging" not in workflow and "namespace: monitoring" not in workflow, "memory workflow crosses another namespace")
+    for forbidden in ("secrets.K8S_TOKEN", "K8S_OBS_TOKEN", "K8S_OBS_ET_TOKEN", "ci-k3s-staging", "obs-k3s-staging", "obs-et-k3s-staging"):
+        require(forbidden not in workflow, f"memory workflow references a foreign identity: {forbidden}")
 
 
 def require_no_secret_values(manifest_dir: Path) -> None:

@@ -1,23 +1,184 @@
-# The Prometheus installation owns its active configuration. This ConfigMap is
-# the isolated, static target handoff for an operator-applied monitoring change.
-# Only verified health endpoints are present; metric-path and metric-name alerts
-# remain blocked until their runtime surface is observed.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: solidstats-memory-observer
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-observer
+    app.kubernetes.io/part-of: solidstats-memory
+automountServiceAccountToken: false
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: solidstats-memory-health-targets
+  name: solidstats-memory-observer
   namespace: solidstats-memory
   labels:
-    app.kubernetes.io/name: solidstats-memory-health-targets
+    app.kubernetes.io/name: solidstats-memory-observer
     app.kubernetes.io/part-of: solidstats-memory
-    monitoring.solid-stats.io/static-targets: "true"
 data:
-  targets.yaml: |
-    - name: mempalace-health
-      url: http://mempalace.solidstats-memory.svc:8765/healthz
-    - name: qdrant-health
-      url: http://qdrant.solidstats-memory.svc:6333/healthz
-  alerts.md: |
-    Operator gate: add availability alerts only after the Prometheus probe
-    integration and its health-result metric have been observed. Do not create
-    metric-name alerts from this handoff.
+  exporter.py: |
+    import json
+    import os
+    import threading
+    import time
+    from datetime import datetime, timezone
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.error import HTTPError, URLError
+    from urllib.parse import quote
+    from urllib.request import Request, urlopen
+
+    TIMEOUT = 2
+    LOCK = threading.Lock()
+    ERRORS = {"mcp": 0, "qdrant": 0}
+
+    def probe_http(url, headers=None):
+        started = time.monotonic()
+        try:
+            request = Request(url, headers=headers or {})
+            with urlopen(request, timeout=TIMEOUT) as response:
+                body = response.read(1024 * 1024)
+                return 200 <= response.status < 300, body, time.monotonic() - started
+        except (HTTPError, URLError, OSError):
+            return False, b"", time.monotonic() - started
+
+    def parse_collection_health(payload):
+        try:
+            data = json.loads(payload)
+            result = data["result"]
+            return data["status"] == "ok" and result["status"] == "green" and result["optimizer_status"] == "ok"
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    def latest_snapshot_timestamp(payload):
+        try:
+            snapshots = json.loads(payload)["result"]
+            timestamps = []
+            for snapshot in snapshots:
+                created = snapshot["creation_time"].replace("Z", "+00:00")
+                timestamps.append(datetime.fromisoformat(created).astimezone(timezone.utc).timestamp())
+            return max(timestamps, default=0)
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def collect_metrics():
+        mcp_ok, _, mcp_duration = probe_http("http://mempalace:8765/healthz")
+        collection = quote(os.environ["QDRANT_COLLECTION"], safe="")
+        headers = {"api-key": os.environ["QDRANT_API_KEY"]}
+        ready, _, _ = probe_http("http://qdrant:6333/readyz")
+        collection_ok, collection_body, _ = probe_http("http://qdrant:6333/collections/" + collection, headers)
+        snapshot_ok, snapshot_body, _ = probe_http("http://qdrant:6333/collections/" + collection + "/snapshots", headers)
+        healthy = collection_ok and parse_collection_health(collection_body)
+        snapshot = latest_snapshot_timestamp(snapshot_body) if snapshot_ok else None
+        with LOCK:
+            if not mcp_ok:
+                ERRORS["mcp"] += 1
+            if not (ready and healthy and snapshot is not None):
+                ERRORS["qdrant"] += 1
+            return "\n".join((
+                "solidstats_memory_mcp_ready " + str(int(mcp_ok)),
+                "solidstats_memory_mcp_probe_duration_seconds " + str(mcp_duration),
+                "solidstats_memory_mcp_probe_errors_total " + str(ERRORS["mcp"]),
+                "solidstats_memory_qdrant_ready " + str(int(ready)),
+                "solidstats_memory_qdrant_collection_healthy " + str(int(healthy)),
+                "solidstats_memory_qdrant_probe_errors_total " + str(ERRORS["qdrant"]),
+                "solidstats_memory_qdrant_latest_snapshot_timestamp_seconds " + str(snapshot or 0),
+            )) + "\n"
+
+    class MetricsHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/healthz":
+                self.send_response(200); self.end_headers(); return
+            if self.path != "/metrics":
+                self.send_error(404); return
+            payload = collect_metrics().encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers(); self.wfile.write(payload)
+        def log_message(self, format, *args):
+            return
+
+    ThreadingHTTPServer(("0.0.0.0", 9108), MetricsHandler).serve_forever()
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: solidstats-memory-observer
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-observer
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: solidstats-memory-observer
+  ports:
+    - name: metrics
+      port: 9108
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: solidstats-memory-observer
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-observer
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: solidstats-memory-observer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: solidstats-memory-observer
+        app.kubernetes.io/part-of: solidstats-memory
+    spec:
+      serviceAccountName: solidstats-memory-observer
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: observer
+          image: MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/app/exporter.py"]
+          ports:
+            - name: metrics
+              containerPort: 9108
+          env:
+            - name: QDRANT_COLLECTION
+              value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: qdrant-runtime
+                  key: QDRANT_API_KEY
+          readinessProbe:
+            httpGet: {path: /healthz, port: metrics}
+          livenessProbe:
+            httpGet: {path: /healthz, port: metrics}
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 100m, memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - name: code
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: code
+          configMap:
+            name: solidstats-memory-observer
+            defaultMode: 0444

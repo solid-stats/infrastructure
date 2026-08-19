@@ -52,6 +52,9 @@ spec:
               app.kubernetes.io/name: mempalace
         - podSelector:
             matchLabels:
+              app.kubernetes.io/name: solidstats-memory-observer
+        - podSelector:
+            matchLabels:
               app.kubernetes.io/name: solidstats-memory-backup
       ports:
         - protocol: TCP
@@ -81,16 +84,14 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-prometheus-scrape
+  name: allow-prometheus-to-memory-observer
   namespace: solidstats-memory
   labels:
     app.kubernetes.io/part-of: solidstats-memory
 spec:
   podSelector:
-    matchExpressions:
-      - key: app.kubernetes.io/name
-        operator: In
-        values: [qdrant, mempalace]
+    matchLabels:
+      app.kubernetes.io/name: solidstats-memory-observer
   policyTypes: [Ingress]
   ingress:
     - from:
@@ -103,9 +104,44 @@ spec:
               app.kubernetes.io/component: server
       ports:
         - protocol: TCP
-          port: 6333
+          port: 9108
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-memory-observer-egress
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: solidstats-memory-observer
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mempalace
+      ports:
         - protocol: TCP
           port: 8765
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
