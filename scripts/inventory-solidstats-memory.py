@@ -329,7 +329,7 @@ if not args.check_only:
             raise RuntimeError('incomplete page')
         for index, (doc_id, document, metadata, embedding) in enumerate(zip(page.ids, page.documents, page.metadatas, page.embeddings, strict=True), offset + 1):
             print(json.dumps({'type':'record','index':index,'id':doc_id,'mempalace_id':doc_id,'point_id':_point_id(doc_id),'document':document,'metadata':metadata,'embedding':embedding}, separators=(',', ':'), sort_keys=True), flush=True)
-print(json.dumps({'type':'done','record_count':count}, separators=(',', ':'), flush=True)
+print(json.dumps({'type':'done','record_count':count}, separators=(',', ':')), flush=True)
 """
 
 

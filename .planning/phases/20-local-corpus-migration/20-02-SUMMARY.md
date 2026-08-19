@@ -14,7 +14,7 @@ affects: [20-03, 20-04, 20-05, 20-06, phase-21-cutover]
 actuals:
   tokens: 8117
   tasks: 2
-  commits: 6
+  commits: 7
 tech-stack:
   added: []
   patterns:
@@ -137,9 +137,19 @@ without expanding scope.
   derives the Qdrant mapping from the exact backend, and fails on protocol loss.
 - **Files modified:** `scripts/inventory-solidstats-memory.py`,
   `tests/test-solidstats-memory-migration.py`
-- **Verification:** 26 offline migration-policy and migration contract tests pass;
+- **Verification:** 27 offline migration-policy and migration contract tests pass;
   Python compilation and CLI help pass.
 - **Committed in:** `38aa055` (RED), `d2693d2` (GREEN)
+
+**4. [Rule 1 - Bug] Compiled the generated oracle subprocess program**
+
+- **Found during:** Post-plan migration gate review.
+- **Issue:** The generated v3.5.0 oracle program had an unclosed `print` call.
+- **Fix:** Closed the generated JSON-print expression and added a focused
+  compile-time regression test for the exact subprocess source.
+- **Files modified:** `scripts/inventory-solidstats-memory.py`,
+  `tests/test_inventory_solidstats_memory.py`
+- **Verification:** Generated program compilation and 27 offline tests pass.
 
 ## Known Stubs
 
