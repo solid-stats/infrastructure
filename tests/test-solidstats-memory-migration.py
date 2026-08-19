@@ -355,11 +355,12 @@ class InventoryContractTests(unittest.TestCase):
         )
         (oracle / "mempalace" / "backends" / "chroma.py").write_text(
             "class ChromaCollection:\n"
-            "    def get(self, *, limit=None, offset=None, include=None): pass\n",
+            "    def get(self, *, limit=None, offset=None, include=['embeddings']): pass\n",
             encoding="utf-8",
         )
         (oracle / "mempalace" / "backends" / "qdrant.py").write_text(
-            "def _point_id(doc_id): pass\n"
+            "import uuid\n"
+            "def _point_id(doc_id): return uuid.uuid5(uuid.NAMESPACE_URL, doc_id)\n"
             "class QdrantBackend:\n"
             "    def _remote_collection_name(self): pass\n",
             encoding="utf-8",
@@ -435,7 +436,16 @@ class InventoryContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             snapshot, oracle, output = self.write_snapshot(root)
-            self.oracle_python.write_text("#!/usr/bin/env python3\nprint('not-json')\n", encoding="utf-8")
+            self.oracle_python.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json\n"
+                "collection={'name':'synthetic-records','namespace':'solidstats','palace_id':'synthetic-palace','target_name':'x','embedder':{'model_name':'synthetic-v1','dimension':3},'source_metric':'cosine'}\n"
+                "print(json.dumps({'type':'header','record_count':2,'collection':collection}))\n"
+                "row={'type':'record','id':'source-1','mempalace_id':'source-1','point_id':'x','document':'synthetic alpha','metadata':{'archive_state':'active','room':'decisions','source_timestamp':'2026-08-20T00:00:00Z','wing':'SolidStats'},'embedding':[1.0]}\n"
+                "for index in (1, 2): row['index']=index; print(json.dumps(row))\n"
+                "print(json.dumps({'type':'done','record_count':2}))\n",
+                encoding="utf-8",
+            )
             self.oracle_python.chmod(self.oracle_python.stat().st_mode | stat.S_IXUSR)
             with self.assertRaisesRegex(ValueError, "record-[0-9]+-[0-9a-f]{64}"):
                 inventory.build_source_inventory(
@@ -533,6 +543,43 @@ class InventoryContractTests(unittest.TestCase):
                     oracle_python=self.oracle_python,
                     output_dir=output,
                     max_records=1,
+                )
+            self.assertFalse(output.exists())
+
+    def test_check_only_requires_raw_chroma_and_oracle_page_order(self) -> None:
+        inventory = load_inventory_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, oracle, output = self.write_snapshot(root)
+            (snapshot / "palace" / "chroma.sqlite3").unlink()
+            with self.assertRaisesRegex(ValueError, "unsafe snapshot component"):
+                inventory.build_source_inventory(
+                    snapshot_dir=snapshot,
+                    freeze_attestation=snapshot / "freeze-attestation.json",
+                    oracle_source_dir=oracle,
+                    oracle_python=self.oracle_python,
+                    output_dir=output,
+                    check_only=True,
+                )
+            self.assertFalse(output.exists())
+            (snapshot / "palace" / "chroma.sqlite3").write_bytes(b"synthetic raw Chroma state")
+            self.oracle_python.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json\n"
+                "collection={'name':'synthetic-records','namespace':'solidstats','palace_id':'synthetic-palace','target_name':'x','embedder':{'model_name':'synthetic-v1','dimension':3},'source_metric':'cosine'}\n"
+                "print(json.dumps({'type':'header','record_count':2,'collection':collection}))\n"
+                "for index in (1, 3): print(json.dumps({'type':'record','index':index,'id':str(index),'mempalace_id':str(index),'point_id':'x','document':'x','metadata':{'archive_state':'active','room':'decisions','source_timestamp':'2026-08-20T00:00:00Z','wing':'SolidStats'},'embedding':[1.0]}))\n"
+                "print(json.dumps({'type':'done','record_count':2}))\n",
+                encoding="utf-8",
+            )
+            self.oracle_python.chmod(self.oracle_python.stat().st_mode | stat.S_IXUSR)
+            with self.assertRaisesRegex(ValueError, "invalid oracle protocol"):
+                inventory.build_source_inventory(
+                    snapshot_dir=snapshot,
+                    freeze_attestation=snapshot / "freeze-attestation.json",
+                    oracle_source_dir=oracle,
+                    oracle_python=self.oracle_python,
+                    output_dir=output,
                 )
             self.assertFalse(output.exists())
 
