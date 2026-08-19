@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OBS_DIR = ROOT / "k8s" / "observability"
 PROMETHEUS_VALUES = OBS_DIR / "values" / "prometheus-values.yaml"
 PROMETHEUS_MANIFEST = OBS_DIR / "10-prometheus.yaml"
+MEMORY_BACKUP_MANIFEST = ROOT / "k8s" / "memory" / "40-backup.yaml"
 
 # Forbidden-token patterns (T-13-03: stored as variables, not comments).
 # These fire when a Secret document has a non-empty stringData/data value.
@@ -100,6 +101,45 @@ def _top_value(doc: str, key: str) -> str | None:
         if line.startswith(prefix) and (len(line) == len(prefix) or line[len(prefix)] in (" ", "\t")):
             return line.split(":", 1)[1].strip()
     return None
+
+
+def _metadata_name(doc: str) -> str | None:
+    """Return the top-level metadata.name from a YAML document split as text."""
+    in_metadata = False
+    for line in doc.splitlines():
+        if line == "metadata:":
+            in_metadata = True
+            continue
+        if in_metadata:
+            if line and not line.startswith(" "):
+                return None
+            if line.startswith("  name:"):
+                return line.split(":", 1)[1].strip()
+    return None
+
+
+def _memory_backup_cronjob_name() -> str:
+    """Extract the sole namespaced memory backup CronJob from its source manifest."""
+    cronjobs = [
+        _metadata_name(doc)
+        for doc in _split_documents(MEMORY_BACKUP_MANIFEST.read_text())
+        if _top_value(doc, "kind") == "CronJob"
+        and "namespace: solidstats-memory" in doc
+    ]
+    if len(cronjobs) != 1 or cronjobs[0] is None:
+        raise ValueError(
+            "k8s/memory/40-backup.yaml must define exactly one "
+            "solidstats-memory CronJob"
+        )
+    return cronjobs[0]
+
+
+def _snapshot_alert_expression(text: str) -> str | None:
+    match = re.search(
+        r"- alert: SolidStatsMemorySnapshotMissingOrStale\s*\n\s+expr:\s*(.+)\n\s+for:",
+        text,
+    )
+    return match.group(1).strip() if match else None
 
 
 def _check_no_secret_values(doc: str, path: Path) -> list[str]:
@@ -269,6 +309,11 @@ def _check_memory_monitoring_contract() -> list[str]:
     values_text = PROMETHEUS_VALUES.read_text()
     manifest_text = PROMETHEUS_MANIFEST.read_text()
     policy_text = (OBS_DIR / "95-netpol-monitoring.yaml").read_text()
+    try:
+        backup_cronjob = _memory_backup_cronjob_name()
+    except ValueError as error:
+        errors.append(str(error))
+        return errors
     markers = (
         "solidstats-memory-observer",
         "kubernetes-nodes-volume-stats",
@@ -283,6 +328,26 @@ def _check_memory_monitoring_contract() -> list[str]:
             errors.append(f"memory Prometheus source/render is missing: {marker}")
     if "solidstats-memory-observer" not in policy_text or "port: 9108" not in policy_text:
         errors.append("monitoring NetworkPolicy lacks observer-only TCP 9108 egress")
+
+    values_expression = _snapshot_alert_expression(values_text)
+    rendered_expression = _snapshot_alert_expression(manifest_text)
+    expected_expression = (
+        'kube_cronjob_spec_suspend{namespace="solidstats-memory",'
+        f'cronjob="{backup_cronjob}"}} == 0 and '
+        "solidstats_memory:qdrant_snapshot_age_seconds:max > 93600"
+    )
+    if values_expression != expected_expression:
+        errors.append(
+            "k8s/observability/values/prometheus-values.yaml: snapshot alert "
+            "must select the sole memory backup CronJob"
+        )
+    if rendered_expression != expected_expression:
+        errors.append(
+            "k8s/observability/10-prometheus.yaml: snapshot alert must select "
+            "the sole memory backup CronJob"
+        )
+    if values_expression != rendered_expression:
+        errors.append("memory snapshot alert source/render expressions differ")
     return errors
 
 

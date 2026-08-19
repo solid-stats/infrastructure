@@ -114,9 +114,65 @@ def require_network_contract(docs: dict[str, str], source_has_placeholders: bool
         "NetworkPolicy/allow-backup-upload-egress",
         "NetworkPolicy/allow-prometheus-to-memory-observer",
         "NetworkPolicy/allow-memory-observer-egress",
+        "NetworkPolicy/allow-memory-observer-to-mempalace",
         "NetworkPolicy/allow-host-nginx-to-mcp",
     }
     require(required <= policies, f"network policies missing: {sorted(required - policies)}")
+
+    observer_ingress = docs["NetworkPolicy/allow-memory-observer-to-mempalace"]
+    expected_observer_ingress = """spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mempalace
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: solidstats-memory-observer
+      ports:
+        - protocol: TCP
+          port: 8765"""
+    require(
+        observer_ingress.split("spec:\n", 1)[-1].strip() == expected_observer_ingress.split("spec:\n", 1)[-1].strip(),
+        "observer-to-MemPalace ingress must be one exact same-namespace TCP 8765 policy",
+    )
+
+    observer_egress = docs["NetworkPolicy/allow-memory-observer-egress"]
+    expected_observer_egress = """spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: solidstats-memory-observer
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mempalace
+      ports:
+        - protocol: TCP
+          port: 8765
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333"""
+    require(
+        observer_egress.split("spec:\n", 1)[-1].strip() == expected_observer_egress.split("spec:\n", 1)[-1].strip(),
+        "observer egress must retain only its DNS, MemPalace TCP 8765, and Qdrant TCP 6333 paths",
+    )
+
     host_policy = docs["NetworkPolicy/allow-host-nginx-to-mcp"]
     backup_policy = docs["NetworkPolicy/allow-backup-upload-egress"]
     if source_has_placeholders:

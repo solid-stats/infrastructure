@@ -173,6 +173,73 @@ class SshTunnelLifecycleContractTests(unittest.TestCase):
 
 
 class MemoryObserverContractTests(unittest.TestCase):
+    @staticmethod
+    def memory_network_policies() -> dict[str, dict[str, object]]:
+        documents = yaml.safe_load_all((ROOT / "k8s/memory/30-network-policy.yaml").read_text())
+        return {
+            document["metadata"]["name"]: document
+            for document in documents
+            if document and document["kind"] == "NetworkPolicy"
+        }
+
+    @staticmethod
+    def assert_observer_mempalace_ingress(policy: dict[str, object]) -> None:
+        expected_spec = {
+            "podSelector": {
+                "matchLabels": {"app.kubernetes.io/name": "mempalace"},
+            },
+            "policyTypes": ["Ingress"],
+            "ingress": [{
+                "from": [{
+                    "podSelector": {
+                        "matchLabels": {
+                            "app.kubernetes.io/name": "solidstats-memory-observer",
+                        },
+                    },
+                }],
+                "ports": [{"protocol": "TCP", "port": 8765}],
+            }],
+        }
+        assert policy["spec"] == expected_spec
+
+    def test_observer_mempalace_policy_is_exact_and_reciprocal(self) -> None:
+        policies = self.memory_network_policies()
+        ingress = policies["allow-memory-observer-to-mempalace"]
+        self.assert_observer_mempalace_ingress(ingress)
+
+        egress = policies["allow-memory-observer-egress"]["spec"]
+        expected_tuple = {
+            "to": [{
+                "podSelector": {
+                    "matchLabels": {"app.kubernetes.io/name": "mempalace"},
+                },
+            }],
+            "ports": [{"protocol": "TCP", "port": 8765}],
+        }
+        self.assertIn(expected_tuple, egress["egress"])
+
+    def test_observer_mempalace_policy_rejects_broad_or_drifting_shapes(self) -> None:
+        policies = self.memory_network_policies()
+        ingress = policies.get("allow-memory-observer-to-mempalace")
+        if ingress is None:
+            self.fail("observer-to-MemPalace ingress policy is absent")
+
+        mutations = (
+            lambda policy: policy["spec"].update({"podSelector": {}}),
+            lambda policy: policy["spec"]["ingress"][0]["from"][0].update({"namespaceSelector": {}}),
+            lambda policy: policy["spec"]["ingress"][0]["from"][0].update({"ipBlock": {"cidr": "10.0.0.0/8"}}),
+            lambda policy: policy["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"].update({"app.kubernetes.io/name": "other"}),
+            lambda policy: policy["spec"]["ingress"][0]["ports"].append({"protocol": "TCP", "port": 9999}),
+            lambda policy: policy["spec"].update({"policyTypes": ["Egress"]}),
+            lambda policy: policy["spec"]["ingress"][0]["from"].append({"podSelector": {"matchLabels": {"app": "extra"}}}),
+        )
+        for mutate in mutations:
+            candidate = yaml.safe_load(yaml.safe_dump(ingress))
+            mutate(candidate)
+            with self.subTest(mutate=mutate):
+                with self.assertRaises(AssertionError):
+                    self.assert_observer_mempalace_ingress(candidate)
+
     def load_observer(self) -> dict[str, object]:
         documents = list(yaml.safe_load_all((ROOT / "k8s/memory/50-monitoring.yaml").read_text()))
         config = next(doc for doc in documents if doc["kind"] == "ConfigMap")
@@ -244,6 +311,78 @@ class MemoryObserverContractTests(unittest.TestCase):
 
 
 class PrometheusMemoryContractTests(unittest.TestCase):
+    @staticmethod
+    def backup_cronjob_name(documents: list[dict[str, object]]) -> str:
+        cronjobs = [
+            document
+            for document in documents
+            if document
+            and document.get("kind") == "CronJob"
+            and document.get("metadata", {}).get("namespace") == "solidstats-memory"
+        ]
+        if len(cronjobs) != 1:
+            raise AssertionError("expected exactly one SolidStats memory backup CronJob")
+        return cronjobs[0]["metadata"]["name"]
+
+    @staticmethod
+    def snapshot_alert_expression(text: str) -> str:
+        document = next(
+            document
+            for document in yaml.safe_load_all(text)
+            if document and document.get("kind") == "ConfigMap" and document["metadata"]["name"] == "prometheus-server"
+        )
+        rules = yaml.safe_load(document["data"]["rules"])
+        alert = next(
+            rule
+            for group in rules["groups"]
+            for rule in group["rules"]
+            if rule.get("alert") == "SolidStatsMemorySnapshotMissingOrStale"
+        )
+        return alert["expr"]
+
+    @staticmethod
+    def snapshot_alert_expression_from_values(text: str) -> str:
+        values = yaml.safe_load(text)
+        rules = values["serverFiles"]["alerting_rules.yml"]
+        alert = next(
+            rule
+            for group in rules["groups"]
+            for rule in group["rules"]
+            if rule.get("alert") == "SolidStatsMemorySnapshotMissingOrStale"
+        )
+        return alert["expr"]
+
+    def test_snapshot_gate_tracks_backup_cronjob_manifest(self) -> None:
+        backup_documents = list(yaml.safe_load_all((ROOT / "k8s/memory/40-backup.yaml").read_text()))
+        cronjob_name = self.backup_cronjob_name(backup_documents)
+        expected = (
+            'kube_cronjob_spec_suspend{namespace="solidstats-memory",'
+            f'cronjob="{cronjob_name}"}} == 0 and '
+            "solidstats_memory:qdrant_snapshot_age_seconds:max > 93600"
+        )
+        values = (ROOT / "k8s/observability/values/prometheus-values.yaml").read_text()
+        rendered = (ROOT / "k8s/observability/10-prometheus.yaml").read_text()
+        self.assertEqual(self.snapshot_alert_expression_from_values(values), expected)
+        self.assertEqual(self.snapshot_alert_expression(rendered), expected)
+
+    def test_snapshot_gate_rejects_missing_duplicate_and_drifting_cronjobs(self) -> None:
+        backup_documents = list(yaml.safe_load_all((ROOT / "k8s/memory/40-backup.yaml").read_text()))
+        with self.assertRaises(AssertionError):
+            self.backup_cronjob_name([])
+        with self.assertRaises(AssertionError):
+            self.backup_cronjob_name(backup_documents + backup_documents)
+
+        cronjob_name = self.backup_cronjob_name(backup_documents)
+        expected_selector = f'cronjob="{cronjob_name}"'
+        values = (ROOT / "k8s/observability/values/prometheus-values.yaml").read_text()
+        rendered = (ROOT / "k8s/observability/10-prometheus.yaml").read_text()
+        self.assertIn(expected_selector, self.snapshot_alert_expression_from_values(values))
+        self.assertIn(expected_selector, self.snapshot_alert_expression(rendered))
+        self.assertNotEqual(
+            self.snapshot_alert_expression_from_values(values),
+            self.snapshot_alert_expression(rendered).replace(expected_selector, 'cronjob="drift"'),
+        )
+
     def test_values_and_rendered_config_consume_all_memory_signals(self) -> None:
         values = (ROOT / "k8s/observability/values/prometheus-values.yaml").read_text()
         rendered = (ROOT / "k8s/observability/10-prometheus.yaml").read_text()
@@ -265,7 +404,7 @@ class PrometheusMemoryContractTests(unittest.TestCase):
             self.assertIn("bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token", text)
             self.assertIn('namespace="solidstats-memory"', text)
             self.assertIn('persistentvolumeclaim=~"mempalace-data|qdrant-data-qdrant-0"', text)
-            self.assertIn('kube_cronjob_spec_suspend{namespace="solidstats-memory",cronjob="qdrant-snapshot"} == 0', text)
+            self.assertIn('kube_cronjob_spec_suspend{namespace="solidstats-memory",cronjob="solidstats-memory-backup"} == 0', text)
             for name in recording_rules + alerts:
                 self.assertIn(name, text)
         workflow = WORKFLOW.read_text()

@@ -133,7 +133,7 @@ data:
         expr: solidstats_memory:qdrant_collection_healthy:max == 0
         for: 5m
       - alert: SolidStatsMemorySnapshotMissingOrStale
-        expr: kube_cronjob_spec_suspend{namespace="solidstats-memory",cronjob="qdrant-snapshot"} == 0 and solidstats_memory:qdrant_snapshot_age_seconds:max > 93600
+        expr: kube_cronjob_spec_suspend{namespace="solidstats-memory",cronjob="solidstats-memory-backup"} == 0 and solidstats_memory:qdrant_snapshot_age_seconds:max > 93600
         for: 15m
       - alert: SolidStatsMemoryPVCCapacityHigh
         expr: solidstats_memory:pvc_capacity_ratio:max > 0.85
