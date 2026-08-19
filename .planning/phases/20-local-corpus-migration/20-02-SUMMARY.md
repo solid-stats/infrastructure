@@ -14,7 +14,7 @@ affects: [20-03, 20-04, 20-05, 20-06, phase-21-cutover]
 actuals:
   tokens: 8117
   tasks: 2
-  commits: 4
+  commits: 6
 tech-stack:
   added: []
   patterns:
@@ -121,10 +121,25 @@ test loader**
 - **Verification:** Full offline suite passed.
 - **Committed in:** `c330cc7`
 
-**Total deviations:** 2 auto-fixed bugs
+**Total deviations:** 3 auto-fixed bugs
 
 **Impact on plan:** Both fixes preserve bounded, offline fail-closed behavior
 without expanding scope.
+
+**3. [Rule 1 - Bug] Replaced the synthetic collection file as the inventory source**
+
+- **Found during:** Post-plan migration gate review.
+- **Issue:** The inventory accepted only a preassembled `chroma-collection.json`,
+  so it did not prove extraction from a complete frozen Chroma palace.
+- **Fix:** Required raw `palace/chroma.sqlite3` plus manifest, identity,
+  configuration, and embedder sidecars. The new isolated v3.5.0 oracle
+  process uses `ChromaCollection.get` with `limit`, `offset`, and embeddings,
+  derives the Qdrant mapping from the exact backend, and fails on protocol loss.
+- **Files modified:** `scripts/inventory-solidstats-memory.py`,
+  `tests/test-solidstats-memory-migration.py`
+- **Verification:** 26 offline migration-policy and migration contract tests pass;
+  Python compilation and CLI help pass.
+- **Committed in:** `38aa055` (RED), `d2693d2` (GREEN)
 
 ## Known Stubs
 
