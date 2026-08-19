@@ -120,6 +120,15 @@ operator-gated deployment, backup, monitoring, and HTTPS MCP edge artifacts.**
    - **Files modified:** `k8s/memory/30-network-policy.yaml`
    - **Commit:** `7c9d118`
 
+4. **[Rule 1 - Bug] Made the Qdrant governing Service headless**
+   - **Found during:** Kubernetes compliance pass
+   - **Issue:** The Qdrant StatefulSet pointed at a normal ClusterIP Service,
+     which does not provide StatefulSet pod identities.
+   - **Fix:** Set `clusterIP: None` and added a matching validator assertion.
+   - **Files modified:** `k8s/memory/10-qdrant.yaml`,
+     `scripts/validate-memory-manifests.py`
+   - **Commit:** `8a78515`
+
 ## Known Stubs
 
 The following placeholders are intentional fail-closed operator gates and do
