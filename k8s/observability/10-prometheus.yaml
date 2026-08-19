@@ -32,6 +32,25 @@ data:
       static_configs:
       - targets:
         - kube-state-metrics.monitoring.svc:8080
+    - job_name: kubernetes-nodes-cadvisor
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      kubernetes_sd_configs:
+      - role: node
+      metrics_path: /metrics/cadvisor
+      relabel_configs:
+      - replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+        source_labels:
+        - __meta_kubernetes_node_name
+        target_label: __metrics_path__
+      - replacement: kubernetes.default.svc:443
+        target_label: __address__
+      - source_labels:
+        - __meta_kubernetes_node_name
+        target_label: node
+      scheme: https
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: false
     - job_name: loki
       static_configs:
       - targets:

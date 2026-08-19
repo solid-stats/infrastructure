@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # scripts/validate-phase-13.sh
-# Phase 13 live assertion harness — covers MET-01..06.
+# Phase 13 live assertion harness — covers MET-01..06 and CAD-01.
 # Exits 1 on first failure.
 #
 # Run after all Phase 13 obs manifests have been applied to the cluster
@@ -133,6 +133,25 @@ check_target_health "postgres-exporter" "MET-03: postgres-exporter"
 
 # MET-04: rabbitmq native plugin
 check_target_health "rabbitmq" "MET-04: rabbitmq"
+
+# CAD-01: kubelet cAdvisor target and a container series with workload labels.
+check_target_health "kubernetes-nodes-cadvisor" "CAD-01: kubelet cAdvisor"
+
+cadvisor_result="$(kubectl -n "${namespace}" exec deploy/prometheus-server -- \
+  wget -qO- 'http://localhost:9090/api/v1/query?query=container_cpu_usage_seconds_total%7Bcontainer%21%3D%22%22%2Cnamespace%21%3D%22%22%2Cpod%21%3D%22%22%7D' 2>/dev/null || true)"
+
+cadvisor_has_labeled_series="$(echo "$cadvisor_result" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+results = data.get('data', {}).get('result', [])
+has_labels = any(
+    all(result.get('metric', {}).get(label) for label in ('namespace', 'pod', 'container'))
+    for result in results
+)
+print('present' if has_labels else 'absent')
+" 2>/dev/null || echo "parse_error")"
+
+assert "CAD-01: labeled container_cpu_usage_seconds_total series" "$cadvisor_has_labeled_series" "present"
 
 # ---------------------------------------------------------------------------
 # MET-03: pg_up == 1 (postgres-exporter actually connected to DB)

@@ -19,6 +19,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OBS_DIR = ROOT / "k8s" / "observability"
+PROMETHEUS_VALUES = OBS_DIR / "values" / "prometheus-values.yaml"
+PROMETHEUS_MANIFEST = OBS_DIR / "10-prometheus.yaml"
 
 # Forbidden-token patterns (T-13-03: stored as variables, not comments).
 # These fire when a Secret document has a non-empty stringData/data value.
@@ -226,6 +228,41 @@ def _check_priority_class(doc: str, path: Path) -> list[str]:
     return errors
 
 
+def _check_cadvisor_scrape_config() -> list[str]:
+    """Require the committed Prometheus inputs and render to retain cAdvisor scraping."""
+    errors = []
+    values_text = PROMETHEUS_VALUES.read_text()
+    manifest_text = PROMETHEUS_MANIFEST.read_text()
+
+    if not re.search(
+        r"kubernetes-nodes-cadvisor:\s*\n\s+enabled:\s*true\b", values_text
+    ):
+        errors.append(
+            "k8s/observability/values/prometheus-values.yaml: "
+            "kubernetes-nodes-cadvisor must be enabled"
+        )
+
+    job_start = manifest_text.find("    - job_name: kubernetes-nodes-cadvisor\n")
+    cadvisor_job = ""
+    if job_start != -1:
+        job_end = manifest_text.find("\n    - job_name:", job_start + 1)
+        cadvisor_job = manifest_text[job_start:job_end if job_end != -1 else None]
+    required_markers = (
+        "bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token",
+        "kubernetes_sd_configs:\n      - role: node",
+        "replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor",
+        "replacement: kubernetes.default.svc:443",
+        "ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+    )
+    if job_start == -1 or any(marker not in cadvisor_job for marker in required_markers):
+        errors.append(
+            "k8s/observability/10-prometheus.yaml: rendered Prometheus config must "
+            "scrape cAdvisor through the authenticated Kubernetes API proxy"
+        )
+
+    return errors
+
+
 def validate() -> int:
     if not OBS_DIR.is_dir():
         print(f"note: {OBS_DIR.relative_to(ROOT)} does not exist yet — no manifests to validate")
@@ -249,6 +286,8 @@ def validate() -> int:
             all_errors.extend(_check_no_secret_values(doc, yaml_path))
             all_errors.extend(_check_namespace(doc, yaml_path))
             all_errors.extend(_check_priority_class(doc, yaml_path))
+
+    all_errors.extend(_check_cadvisor_scrape_config())
 
     if all_errors:
         for err in all_errors:
