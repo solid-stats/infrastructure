@@ -33,6 +33,21 @@
     "sources"
   ],
   "migration_mode": "local-build-and-validation-transform-blocked",
+  "bundle_contract": {
+    "required_artifacts": [
+      "source-inventory.json",
+      "transform-manifest.json",
+      "parity-report.json"
+    ],
+    "required_manifest_fields": [
+      "write_freeze_at",
+      "source_snapshot_checksum",
+      "source_inventory_reference",
+      "transform_manifest_reference",
+      "parity_report_reference"
+    ],
+    "synthetic_parity_is_non_production": true
+  },
   "delete_legacy_requires_exact_ids": true,
   "archive_distillation": {
     "stage": "post-cutover",
