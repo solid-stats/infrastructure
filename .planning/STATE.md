@@ -2,17 +2,22 @@
 gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: SolidStats Memory Isolation
-status: Planned
-stopped_at: Phase 19 planned; implementation awaits operator gates
-last_updated: "2026-08-20T00:00:00+07:00"
-last_activity: 2026-08-20 — v4.0 migration planning created
+current_phase: 20
+current_phase_name: Local Corpus Migration
+status: planning
+stopped_at: Phase 19 complete; Phase 20 evidence review is next
+last_updated: "2026-08-19T21:43:16.654Z"
+last_activity: 2026-08-20
+last_activity_desc: Phase 19 complete, transitioned to Phase 20
 progress:
   total_phases: 4
-  completed_phases: 0
-  total_plans: 2
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 6
+  completed_plans: 6
+  percent: 25
 ---
+
+<!-- markdownlint-disable MD013 MD033 -->
 
 # Project State
 
@@ -21,20 +26,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** v4.0 milestone — isolated SolidStats memory foundation
+**Current focus:** v4.0 milestone — local SolidStats corpus migration
 
 ## Current Position
 
-Phase: 19 — SolidStats Memory Foundation
-Plan: 19-01 and 19-02 planned
-Status: Ready for repository-local execution after operator gates
-Last activity: 2026-08-20 — v4.0 migration planning created
+Phase: 20 — Local Corpus Migration
+Plan: Not started
+Status: Ready for evidence review and planning
+Last activity: 2026-08-20 — Phase 19 complete, transitioned to Phase 20
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 8 (this milestone)
+- Total plans completed: 14 (this milestone)
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -45,6 +50,7 @@ Last activity: 2026-08-20 — v4.0 migration planning created
 | 07 | 4 | - | - |
 | 08 | 3 | - | - |
 | 09 | 1 | - | - |
+| 19 | 6 | - | - |
 
 **Recent Trend:**
 

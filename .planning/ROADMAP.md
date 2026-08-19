@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD013 MD033 -->
+
 # Roadmap: Solid Stats Infrastructure
 
 ## Milestones
@@ -46,6 +48,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 21: Restore, Cutover & Recovery** - Backups restore in isolation;
   the operator performs a reversible cutover with recovery evidence.
+
 - [ ] **Phase 22: Archive Distillation** - Read-only extraction agents produce
   candidates from bounded archive shards; the curator verifies and promotes
   only current durable conclusions.
@@ -374,7 +377,7 @@ verification.
 namespace/runtime/storage/network/backup/monitoring/CD boundary.
 **Depends on:** Phase 18
 **Requirements:** ISO-01..04, RUN-01..05, MIG-03..07, OPS-01, OPS-04
-**Plans:** 3 planned
+**Plans:** 6/6 plans complete
 
 #### Phase 20: Local Corpus Migration
 
@@ -429,7 +432,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 16. Error Tracking (GlitchTip) | v3.0 | 5/5 | Complete | 2026-06-14 |
 | 17. Network Isolation & Stack Validation | v3.0 | 3/3 | Complete | 2026-06-14 |
 | 18. App-side Error SDK | v3.0 | 1/1 | Complete | 2026-06-14 |
-| 19. SolidStats Memory Foundation | v4.0 | 0/2 | Planned | |
+| 19. SolidStats Memory Foundation | v4.0 | 6/6 | Complete | 2026-08-20 |
 | 20. Local Corpus Migration | v4.0 | 0/TBD | Blocked on evidence | |
 | 21. Restore, Cutover & Recovery | v4.0 | 0/TBD | Blocked on Phase 20 | |
 | 22. Archive Distillation | v4.0 | 0/TBD | Blocked on Phase 21 | |
