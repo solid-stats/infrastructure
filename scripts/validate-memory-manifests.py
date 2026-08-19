@@ -23,6 +23,9 @@ EXPECTED = {
     "50-monitoring.yaml",
 }
 PLACEHOLDER_RE = re.compile(r"MEMORY_OPERATOR_[A-Z0-9_]+")
+IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$")
+SIZE_RE = re.compile(r"^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei)$")
+COLLECTION_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
 QDRANT_IMAGE = (
     "ghcr.io/qdrant/qdrant:v1.19.0-unprivileged@"
     "sha256:18a245d16eb663d4f6ad054123371243248d8256a8067f352cd6e88d512fee0b"
@@ -203,6 +206,80 @@ def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
     require("automountServiceAccountToken: false" in deployment and "port: 9108" in docs["Service/solidstats-memory-observer"], "observer boundary is incomplete")
 
 
+def require_operator_placeholder_positions(docs: dict[str, str]) -> list[str]:
+    """Keep each evidence gate in its owning field, never in comments."""
+    expected = {
+        "StatefulSet/qdrant": ["storage: MEMORY_OPERATOR_MEASURED_QDRANT_PVC_SIZE"],
+        "PersistentVolumeClaim/mempalace-data": ["storage: MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE"],
+        "Deployment/mempalace": ["image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST"],
+        "CronJob/solidstats-memory-backup": [
+            "image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST",
+            "value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
+        ],
+        "Deployment/solidstats-memory-observer": [
+            "image: MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST",
+            "value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
+        ],
+        "NetworkPolicy/allow-backup-upload-egress": ["cidr: MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR"],
+        "NetworkPolicy/allow-host-nginx-to-mcp": ["cidr: MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR"],
+    }
+    for resource, entries in expected.items():
+        for entry in entries:
+            require(docs[resource].count(entry) == 1, f"operator placeholders must retain expected field: {resource} {entry}")
+    all_markers = PLACEHOLDER_RE.findall("\n".join(docs.values()))
+    expected_markers = {
+        "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST",
+        "MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST",
+        "MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST",
+        "MEMORY_OPERATOR_MEASURED_QDRANT_PVC_SIZE",
+        "MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE",
+        "MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR",
+        "MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR",
+        "MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
+    }
+    require(set(all_markers) == expected_markers, "operator placeholders differ from the eight evidence gates")
+    require(len(all_markers) == 9, "operator placeholders are missing, duplicated, or misplaced")
+    return sorted(set(all_markers))
+
+
+def require_resolved_value_shapes(docs: dict[str, str]) -> None:
+    for resource in ("StatefulSet/qdrant", "Deployment/mempalace", "Deployment/solidstats-memory-observer", "CronJob/solidstats-memory-backup"):
+        image = field(docs[resource], r"^\s+image:\s*(.+)$")
+        require(image is not None and IMAGE_RE.fullmatch(image) is not None, f"{resource} image must be an immutable digest")
+    for resource in ("StatefulSet/qdrant", "PersistentVolumeClaim/mempalace-data"):
+        size = field(docs[resource], r"^\s*storage:\s*(.+)$")
+        require(size is not None and SIZE_RE.fullmatch(size) is not None, f"{resource} storage must be a positive Kubernetes quantity")
+    collection_values = []
+    for resource in ("CronJob/solidstats-memory-backup", "Deployment/solidstats-memory-observer"):
+        value = field(docs[resource], r"- name: QDRANT_COLLECTION\n\s+value:\s*(.+)$")
+        require(value is not None and COLLECTION_RE.fullmatch(value) is not None, f"{resource} collection must be lowercase")
+        collection_values.append(value)
+    require(collection_values[0] == collection_values[1], "backup and observer collection names must match")
+
+
+def require_checked_in_staging_config(docs: dict[str, str]) -> None:
+    backup = docs["CronJob/solidstats-memory-backup"]
+    require("name: S3_ENDPOINT\n                  value: https://s3.twcstorage.ru" in backup, "backup endpoint must be checked in")
+    require("name: S3_PREFIX\n                  value: backups/solidstats-memory/" in backup, "backup prefix must be checked in")
+    require('"s3://${S3_BUCKET}/${S3_PREFIX}${backup_id}/"' in backup, "backup upload path is incorrect")
+    require("key: S3_ENDPOINT" not in backup and "key: S3_PREFIX" not in backup, "backup endpoint or prefix must not be secret-backed")
+
+
+def require_deploy_input_contract() -> None:
+    workflow = WORKFLOW.read_text()
+    secret_renderer = (ROOT / "scripts" / "render-memory-secrets.py").read_text()
+    require(not re.search(r"vars\.MEMORY_", workflow), "memory workflow must not use GitHub Environment variables")
+    require("MEMORY_BACKUP_S3_" not in workflow and "MEMORY_BACKUP_S3_" not in secret_renderer, "obsolete memory backup aliases remain")
+    for name in ("S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"):
+        require(f"secrets.{name}" in workflow and f'required("{name}")' in secret_renderer, f"S3 secret contract missing: {name}")
+    names = set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow))
+    established = {"DEPLOY_SSH_PRIVATE_KEY", "DEPLOY_SSH_KNOWN_HOSTS", "DEPLOY_SSH_HOST", "DEPLOY_SSH_USER", "K8S_CA_CERT", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"}
+    require(names - established == {"K8S_MEMORY_TOKEN", "MEMORY_QDRANT_API_KEY", "MEMORY_MCP_HTTP_TOKEN"}, "memory-specific secret inventory changed")
+    identity = workflow.index("auth whoami")
+    for mutation in ("--dry-run=server", "apply --server-side"):
+        require(identity < workflow.index(mutation), "memory identity check must precede mutation")
+
+
 def require_rbac_and_workflow_contract(docs: dict[str, str]) -> None:
     role = docs["Role/memory-ci-deployer"]
     binding = docs["RoleBinding/memory-ci-deployer"]
@@ -213,13 +290,14 @@ def require_rbac_and_workflow_contract(docs: dict[str, str]) -> None:
         "K8S_NAMESPACE: solidstats-memory",
         "infrastructure-memory-deploy-${{ github.ref }}",
         "validate-memory-manifests.py --allow-operator-placeholders",
-        "render-memory-manifests.py --output-dir rendered-memory",
+        "render-memory-manifests.py rendered-memory",
         "validate-memory-manifests.py --manifest-dir rendered-memory",
         "00-namespace.yaml and 01-ci-rbac.yaml are operator bootstrap",
     ):
         require(expected in workflow, f"memory workflow is missing: {expected}")
     for forbidden in ("secrets.K8S_TOKEN", "K8S_OBS_TOKEN", "K8S_OBS_ET_TOKEN", "ci-k3s-staging", "obs-k3s-staging", "obs-et-k3s-staging"):
         require(forbidden not in workflow, f"memory workflow references a foreign identity: {forbidden}")
+    require_deploy_input_contract()
 
 
 def require_no_secret_values(manifest_dir: Path) -> None:
@@ -240,8 +318,13 @@ def main() -> None:
     require_workload_safety(docs)
     require_network_contract(docs, bool(placeholders))
     require_backup_monitoring_contract(docs)
+    require_checked_in_staging_config(docs)
     require_rbac_and_workflow_contract(docs)
     require_no_secret_values(args.manifest_dir)
+    if placeholders:
+        placeholders = require_operator_placeholder_positions(docs)
+    else:
+        require_resolved_value_shapes(docs)
     if placeholders and not args.allow_operator_placeholders:
         raise ValidationError(f"unresolved operator placeholders: {', '.join(placeholders)}")
     print(f"validated {args.manifest_dir} ({len(docs)} resources)")

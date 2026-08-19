@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -165,6 +167,101 @@ class MemoryDeployWorkflowContractTests(unittest.TestCase):
         self.assertNotIn("exit 1", self.workflow)
         for forbidden in ("secrets.K8S_TOKEN", "K8S_OBS_TOKEN", "ci-k3s-staging", "obs-k3s-staging"):
             self.assertNotIn(forbidden, self.workflow)
+
+    def test_uses_direct_s3_secrets_without_memory_variables_or_aliases(self) -> None:
+        self.assertNotRegex(self.workflow, r"vars\.MEMORY_")
+        self.assertNotRegex(self.workflow, r"secrets\.MEMORY_BACKUP_S3_")
+        for name in ("S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"):
+            self.assertIn(f"secrets.{name}", self.workflow)
+        secret_names = set(re.findall(r"secrets\.([A-Z0-9_]+)", self.workflow))
+        established = {"DEPLOY_SSH_PRIVATE_KEY", "DEPLOY_SSH_KNOWN_HOSTS", "DEPLOY_SSH_HOST", "DEPLOY_SSH_USER", "K8S_CA_CERT"}
+        self.assertEqual(secret_names - established - {"S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"}, {"K8S_MEMORY_TOKEN", "MEMORY_QDRANT_API_KEY", "MEMORY_MCP_HTTP_TOKEN"})
+
+
+class MemoryValidatorContractTests(unittest.TestCase):
+    """Validation must reject configuration drift before a cluster mutation."""
+
+    def copied_manifests(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
+        directory = tempfile.TemporaryDirectory()
+        target = Path(directory.name) / "memory"
+        shutil.copytree(ROOT / "k8s" / "memory", target)
+        return directory, target
+
+    def validate(self, manifest_dir: Path, placeholders: bool = False) -> subprocess.CompletedProcess[str]:
+        command = ["python3", str(VALIDATOR), "--manifest-dir", str(manifest_dir)]
+        if placeholders:
+            command.append("--allow-operator-placeholders")
+        return subprocess.run(command, env=synthetic_environment(), text=True, capture_output=True, check=False, timeout=10)
+
+    def test_source_mode_requires_exact_marker_locations(self) -> None:
+        temporary, manifest_dir = self.copied_manifests()
+        self.addCleanup(temporary.cleanup)
+        backup = manifest_dir / "40-backup.yaml"
+        backup.write_text(backup.read_text().replace("MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME", "missing-operator-marker", 1))
+        result = self.validate(manifest_dir, placeholders=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("operator placeholders", result.stderr)
+
+    def test_source_mode_rejects_secret_backed_endpoint_or_prefix(self) -> None:
+        temporary, manifest_dir = self.copied_manifests()
+        self.addCleanup(temporary.cleanup)
+        backup = manifest_dir / "40-backup.yaml"
+        backup.write_text(
+            backup.read_text().replace(
+                "name: S3_ENDPOINT\n                  value: https://s3.twcstorage.ru",
+                "name: S3_ENDPOINT\n                  valueFrom:\n                    secretKeyRef:\n                      name: memory-backup-runtime\n                      key: S3_ENDPOINT",
+            )
+        )
+        result = self.validate(manifest_dir, placeholders=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("endpoint", result.stderr)
+
+    def test_strict_mode_rejects_markers_and_malformed_resolved_values(self) -> None:
+        source_result = self.validate(ROOT / "k8s" / "memory")
+        self.assertNotEqual(source_result.returncode, 0)
+        self.assertIn("unresolved operator", source_result.stderr)
+
+        temporary, manifest_dir = self.copied_manifests()
+        self.addCleanup(temporary.cleanup)
+        replacements = {
+            "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST": "example.invalid/mempalace:mutable",
+            "MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST": "example.invalid/observer:mutable",
+            "MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST": "example.invalid/backup:mutable",
+            "MEMORY_OPERATOR_MEASURED_QDRANT_PVC_SIZE": "0Gi",
+            "MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE": "not-a-size",
+            "MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR": "not-a-cidr",
+            "MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR": "also-not-a-cidr",
+            "MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME": "Invalid_Collection",
+        }
+        for path in manifest_dir.glob("*.yaml"):
+            text = path.read_text()
+            for marker, value in replacements.items():
+                text = text.replace(marker, value)
+            path.write_text(text)
+        result = self.validate(manifest_dir)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertRegex(result.stderr, r"immutable|storage|CIDR|collection")
+
+    def test_strict_mode_accepts_only_well_formed_resolved_values(self) -> None:
+        temporary, manifest_dir = self.copied_manifests()
+        self.addCleanup(temporary.cleanup)
+        replacements = {
+            "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST": "example.invalid/mempalace@sha256:" + "a" * 64,
+            "MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST": "example.invalid/observer@sha256:" + "b" * 64,
+            "MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST": "example.invalid/backup@sha256:" + "c" * 64,
+            "MEMORY_OPERATOR_MEASURED_QDRANT_PVC_SIZE": "1Gi",
+            "MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE": "2Gi",
+            "MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR": "203.0.113.0/24",
+            "MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR": "198.51.100.0/24",
+            "MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME": "solidstats_memory",
+        }
+        for path in manifest_dir.glob("*.yaml"):
+            text = path.read_text()
+            for marker, value in replacements.items():
+                text = text.replace(marker, value)
+            path.write_text(text)
+        result = self.validate(manifest_dir)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class SshTunnelLifecycleContractTests(unittest.TestCase):

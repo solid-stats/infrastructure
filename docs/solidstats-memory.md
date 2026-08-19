@@ -29,11 +29,43 @@ python3 scripts/validate-memory-manifests.py --allow-operator-placeholders
 python3 scripts/validate-memory-nginx.py --allow-operator-placeholders
 ```
 
-The strict manifest validator rejects all `MEMORY_OPERATOR_*` placeholders.
-The deploy workflow renders them only into a disposable directory from protected
-GitHub environment variables, then validates that rendered directory before any
-cluster action. `00-namespace.yaml` and `01-ci-rbac.yaml` are operator bootstrap
-files and are excluded from CI application.
+The strict manifest validator rejects all `MEMORY_OPERATOR_*` placeholders. The
+deploy workflow copies the checked-in manifests byte-for-byte to a disposable
+directory, then validates it before any cluster action. `00-namespace.yaml` and
+`01-ci-rbac.yaml` are operator bootstrap files and are excluded from CI
+application.
+
+## Checked-in staging configuration
+
+`k8s/memory/*.yaml` is the only non-secret source of truth for the isolated
+runtime. In particular, the suspended backup CronJob owns its Timeweb endpoint
+`https://s3.twcstorage.ru` and the trailing-slash prefix
+`backups/solidstats-memory/` in `40-backup.yaml`.
+
+Eight evidence gates remain unresolved and must stay visible until primary
+operator evidence supports a reviewed manifest diff:
+
+- `MEMORY_OPERATOR_MEASURED_QDRANT_PVC_SIZE` in `10-qdrant.yaml`.
+- `MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE` and
+  `MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST` in `20-mempalace.yaml`.
+- `MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR` and
+  `MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR` in `30-network-policy.yaml`.
+- `MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST` and
+  `MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME` in `40-backup.yaml`.
+- `MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST` in `50-monitoring.yaml`.
+
+Replace a marker only with evidence-backed values in the owning manifest, then
+run the source and strict offline validators before an approved deployment.
+
+## Secrets and operator gates
+
+`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and `S3_BUCKET` are existing reused
+repository-level secrets. The only memory-specific secret contracts are
+`K8S_MEMORY_TOKEN`, `MEMORY_QDRANT_API_KEY`, and `MEMORY_MCP_HTTP_TOKEN`.
+
+The two runtime tokens are already provisioned. `K8S_MEMORY_TOKEN` remains an
+operator and CI bootstrap gate because no local cluster action is authorized.
+Secret values are never recorded in repository artifacts.
 
 The nginx template is not an installed site. Before it can be used, measure the
 source CIDR that kube-router presents to MemPalace, resolve the host-routable
