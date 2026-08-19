@@ -1,0 +1,131 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mempalace-to-qdrant
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mempalace
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: solidstats-memory-backup
+      ports:
+        - protocol: TCP
+          port: 6333
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backup-to-qdrant
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: solidstats-memory-backup
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [qdrant, mempalace]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+              app.kubernetes.io/component: server
+      ports:
+        - protocol: TCP
+          port: 6333
+        - protocol: TCP
+          port: 8765
+---
+# This policy is deliberately invalid for deployment until kube-router evidence
+# supplies the source CIDR actually seen by the MemPalace pod. The local
+# validator rejects the placeholder before CI can apply it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-host-nginx-to-mcp
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mempalace
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR
+      ports:
+        - protocol: TCP
+          port: 8765
