@@ -26,7 +26,7 @@ status: complete
 actuals:
   tokens: 33400
   tasks: 3
-  commits: 5
+  commits: 6
 ---
 
 # Phase 19 Plan 03: Close CD and Monitoring Gaps Summary
@@ -79,6 +79,11 @@ MCP/Qdrant, and all other relevant traffic is denied.
 1. [Rule 1 - Bug] Restored executable mode on `scripts/ssh-tunnel-up.sh` after
    the managed-lifecycle rewrite.
    - Commit: `fdf857c`
+
+2. [Unrun verification] The committed Prometheus manifest was synchronized with
+   the authoritative values under the repository-local offline constraint. A
+   fresh Helm rerender remains an operator/CI verification because the pinned
+   chart was not fetched during this execution.
 
 ## Known Stubs
 
