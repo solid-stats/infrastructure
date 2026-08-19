@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -311,6 +312,26 @@ class MemoryObserverContractTests(unittest.TestCase):
 
 
 class PrometheusMemoryContractTests(unittest.TestCase):
+    recording_names = {
+        "solidstats_memory:mcp_ready:max",
+        "solidstats_memory:mcp_probe_duration_seconds:max",
+        "solidstats_memory:mcp_probe_errors:rate5m",
+        "solidstats_memory:qdrant_ready:max",
+        "solidstats_memory:qdrant_collection_healthy:max",
+        "solidstats_memory:qdrant_snapshot_age_seconds:max",
+        "solidstats_memory:pvc_capacity_ratio:max",
+    }
+    alert_names = {
+        "SolidStatsMemoryMCPNotReady",
+        "SolidStatsMemoryMCPLatencyHigh",
+        "SolidStatsMemoryMCPProbeErrors",
+        "SolidStatsMemoryQdrantUnhealthy",
+        "SolidStatsMemoryQdrantCollectionUnavailable",
+        "SolidStatsMemorySnapshotMissingOrStale",
+        "SolidStatsMemoryPVCCapacityHigh",
+        "SolidStatsMemoryPVCMetricsMissing",
+    }
+
     @staticmethod
     def backup_cronjob_name(documents: list[dict[str, object]]) -> str:
         cronjobs = [
@@ -325,13 +346,49 @@ class PrometheusMemoryContractTests(unittest.TestCase):
         return cronjobs[0]["metadata"]["name"]
 
     @staticmethod
-    def snapshot_alert_expression(text: str) -> str:
+    def prometheus_server_data(text: str) -> dict[str, str]:
         document = next(
             document
             for document in yaml.safe_load_all(text)
             if document and document.get("kind") == "ConfigMap" and document["metadata"]["name"] == "prometheus-server"
         )
-        rules = yaml.safe_load(document["data"]["rules"])
+        return document["data"]
+
+    @classmethod
+    def rule_names(cls, block: str, declaration: str) -> list[str]:
+        rules = yaml.safe_load(block)
+        return [
+            rule[declaration]
+            for group in rules["groups"]
+            for rule in group["rules"]
+            if declaration in rule
+        ]
+
+    @classmethod
+    def assert_memory_rule_files(cls, data: dict[str, str], values: dict[str, object]) -> None:
+        source_files = values["serverFiles"]
+        for key in ("alerting_rules.yml", "recording_rules.yml"):
+            if key not in data:
+                raise AssertionError(f"missing chart-owned {key}")
+            if yaml.safe_load(data[key]) != source_files[key]:
+                raise AssertionError(f"{key} differs from authoritative values")
+        if set(cls.rule_names(data["alerting_rules.yml"], "alert")) != cls.alert_names:
+            raise AssertionError("memory alert names are incomplete or duplicated")
+        if set(cls.rule_names(data["recording_rules.yml"], "record")) != cls.recording_names:
+            raise AssertionError("memory recording names are incomplete or duplicated")
+        for key, block in data.items():
+            if key in ("alerting_rules.yml", "recording_rules.yml"):
+                continue
+            for name in cls.rule_names(block, "alert") if "groups:" in block else []:
+                if name in cls.alert_names:
+                    raise AssertionError(f"memory alert found in wrong key: {key}")
+            for name in cls.rule_names(block, "record") if "groups:" in block else []:
+                if name in cls.recording_names:
+                    raise AssertionError(f"memory recording found in wrong key: {key}")
+
+    @classmethod
+    def snapshot_alert_expression(cls, data: dict[str, str]) -> str:
+        rules = yaml.safe_load(data["alerting_rules.yml"])
         alert = next(
             rule
             for group in rules["groups"]
@@ -361,7 +418,7 @@ class PrometheusMemoryContractTests(unittest.TestCase):
             "solidstats_memory:qdrant_snapshot_age_seconds:max > 93600"
         )
         values = (ROOT / "k8s/observability/values/prometheus-values.yaml").read_text()
-        rendered = (ROOT / "k8s/observability/10-prometheus.yaml").read_text()
+        rendered = self.prometheus_server_data((ROOT / "k8s/observability/10-prometheus.yaml").read_text())
         self.assertEqual(self.snapshot_alert_expression_from_values(values), expected)
         self.assertEqual(self.snapshot_alert_expression(rendered), expected)
 
@@ -375,7 +432,7 @@ class PrometheusMemoryContractTests(unittest.TestCase):
         cronjob_name = self.backup_cronjob_name(backup_documents)
         expected_selector = f'cronjob="{cronjob_name}"'
         values = (ROOT / "k8s/observability/values/prometheus-values.yaml").read_text()
-        rendered = (ROOT / "k8s/observability/10-prometheus.yaml").read_text()
+        rendered = self.prometheus_server_data((ROOT / "k8s/observability/10-prometheus.yaml").read_text())
         self.assertIn(expected_selector, self.snapshot_alert_expression_from_values(values))
         self.assertIn(expected_selector, self.snapshot_alert_expression(rendered))
         self.assertNotEqual(
@@ -386,6 +443,9 @@ class PrometheusMemoryContractTests(unittest.TestCase):
     def test_values_and_rendered_config_consume_all_memory_signals(self) -> None:
         values = (ROOT / "k8s/observability/values/prometheus-values.yaml").read_text()
         rendered = (ROOT / "k8s/observability/10-prometheus.yaml").read_text()
+        values_mapping = yaml.safe_load(values)
+        rendered_data = self.prometheus_server_data(rendered)
+        self.assert_memory_rule_files(rendered_data, values_mapping)
         recording_rules = (
             "solidstats_memory:mcp_ready:max", "solidstats_memory:mcp_probe_duration_seconds:max",
             "solidstats_memory:mcp_probe_errors:rate5m", "solidstats_memory:qdrant_ready:max",
@@ -413,6 +473,24 @@ class PrometheusMemoryContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, workflow)
         self.assertNotIn("monitoring", role)
         self.assertNotIn("ClusterRole", role)
+
+    def test_memory_rule_files_reject_wrong_keys_and_duplicates(self) -> None:
+        values = yaml.safe_load((ROOT / "k8s/observability/values/prometheus-values.yaml").read_text())
+        data = self.prometheus_server_data((ROOT / "k8s/observability/10-prometheus.yaml").read_text())
+        for correct_key, wrong_keys in (
+            ("alerting_rules.yml", ("rules", "alerts", "recording_rules.yml", "synthetic.yml")),
+            ("recording_rules.yml", ("rules", "alerts", "alerting_rules.yml", "synthetic.yml")),
+        ):
+            for wrong_key in wrong_keys:
+                with self.subTest(correct_key=correct_key, wrong_key=wrong_key):
+                    moved = deepcopy(data)
+                    moved[wrong_key] = moved.pop(correct_key)
+                    with self.assertRaises(AssertionError):
+                        self.assert_memory_rule_files(moved, values)
+                    duplicated = deepcopy(data)
+                    duplicated[wrong_key] = duplicated[correct_key]
+                    with self.assertRaises(AssertionError):
+                        self.assert_memory_rule_files(duplicated, values)
 
 
 if __name__ == "__main__":
