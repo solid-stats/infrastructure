@@ -15,6 +15,7 @@ permissions:
 
 env:
   K8S_NAMESPACE: solidstats-memory
+  K8S_CONTEXT_NAME: memory-k3s-staging
 
 jobs:
   validate:
@@ -40,9 +41,39 @@ jobs:
     environment: staging
     steps:
       - uses: actions/checkout@v6
-      - name: Render operator-approved manifests and secrets
+      - name: Open managed SSH tunnel
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+          SSH_TUNNEL_PID_FILE: ${{ runner.temp }}/solidstats-memory-ssh.pid
+        run: bash scripts/ssh-tunnel-up.sh --start-managed
+      - name: Setup kubeconfig (memory-ci-deployer, solidstats-memory)
+        env:
+          K8S_TOKEN: ${{ secrets.K8S_MEMORY_TOKEN }}
+          K8S_CA_CERT: ${{ secrets.K8S_CA_CERT }}
+          K8S_NAMESPACE: solidstats-memory
+          K8S_USER_NAME: memory-ci-deployer
+          K8S_CONTEXT_NAME: memory-k3s-staging
+        run: bash scripts/kubeconfig-setup.sh
+      - name: Prove exact memory identity and RBAC boundary
+        run: |
+          set -euo pipefail
+          identity=$(kubectl --context memory-k3s-staging auth whoami -o jsonpath='{.status.userInfo.username}')
+          test "$identity" = 'system:serviceaccount:solidstats-memory:memory-ci-deployer'
+          for resource in secrets configmaps services deployments.apps statefulsets.apps cronjobs.batch networkpolicies.networking.k8s.io serviceaccounts; do
+            kubectl --context memory-k3s-staging auth can-i create "$resource" -n solidstats-memory | grep -qx yes
+          done
+          ! kubectl --context memory-k3s-staging auth can-i create namespaces | grep -qx yes
+          ! kubectl --context memory-k3s-staging auth can-i create roles.rbac.authorization.k8s.io -n solidstats-memory | grep -qx yes
+          ! kubectl --context memory-k3s-staging auth can-i create rolebindings.rbac.authorization.k8s.io -n solidstats-memory | grep -qx yes
+          ! kubectl --context memory-k3s-staging auth can-i create deployments.apps -n solid-stats-staging | grep -qx yes
+          ! kubectl --context memory-k3s-staging auth can-i create deployments.apps -n monitoring | grep -qx yes
+      - name: Render, validate, and dry-run memory resources
         env:
           MEMORY_MEMPALACE_IMAGE: ${{ vars.MEMORY_MEMPALACE_IMAGE }}
+          MEMORY_OBSERVER_IMAGE: ${{ vars.MEMORY_OBSERVER_IMAGE }}
           MEMORY_BACKUP_UPLOADER_IMAGE: ${{ vars.MEMORY_BACKUP_UPLOADER_IMAGE }}
           MEMORY_QDRANT_PVC_SIZE: ${{ vars.MEMORY_QDRANT_PVC_SIZE }}
           MEMORY_MEMPALACE_PVC_SIZE: ${{ vars.MEMORY_MEMPALACE_PVC_SIZE }}
@@ -59,12 +90,34 @@ jobs:
           set -euo pipefail
           python3 scripts/render-memory-manifests.py --output-dir rendered-memory
           python3 scripts/validate-memory-manifests.py --manifest-dir rendered-memory
+          umask 077
           python3 scripts/render-memory-secrets.py > rendered-memory/secrets.yaml
-
-      - name: Apply namespace-scoped workload resources
+          # 00-namespace.yaml and 01-ci-rbac.yaml are operator bootstrap
+          # resources and must never enter the CI workload manifest list.
+          mapfile -t MEMORY_WORKLOAD_FILES < <(find rendered-memory -maxdepth 1 -name '*.yaml' ! -name '00-namespace.yaml' ! -name '01-ci-rbac.yaml' ! -name 'secrets.yaml' | sort)
+          test "${#MEMORY_WORKLOAD_FILES[@]}" -gt 0
+          kubectl --context memory-k3s-staging -n solidstats-memory apply --server-side --dry-run=server -f rendered-memory/secrets.yaml
+          kubectl --context memory-k3s-staging -n solidstats-memory apply --server-side --dry-run=server "${MEMORY_WORKLOAD_FILES[@]/#/-f}"
+          printf '%s\n' "${MEMORY_WORKLOAD_FILES[@]}" > "${RUNNER_TEMP}/memory-workload-files"
+      - name: Apply memory secrets and workloads
         run: |
           set -euo pipefail
-          # 00-namespace.yaml and 01-ci-rbac.yaml are operator bootstrap
-          # resources. CI must never apply namespace or RBAC bootstrap files.
-          echo "Operator action required: configure the namespace-scoped CI identity and apply rendered-memory/."
-          exit 1
+          mapfile -t MEMORY_WORKLOAD_FILES < "${RUNNER_TEMP}/memory-workload-files"
+          kubectl --context memory-k3s-staging -n solidstats-memory apply --server-side -f rendered-memory/secrets.yaml
+          kubectl --context memory-k3s-staging -n solidstats-memory apply --server-side "${MEMORY_WORKLOAD_FILES[@]/#/-f}"
+      - name: Verify memory rollouts
+        run: |
+          set -euo pipefail
+          kubectl --context memory-k3s-staging -n solidstats-memory rollout status statefulset/qdrant --timeout=300s
+          kubectl --context memory-k3s-staging -n solidstats-memory rollout status deployment/mempalace --timeout=300s
+          kubectl --context memory-k3s-staging -n solidstats-memory rollout status deployment/solidstats-memory-observer --timeout=180s
+      - name: Stop managed SSH tunnel and remove temporary materials
+        if: always()
+        env:
+          DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+          SSH_TUNNEL_PID_FILE: ${{ runner.temp }}/solidstats-memory-ssh.pid
+        run: |
+          set -euo pipefail
+          bash scripts/ssh-tunnel-up.sh --stop-managed
+          rm -rf rendered-memory "${RUNNER_TEMP}/memory-workload-files" "${KUBECONFIG:-$HOME/.kube/config}"
