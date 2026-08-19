@@ -502,9 +502,14 @@ def validate_parity_report(parity: dict[str, object]) -> list[str]:
 
 def validate_bundle(bundle_dir: Path) -> list[str]:
     errors: list[str] = []
+    if bundle_dir.is_symlink():
+        return ["bundle root must not be a symlink"]
+    manifest_path = bundle_dir / "manifest.json"
+    if manifest_path.is_symlink():
+        return ["manifest.json must not be a symlink"]
     try:
         manifest = load_json(
-            bundle_dir / "manifest.json",
+            manifest_path,
             label="manifest.json",
             max_bytes=BUNDLE_BOUNDS["max_manifest_bytes"],
         )
@@ -528,6 +533,7 @@ def validate_bundle(bundle_dir: Path) -> list[str]:
     if not isinstance(files, list) or not files:
         return errors + ["bundle files must be a non-empty list"]
     files_by_path: dict[str, Path] = {}
+    digests_by_path: dict[str, str] = {}
     for item in files:
         if not isinstance(item, dict):
             errors.append("every bundle file entry must be an object")
@@ -554,6 +560,7 @@ def validate_bundle(bundle_dir: Path) -> list[str]:
             errors.append(f"duplicate bundle file: {relative}")
             continue
         files_by_path[relative] = candidate
+        digests_by_path[relative] = expected_digest
     if errors:
         return errors
     errors.extend(validate_freeze_attestation(manifest))
@@ -592,6 +599,10 @@ def validate_bundle(bundle_dir: Path) -> list[str]:
     elif records_reference not in files_by_path:
         errors.append("source-inventory.json source records must be checksum-listed")
     else:
+        if inventory.get("source_records_checksum") != digests_by_path[records_reference]:
+            errors.append(
+                "source-inventory.json source_records_checksum must match its bundle file"
+            )
         mappings = transform.get("mappings")
         expected_source_ids = {
             mapping["source_id"]
@@ -599,6 +610,16 @@ def validate_bundle(bundle_dir: Path) -> list[str]:
             if isinstance(mapping, dict) and isinstance(mapping.get("source_id"), str)
         } if isinstance(mappings, list) else None
         errors.extend(validate_source_records(records_path, inventory, expected_source_ids))
+    mapping_oracle = transform.get("mapping_oracle")
+    collection_derivation = transform.get("collection_derivation")
+    if isinstance(mapping_oracle, dict) and isinstance(collection_derivation, dict):
+        if (
+            mapping_oracle.get("revision") != collection_derivation.get("oracle_revision")
+            or mapping_oracle.get("checksum") != collection_derivation.get("oracle_checksum")
+        ):
+            errors.append(
+                "transform-manifest.json collection oracle must match the mapping oracle"
+            )
     for artifact, evidence in (
         ("source-inventory.json", inventory),
         ("transform-manifest.json", transform),
