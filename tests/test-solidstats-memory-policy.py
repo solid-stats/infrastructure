@@ -115,6 +115,34 @@ class PolicyTests(unittest.TestCase):
                 VALIDATOR.validate_bundle(bundle),
             )
 
+    def test_bundle_rejects_non_lowercase_checksum(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle = Path(temporary)
+            payload = bundle / "payload.jsonl"
+            payload.write_text("{}\n", encoding="utf-8")
+            manifest = {
+                "schema_version": 1,
+                "source_backend": "chroma",
+                "target_backend": "qdrant",
+                "legacy_writes_frozen": True,
+                "embedding_strategy_recorded": True,
+                "embedding_model_recorded": True,
+                "embedding_dimension_recorded": True,
+                "corpus_checksum_recorded": True,
+                "parity_evaluation_recorded": True,
+                "files": [
+                    {
+                        "path": payload.name,
+                        "sha256": VALIDATOR.sha256(payload).upper(),
+                    }
+                ],
+            }
+            (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertEqual(
+                ["invalid sha256 for payload.jsonl"],
+                VALIDATOR.validate_bundle(bundle),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
