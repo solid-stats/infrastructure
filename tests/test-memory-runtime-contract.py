@@ -148,7 +148,10 @@ class SshTunnelLifecycleContractTests(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
 
     def test_startup_failure_cleans_the_validated_pidfile(self) -> None:
-        failed_env = self.env | {"SSH_TUNNEL_SKIP_REACHABILITY_CHECK": ""}
+        failed_env = self.env | {
+            "SSH_TUNNEL_SKIP_REACHABILITY_CHECK": "",
+            "LOCAL_PORT": "28999",
+        }
         failed = subprocess.run(
             ["bash", str(TUNNEL), "--start-managed"], env=failed_env,
             text=True, capture_output=True, check=False, timeout=10,
