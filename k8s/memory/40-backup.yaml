@@ -75,7 +75,7 @@ spec:
                     "${backup_id}" "${QDRANT_COLLECTION}" "${snapshot_name}" \
                     > "${work_dir}/manifest.json"
                   aws --endpoint-url "${S3_ENDPOINT}" s3 cp --recursive \
-                    "${work_dir}" "s3://${S3_BUCKET}/backups/solidstats-memory/${backup_id}/"
+                    "${work_dir}" "s3://${S3_BUCKET}/${S3_PREFIX}${backup_id}/"
               env:
                 - name: QDRANT_URL
                   value: http://qdrant:6333
@@ -87,10 +87,9 @@ spec:
                       name: memory-backup-runtime
                       key: QDRANT_API_KEY
                 - name: S3_ENDPOINT
-                  valueFrom:
-                    secretKeyRef:
-                      name: memory-backup-runtime
-                      key: S3_ENDPOINT
+                  value: https://s3.twcstorage.ru
+                - name: S3_PREFIX
+                  value: backups/solidstats-memory/
                 - name: S3_BUCKET
                   valueFrom:
                     secretKeyRef:

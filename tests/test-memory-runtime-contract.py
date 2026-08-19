@@ -19,6 +19,97 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-memory.yml"
 TUNNEL = ROOT / "scripts" / "ssh-tunnel-up.sh"
+MANIFEST_RENDERER = ROOT / "scripts" / "render-memory-manifests.py"
+SECRET_RENDERER = ROOT / "scripts" / "render-memory-secrets.py"
+VALIDATOR = ROOT / "scripts" / "validate-memory-manifests.py"
+
+
+def synthetic_environment(**values: str) -> dict[str, str]:
+    """Use only declared synthetic values for renderer subprocesses."""
+    return {
+        "PATH": os.defpath,
+        "LANG": "C.UTF-8",
+        "PYTHONIOENCODING": "utf-8",
+        **values,
+    }
+
+
+class CheckedInMemoryConfigContractTests(unittest.TestCase):
+    """Non-secret desired state must remain byte-identical and repository-owned."""
+
+    def render(self, output_dir: Path, **environment: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["python3", str(MANIFEST_RENDERER), str(output_dir)],
+            env=synthetic_environment(**environment), text=True,
+            capture_output=True, check=False, timeout=10,
+        )
+
+    def test_renderer_copies_exact_source_bytes_without_environment_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "rendered"
+            rendered = self.render(output_dir)
+            self.assertEqual(rendered.returncode, 0, rendered.stderr)
+            source_files = sorted((ROOT / "k8s" / "memory").glob("*.yaml"))
+            self.assertEqual([path.name for path in source_files], sorted(path.name for path in output_dir.glob("*.yaml")))
+            for source in source_files:
+                self.assertEqual(source.read_bytes(), (output_dir / source.name).read_bytes())
+
+            overridden_dir = Path(directory) / "overridden"
+            overridden = self.render(
+                overridden_dir,
+                MEMORY_MEMPALACE_IMAGE="example.invalid/mempalace@sha256:" + "0" * 64,
+                MEMORY_QDRANT_PVC_SIZE="999Gi",
+                MEMORY_HOST_NGINX_SOURCE_CIDR="203.0.113.0/24",
+            )
+            self.assertEqual(overridden.returncode, 0, overridden.stderr)
+            for source in source_files:
+                self.assertEqual((output_dir / source.name).read_bytes(), (overridden_dir / source.name).read_bytes())
+
+    def test_backup_owns_endpoint_and_prefix_without_secret_refs(self) -> None:
+        backup = (ROOT / "k8s" / "memory" / "40-backup.yaml").read_text()
+        self.assertIn("name: S3_ENDPOINT\n                  value: https://s3.twcstorage.ru", backup)
+        self.assertIn("name: S3_PREFIX\n                  value: backups/solidstats-memory/", backup)
+        self.assertIn('"s3://${S3_BUCKET}/${S3_PREFIX}${backup_id}/"', backup)
+        self.assertNotIn("key: S3_ENDPOINT", backup)
+        self.assertNotIn("key: S3_PREFIX", backup)
+
+
+class MemorySecretRendererContractTests(unittest.TestCase):
+    """Secret rendering accepts only the approved secret-input inventory."""
+
+    values = {
+        "MEMORY_QDRANT_API_KEY": "synthetic-qdrant-key",
+        "MEMORY_MCP_HTTP_TOKEN": "synthetic-mcp-token",
+        "S3_BUCKET": "synthetic-bucket",
+        "S3_ACCESS_KEY_ID": "synthetic-access-key",
+        "S3_SECRET_ACCESS_KEY": "synthetic-secret-key",
+    }
+
+    def render(self, values: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["python3", str(SECRET_RENDERER)], env=synthetic_environment(**values),
+            text=True, capture_output=True, check=False, timeout=10,
+        )
+
+    def test_renderer_emits_exact_runtime_secrets(self) -> None:
+        rendered = self.render(self.values)
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        documents = list(yaml.safe_load_all(rendered.stdout))
+        self.assertEqual([document["metadata"]["name"] for document in documents], ["qdrant-runtime", "mempalace-runtime", "memory-backup-runtime"])
+        self.assertTrue(all(document["metadata"]["namespace"] == "solidstats-memory" for document in documents))
+        self.assertEqual(set(documents[0]["stringData"]), {"QDRANT_API_KEY"})
+        self.assertEqual(set(documents[1]["stringData"]), {"MEMPALACE_QDRANT_API_KEY", "MEMPALACE_MCP_HTTP_TOKEN"})
+        self.assertEqual(set(documents[2]["stringData"]), {"QDRANT_API_KEY", "S3_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"})
+        self.assertNotIn("S3_ENDPOINT", rendered.stdout)
+        self.assertNotIn("S3_PREFIX", rendered.stdout)
+
+    def test_missing_input_fails_before_any_yaml_output(self) -> None:
+        for missing in self.values:
+            values = self.values.copy()
+            values.pop(missing)
+            rendered = self.render(values)
+            self.assertEqual(rendered.returncode, 64)
+            self.assertEqual(rendered.stdout, "")
 
 
 class MemoryDeployWorkflowContractTests(unittest.TestCase):

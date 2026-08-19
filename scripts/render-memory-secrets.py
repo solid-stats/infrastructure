@@ -34,10 +34,9 @@ def secret(name: str, values: dict[str, str]) -> str:
 
 qdrant_api_key = required("MEMORY_QDRANT_API_KEY")
 mcp_http_token = required("MEMORY_MCP_HTTP_TOKEN")
-s3_endpoint = required("MEMORY_BACKUP_S3_ENDPOINT")
-s3_bucket = required("MEMORY_BACKUP_S3_BUCKET")
-s3_access_key_id = required("MEMORY_BACKUP_S3_ACCESS_KEY_ID")
-s3_secret_access_key = required("MEMORY_BACKUP_S3_SECRET_ACCESS_KEY")
+s3_bucket = required("S3_BUCKET")
+s3_access_key_id = required("S3_ACCESS_KEY_ID")
+s3_secret_access_key = required("S3_SECRET_ACCESS_KEY")
 
 if missing:
     print(f"Missing required environment variables: {', '.join(sorted(missing))}", file=sys.stderr)
@@ -58,7 +57,6 @@ print(
                 "memory-backup-runtime",
                 {
                     "QDRANT_API_KEY": qdrant_api_key,
-                    "S3_ENDPOINT": s3_endpoint,
                     "S3_BUCKET": s3_bucket,
                     "AWS_ACCESS_KEY_ID": s3_access_key_id,
                     "AWS_SECRET_ACCESS_KEY": s3_secret_access_key,
