@@ -374,7 +374,7 @@ verification.
 namespace/runtime/storage/network/backup/monitoring/CD boundary.
 **Depends on:** Phase 18
 **Requirements:** ISO-01..04, RUN-01..05, MIG-03..07, OPS-01, OPS-04
-**Plans:** 2 planned
+**Plans:** 3 planned
 
 #### Phase 20: Local Corpus Migration
 
@@ -382,7 +382,7 @@ namespace/runtime/storage/network/backup/monitoring/CD boundary.
 strategy, transform locally, and prove identifier/metadata/vector/recall parity
 in isolated Qdrant.
 **Depends on:** Phase 19
-**Requirements:** MIG-01..07
+**Requirements:** MIG-01..02
 **Plans:** TBD after transform and embedding evidence are verified
 
 #### Phase 21: Restore, Cutover & Recovery

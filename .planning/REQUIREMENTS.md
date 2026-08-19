@@ -85,7 +85,7 @@
 
 | Requirement | Phase | Status |
 | --- | --- | --- |
-| ISO-01..04, RUN-01..05, OPS-01, OPS-04 | 19 | Planned |
-| MIG-01..07 | 20 | Planned |
+| ISO-01..04, RUN-01..05, MIG-03..07, OPS-01, OPS-04 | 19 | Planned |
+| MIG-01..02 | 20 | Planned |
 | OPS-02..03, OPS-05 | 21 | Planned |
 | CUR-01..05 | 22 | Planned |
