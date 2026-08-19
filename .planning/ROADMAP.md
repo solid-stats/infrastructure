@@ -5,6 +5,7 @@
 - ✅ **v1.0 Staging Foundation** - Phases 1-5 (shipped 2026-05-10)
 - ✅ **v2.0 Production-Ready Infra & kubectl-native CD** - Phases 6-11 (shipped 2026-06-13; live prod cutover flip deferred by scope)
 - ✅ **v3.0 Staging Observability Stack** - Phases 12-18 (shipped 2026-06-14; SDK-01 scope-adjusted to infra wiring + app-repo wire briefs)
+- 🚧 **v4.0 SolidStats Memory Isolation** - Phases 19-22 (planned)
 
 ## Overview
 
@@ -37,6 +38,17 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 16: Error Tracking (GlitchTip)** - GlitchTip runs with its own PostgreSQL, closed registration, and a public TLS URL on the reused obs-edge; a forced test error appears and a project DSN exists.
 - [x] **Phase 17: Network Isolation & Stack Validation** - NetworkPolicies isolate the obs namespaces without breaking scraping, and one re-runnable script validates the whole stack on any fresh deploy.
 - [x] **Phase 18: App-side Error SDK** - Errors-only Sentry SDK integration is prepared as separate app-repo PRs for server-2, replay-parser-2, and replays-fetcher using the GlitchTip DSN. *(operator-scoped: infra wiring + per-app wire briefs in the plans repo; app-repo PRs + e2e deferred to app owners.)*
+- [ ] **Phase 19: SolidStats Memory Foundation** - Repository-local policy,
+  validation, runtime-boundary plans, and offline tooling are ready.
+
+- [ ] **Phase 20: Local Corpus Migration** - The frozen Chroma corpus is
+  transformed locally using reviewed mapping and embedding evidence.
+
+- [ ] **Phase 21: Restore, Cutover & Recovery** - Backups restore in isolation;
+  the operator performs a reversible cutover with recovery evidence.
+- [ ] **Phase 22: Archive Distillation** - Read-only extraction agents produce
+  candidates from bounded archive shards; the curator verifies and promotes
+  only current durable conclusions.
 
 ## Phase Details
 
@@ -348,13 +360,57 @@ Plans:
 
 **Plans**: TBD
 
+### 🚧 v4.0 SolidStats Memory Isolation (Planned)
+
+**Milestone Goal:** Isolate SolidStats memory from all personal and product
+palaces, migrate the accepted corpus locally into private Qdrant using a
+source-reviewed transform and evidence-backed embedding strategy, and cut over
+only after backup, restore, auth, MCP, recall, capture, restart, and reboot
+verification.
+
+#### Phase 19: SolidStats Memory Foundation
+
+**Goal:** Add repository-local policy, validation, and plans for a dedicated
+namespace/runtime/storage/network/backup/monitoring/CD boundary.
+**Depends on:** Phase 18
+**Requirements:** ISO-01..04, RUN-01..05, MIG-03..07, OPS-01, OPS-04
+**Plans:** 2 planned
+
+#### Phase 20: Local Corpus Migration
+
+**Goal:** Freeze legacy writes, source-review the record mapping and embedding
+strategy, transform locally, and prove identifier/metadata/vector/recall parity
+in isolated Qdrant.
+**Depends on:** Phase 19
+**Requirements:** MIG-01..07
+**Plans:** TBD after transform and embedding evidence are verified
+
+#### Phase 21: Restore, Cutover & Recovery
+
+**Goal:** Prove snapshot restore in isolation, then perform a reversible
+operator-gated cutover to `/solidstats/mcp` and `solidstats_memory` with restart
+and reboot recovery evidence.
+**Depends on:** Phase 20
+**Requirements:** ISO-01, ISO-03, OPS-02, OPS-03, OPS-05
+**Plans:** TBD after Phase 20 parity evidence
+
+#### Phase 22: Archive Distillation
+
+**Goal:** Process frozen repository archives in bounded read-only shards, then
+deduplicate and verify candidates before curator-owned promotion creates new
+active semantic drawers.
+**Depends on:** Phase 21
+**Requirements:** CUR-01..05
+**Plans:** TBD after cutover
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 →
+11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
-|-------|-----------|----------------|--------|-----------|
+| ------- | ----------- | ---------------- | -------- | ----------- |
 | 1. Staging Deploy Baseline | v1.0 | 4/4 | Complete | 2026-05-10 |
 | 2. Backup Gate | v1.0 | 1/1 | Complete | 2026-05-10 |
 | 3. App CD Boundary | v1.0 | 1/1 | Complete | 2026-05-10 |
@@ -366,10 +422,14 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 9. web Runtime Wiring | v2.0 | 1/1 | Complete | 2026-06-12 |
 | 10. S3 Lifecycle & Retention | v2.0 | 3/3 | Complete | 2026-06-12 |
 | 11. Production Cutover | v2.0 | 2/2 | Complete | 2026-06-12 |
-| 12. Resource Protection & Obs Foundation | v3.0 | 5/5 | Complete   | 2026-06-13 |
-| 13. Deploy Pipeline & Metrics Stack | v3.0 | 6/6 | Complete   | 2026-06-13 |
-| 14. Public Edge & Grafana TLS | v3.0 | 3/4 | In Progress|  |
-| 15. Log Stack | v3.0 | 4/4 | Complete   | 2026-06-13 |
-| 16. Error Tracking (GlitchTip) | v3.0 | 5/5 | Complete   | 2026-06-14 |
-| 17. Network Isolation & Stack Validation | v3.0 | 3/3 | Complete   | 2026-06-14 |
-| 18. App-side Error SDK | v3.0 | 1/1 | Complete   | 2026-06-14 |
+| 12. Resource Protection & Obs Foundation | v3.0 | 5/5 | Complete | 2026-06-13 |
+| 13. Deploy Pipeline & Metrics Stack | v3.0 | 6/6 | Complete | 2026-06-13 |
+| 14. Public Edge & Grafana TLS | v3.0 | 3/4 | In Progress | |
+| 15. Log Stack | v3.0 | 4/4 | Complete | 2026-06-13 |
+| 16. Error Tracking (GlitchTip) | v3.0 | 5/5 | Complete | 2026-06-14 |
+| 17. Network Isolation & Stack Validation | v3.0 | 3/3 | Complete | 2026-06-14 |
+| 18. App-side Error SDK | v3.0 | 1/1 | Complete | 2026-06-14 |
+| 19. SolidStats Memory Foundation | v4.0 | 0/2 | Planned | |
+| 20. Local Corpus Migration | v4.0 | 0/TBD | Blocked on evidence | |
+| 21. Restore, Cutover & Recovery | v4.0 | 0/TBD | Blocked on Phase 20 | |
+| 22. Archive Distillation | v4.0 | 0/TBD | Blocked on Phase 21 | |

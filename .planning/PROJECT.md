@@ -23,6 +23,7 @@ production-readiness gaps deferred from v1 — edge automation, S3 lifecycle,
 automated restore drill, the `web` runtime, and a controlled production cutover.
 
 **Target features:**
+
 - kubectl-native CD: WireGuard in the CI job → `kubectl` against the closed k3s
   API, scoped ServiceAccount + namespace RBAC, SSH/scp removed.
 - Production cutover: controlled switch of traffic from legacy to the new runtime.
@@ -32,24 +33,27 @@ automated restore drill, the `web` runtime, and a controlled production cutover.
 - Automated restore drill: scripted PostgreSQL restore validation.
 - `web` runtime wiring: Kubernetes manifests for the future `web` application.
 
-## Current Milestone: v3.0 — Staging Observability Stack
+## Current Milestone: v4.0 — SolidStats Memory Isolation
 
-**Goal:** Stand up the full self-hosted observability stack on the staging k3s
-cluster — metrics, logs, and Sentry-compatible error tracking — fitted to the
-RAM-bound single node. Staging only; the production mirror (decision D2) is a
-later milestone.
+**Goal:** Replace the legacy shared SolidStats MemPalace deployment with an
+isolated `solidstats_memory` MCP service backed by private Qdrant, migrate the
+accepted corpus locally after the transform and embedding strategy are verified,
+and cut over only after isolated restore and parity validation.
 
 **Target features:**
-- Metrics: Prometheus + Grafana + kube-state-metrics + node-exporter.
-- Logs: Loki + Grafana Alloy, ~7-day retention.
-- Error tracking: GlitchTip with its own PostgreSQL + Redis (errors only).
-- Workload exporters: postgres-exporter + rabbitmq-exporter, first dashboards.
-- Public access via host nginx vhosts + certbot (`grafana.`/`errors.`
-  subdomains), separate from the runtime deploy path.
-- App-side Sentry SDK integration prepared as separate app-repo PRs.
 
-**Source:** `plans/infrastructure/briefs/observability-plan.md`; RELEASE-PLAN
-Phase 0 Track 2 (decision W5).
+- Dedicated `solidstats-memory` namespace, storage, identity, deploy workflow,
+  network boundary, backup, and monitoring.
+- Public token-authenticated HTTPS `/solidstats/mcp`; Qdrant remains private.
+- Local build, reviewed transform, and evidence-backed embedding strategy.
+- Six active rooms in `SolidStats` plus five untrusted platform-repository
+  archive wings; no tunnels, KG, diary, plan recall, or auto-capture hooks.
+- Isolated restore, contract/parity verification, restart/reboot recovery, and
+  reversible operator-gated cutover.
+- Post-cutover read-only archive distillation with low-cost candidate
+  extraction and curator-owned promotion into active semantic memory.
+
+**Source:** Accepted SolidStats MemPalace migration decision pack (2026-08-20).
 
 ## Requirements
 
@@ -71,16 +75,14 @@ Phase 0 Track 2 (decision W5).
 
 ### Active
 
-<!-- v3.0 — Staging Observability Stack. Detailed REQ-IDs live in REQUIREMENTS.md. -->
+<!-- v4.0 details use REQ-IDs from REQUIREMENTS.md. -->
 
-- [ ] Resource preflight + host swap so the trimmed stack fits the 8 GB single node.
-- [ ] Metrics stack (Prometheus, Grafana, kube-state-metrics, node-exporter) on staging.
-- [ ] Log stack (Loki + Grafana Alloy) collecting cluster logs into Grafana.
-- [ ] GlitchTip error tracking with its own PostgreSQL + Redis, closed registration.
-- [ ] Postgres + RabbitMQ exporters wired into Prometheus plus first dashboards.
-- [ ] Public observability domains via host nginx + certbot, separate from runtime CD.
-- [ ] NetworkPolicy isolation for the observability namespaces (after CNI proof).
-- [ ] Errors-only Sentry SDK integration prepared for server-2/replay-parser-2/replays-fetcher.
+- [ ] Isolated SolidStats memory boundary represented and validated in git.
+- [ ] Transform and embedding strategy verified from evidence.
+- [ ] Local migration passes checksum, metadata, vector, and recall parity gates.
+- [ ] Restore, public MCP, auth, restart, and reboot proven before cutover.
+- [ ] Archive shards distilled incrementally without granting extractors write
+  access or mutating frozen archive drawers.
 
 ### Previously Shipped (v1.0 / v2.0)
 
@@ -157,7 +159,7 @@ exceptions for any workload that must run outside those defaults.
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
-|----------|-----------|---------|
+| ---------- | ----------- | --------- |
 | v1/v2 are staging-first; production cutover deferred | Staging must be reproducible/backed-up/recoverable before any prod traffic decision | ✓ Good — held through v2.0; cutover mechanism built but flip deferred by scope |
 | Move app deploy ownership gradually | Existing app CD works and should not be broken before infra CD is proven | ✓ Good — v2.0 shipped kubectl-native infra CD, app repos still build images |
 | Backup gate is manual backup plus `pg_restore --list` before full-run | Gives a concrete recovery point without blocking on a full restore drill | ✓ Good — extended in v2.0 by an automated restore drill (live PASS) |
@@ -175,27 +177,23 @@ exceptions for any workload that must run outside those defaults.
 
 ## Current State
 
-v2.0 is shipped (2026-06-13). Staging deploys via kubectl-native CD over a
-WireGuard tunnel (SSH/scp removed, git as source of truth), with edge automation,
-an automated restore drill, the `web` runtime slot, applied 30-day S3 retention,
-and a live-verified reversible production-cutover mechanism. CD and the
-edge/restore/retention paths were all exercised live on the staging cluster/VPS
-(6 latent CD bugs surfaced and fixed only because the path was finally run for
-real). The one production-readiness item left by design is the actual production
-traffic flip — deferred by scope (AGENTS.md). v2.x follow-ups are tracked in
-STATE.md "Deferred Items".
+v1.0 through v3.0 are shipped. v4.0 begins from an accepted SolidStats memory
+migration decision pack. Phase 19 contains repository-local policy, validation,
+and runtime-boundary planning. Persistent Kubernetes/RBAC, nginx,
+secret-dependent work, real corpus migration, and live cutover remain
+operator-gated.
 
 ## Next Milestone Goals
 
-- Production traffic cutover (when production enters scope): run the green-diff
-  full-run, review the diff, then the gated reversible flip via scripts/cutover.sh.
-- Clear v2.x follow-ups: Phase 6 doc-drift cleanup; the clean-bucket aws-cli guard
-  fix; deferred S3-04 / CD-10 / DRILL-05 / CUT-05 enhancements.
-- Drive old-vs-new statistics comparison off controlled full-run evidence.
+- Complete the repository-local memory boundary and offline validators.
+- Review the cross-backend mapping and embedding strategy before migration.
+- Prove local parity, isolated restore, public MCP auth, restart, and reboot
+  recovery before the operator-gated cutover.
 
 This document evolves at phase transitions and milestone boundaries.
 
 **After each phase transition**:
+
 1. Requirements invalidated? Move to Out of Scope with reason.
 2. Requirements validated? Move to Validated with phase reference.
 3. New requirements emerged? Add to Active.
@@ -203,10 +201,11 @@ This document evolves at phase transitions and milestone boundaries.
 5. "What This Is" still accurate? Update if drifted.
 
 **After each milestone**:
+
 1. Full review of all sections.
 2. Core Value check: still the right priority?
 3. Audit Out of Scope: reasons still valid?
 4. Update Context with current state.
 
 ---
-*Last updated: 2026-06-13 — milestone v3.0 (Staging Observability Stack) started*
+Last updated: 2026-08-20 — milestone v4.0 started.

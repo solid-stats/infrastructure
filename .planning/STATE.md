@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v3.0
-milestone_name: Staging Observability Stack
-status: Awaiting next milestone
-stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-06-14T03:56:21.366Z"
-last_activity: 2026-06-14 — Milestone v3.0 completed and archived
+milestone: v4.0
+milestone_name: SolidStats Memory Isolation
+status: Planned
+stopped_at: Phase 19 planned; implementation awaits operator gates
+last_updated: "2026-08-20T00:00:00+07:00"
+last_activity: 2026-08-20 — v4.0 migration planning created
 progress:
-  total_phases: 7
-  completed_phases: 6
-  total_plans: 27
-  completed_plans: 28
-  percent: 86
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 2
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** v3.0 milestone — all 7 phases complete; ready for milestone audit/close
+**Current focus:** v4.0 milestone — isolated SolidStats memory foundation
 
 ## Current Position
 
-Phase: Milestone v3.0 complete
-Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-17 — Completed quick task 260617-024: split replays-fetcher into a continuous page-1 watch Deployment (52-...) + a nightly full run-once CronJob (08:00 MSK, 50-...)
+Phase: 19 — SolidStats Memory Foundation
+Plan: 19-01 and 19-02 planned
+Status: Ready for repository-local execution after operator gates
+Last activity: 2026-08-20 — v4.0 migration planning created
 
 ## Performance Metrics
 
@@ -41,7 +41,7 @@ Last activity: 2026-06-17 — Completed quick task 260617-024: split replays-fet
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
+| ------- | ------- | ------- | ---------- |
 | 07 | 4 | - | - |
 | 08 | 3 | - | - |
 | 09 | 1 | - | - |
@@ -142,7 +142,7 @@ Recent decisions affecting current work:
 ### Pending Todos
 
 - Phase 6 (RESOLVED 2026-06-13): live WireGuard handshake from a real GitHub runner
-  + ci-deployer SA-token auth + real `kubectl apply`/`rollout` CONFIRMED. Cluster
+  - ci-deployer SA-token auth + real `kubectl apply`/`rollout` CONFIRMED. Cluster
   became reachable; operator bootstrapped `01-ci-rbac.yaml` + a dedicated CI WG peer
   (10.8.0.3, persisted in wg0.conf) + set staging-env secrets (WG_*/K8S_*/GHCR_*).
   PR #1 dry-run green; master deploy green (5 workloads rolled out). Found+fixed 6
@@ -200,7 +200,7 @@ Recent decisions affecting current work:
 ### Quick Tasks Completed
 
 | # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
+| --- | ------------- | ------ | -------- | ----------- |
 | 260614-hvq | Fix obs CD: move empty namespaced Role+RoleBinding out of obs manifests into operator-bootstrap RBAC and forbid them in validator | 2026-06-14 | 36b03fc | [260614-hvq-fix-obs-cd-move-empty-namespaced-role-ro](./quick/260614-hvq-fix-obs-cd-move-empty-namespaced-role-ro/) |
 | 260614-ij3 | Fix GlitchTip migrate/seed Jobs blocked by NetworkPolicy — add app.kubernetes.io/name=glitchtip pod-template labels so allow-glitchtip-db-egress selects them | 2026-06-14 | 08da0aa | [260614-ij3-fix-glitchtip-migrate-seed-jobs-blocked-](./quick/260614-ij3-fix-glitchtip-migrate-seed-jobs-blocked-/) |
 | 260614-tvy | Migrate CD from WireGuard to SSH tunnel for k3s access (Timeweb blocks inbound UDP at the hypervisor — WG dead; TCP/SSH works). New ssh-tunnel-up.sh + kubeconfig 127.0.0.1:16443 with tls-server-name; both workflows swap WG→SSH. wg-tunnel-up.sh + WG secrets initially retained (later fully removed in 260614-ulu) | 2026-06-14 | 1bade73 | [260614-tvy-migrate-cd-from-wireguard-to-ssh-tunnel-](./quick/260614-tvy-migrate-cd-from-wireguard-to-ssh-tunnel-/) |
@@ -212,7 +212,7 @@ Recent decisions affecting current work:
 Items now in scope for v2.0 (previously deferred at v1 close):
 
 | Category | Item | Status | Deferred At |
-|----------|------|--------|-------------|
+| ---------- | ------ | -------- | ------------- |
 | CD | kubectl-native CD over WireGuard | In scope — Phase 6 | — |
 | Edge | Host nginx/certificate/firewall automation | In scope — Phase 7 | v1 planning |
 | Restore | Automated restore drill validation | In scope — Phase 8 | v1 planning |

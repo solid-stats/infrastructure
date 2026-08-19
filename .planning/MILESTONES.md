@@ -1,5 +1,15 @@
 # Milestones
 
+## v4.0 SolidStats Memory Isolation (Started: 2026-08-20)
+
+**Goal:** Isolate SolidStats memory behind a dedicated MemPalace/Qdrant runtime,
+perform the local migration only after transform and embedding evidence are
+verified, and cut over after isolated restore and recovery validation.
+
+**Planned phases:** 4 phases (19–22)
+
+---
+
 ## v1.0 Roadmap: Solid Stats Infrastructure (Backfilled: 2026-06-16)
 
 **Note:** Synthesized from archive snapshot by `/gsd-health --backfill`. Original completion date unknown.
