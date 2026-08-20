@@ -1325,6 +1325,42 @@ class ParityContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unstable"):
             parity.derive_source_distance_rule([stable[0], [("b", 0.20), ("a", 0.10)], stable[0]], serialization_floor=1e-6)
 
+    def test_fresh_oracle_baseline_supersedes_bruteforce_fixture_ranking(self) -> None:
+        parity = load_parity_module()
+        fixture = {
+            "filters": {"wing": "web"},
+            "query_record_digest": "a" * 64,
+            "source_distances": [0.0],
+            "source_metric": "cosine-distance",
+            "source_ordered_ids": ["bruteforce-only"],
+            "source_runs": 2,
+            "top_k": 1,
+        }
+        fresh = [{"index": 0, "vector": [1.0], "ranked": [["oracle-only", 0.2]]}]
+        contract = {"source_wing_to_target_wing": {"canonical_repository_rules": {"web": "web-archive"}, "shared_source_rule": {"SolidStats": "SolidStats-archive"}}}
+        with mock.patch.object(parity, "_run_source_queries", side_effect=[fresh, fresh, fresh]) as source_runs, mock.patch.object(parity, "_target_query", return_value=[(str(uuid.uuid5(UUID_NAMESPACE, "oracle-only")), 0.2)]) as target:
+            result = parity._verify_recall(
+                base_url="http://127.0.0.1:6333", collection="collection", fixtures=[fixture], contract=contract,
+                snapshot_dir=Path("/snapshot"), fixtures_path=Path("/fixtures"), oracle_python=Path("/python"), oracle_source_dir=Path("/oracle"), repeats=3,
+            )
+        self.assertEqual(0, result["failures"])
+        self.assertEqual(3, source_runs.call_count)
+        target.assert_called_once()
+
+    def test_fresh_oracle_instability_blocks_target_before_tolerance(self) -> None:
+        parity = load_parity_module()
+        fixture = {"filters": {}, "query_record_digest": "a" * 64, "source_distances": [0.0], "source_metric": "cosine-distance", "source_ordered_ids": ["stored"], "source_runs": 2, "top_k": 1}
+        stable = [{"index": 0, "vector": [1.0], "ranked": [["oracle", 0.2]]}]
+        unstable = [{"index": 0, "vector": [1.0], "ranked": [["other", 0.2]]}]
+        contract = {"source_wing_to_target_wing": {"canonical_repository_rules": {}, "shared_source_rule": {}}}
+        with mock.patch.object(parity, "_run_source_queries", side_effect=[stable, unstable, stable]), mock.patch.object(parity, "_target_query") as target:
+            with self.assertRaisesRegex(ValueError, "unstable"):
+                parity._verify_recall(
+                    base_url="http://127.0.0.1:6333", collection="collection", fixtures=[fixture], contract=contract,
+                    snapshot_dir=Path("/snapshot"), fixtures_path=Path("/fixtures"), oracle_python=Path("/python"), oracle_source_dir=Path("/oracle"), repeats=3,
+                )
+        target.assert_not_called()
+
     def test_cleanup_requires_passing_handoff_and_disjoint_run_bound_paths(self) -> None:
         parity = load_parity_module()
         with tempfile.TemporaryDirectory() as temporary:
