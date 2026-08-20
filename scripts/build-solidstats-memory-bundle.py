@@ -31,6 +31,7 @@ MAX_DOCUMENT_BYTES = 256 * 1024
 MAX_METADATA_BYTES = 64 * 1024
 MAX_VECTOR_DIMENSION = 65_536
 MAX_JSON_BYTES = 64 * 1024 * 1024
+MAX_PRIVATE_SOURCE_ARTIFACT_BYTES = 512 * 1024 * 1024
 RESERVED_METADATA_KEY = "_solidstats_migration"
 PINNED_QDRANT_IMAGE_PATTERN = re.compile(r"^[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}$")
 
@@ -327,8 +328,8 @@ def _write_private(path: Path, value: object, *, jsonl: bool = False) -> str:
 
 
 def _read_jsonl_pairs(records_path: Path, vectors_path: Path) -> list[dict[str, object]]:
-    records = _regular_file(records_path, label="source records", max_bytes=MAX_JSON_BYTES)
-    vectors = _regular_file(vectors_path, label="source vectors", max_bytes=MAX_JSON_BYTES)
+    records = _regular_file(records_path, label="source records", max_bytes=MAX_PRIVATE_SOURCE_ARTIFACT_BYTES)
+    vectors = _regular_file(vectors_path, label="source vectors", max_bytes=MAX_PRIVATE_SOURCE_ARTIFACT_BYTES)
     merged: list[dict[str, object]] = []
     with records.open(encoding="utf-8") as records_file, vectors.open(encoding="utf-8") as vectors_file:
         for index, (record_line, vector_line) in enumerate(zip(records_file, vectors_file, strict=True), 1):

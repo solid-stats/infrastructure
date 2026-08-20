@@ -1090,6 +1090,13 @@ class TransformContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Qdrant image"):
                 bundle.load_pinned_qdrant_image(manifest)
 
+    def test_private_source_artifacts_have_a_separate_bounded_file_cap(self) -> None:
+        bundle = load_bundle_module()
+        self.assertGreater(
+            bundle.MAX_PRIVATE_SOURCE_ARTIFACT_BYTES,
+            bundle.MAX_JSON_BYTES,
+        )
+
     def test_vector_strategy_requires_all_six_reuse_predicates(self) -> None:
         bundle = load_bundle_module()
         source = {
