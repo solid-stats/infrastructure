@@ -551,7 +551,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--oracle-python", required=True)
     parser.add_argument("--oracle-source-dir", required=True)
-    parser.add_argument("--reembed-model-artifact", required=True)
+    parser.add_argument("--reembed-model-artifact")
     parser.add_argument("--qdrant-url", required=True)
     parser.add_argument("--qdrant-image", required=True)
     parser.add_argument("--qdrant-image-manifest", default=ROOT / "k8s/memory/10-qdrant.yaml", type=Path)
@@ -571,9 +571,12 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("private source embedder evidence is invalid")
         source_identity = {"embedder_identity": model_name, "embedder_configuration": source_embedder, "dimension": dimension, "metric": "cosine", "serialization": "json-f32"}
         target_identity = dict(source_identity, metric="Cosine")
-        strategy = select_vector_strategy(source_identity, target_identity, reembed_model_artifact=Path(args.reembed_model_artifact))
+        reembed_artifact = Path(args.reembed_model_artifact) if args.reembed_model_artifact else None
+        strategy = select_vector_strategy(source_identity, target_identity, reembed_model_artifact=reembed_artifact)
         if strategy.strategy != "reuse":
-            artifact = _regular_file(Path(args.reembed_model_artifact), label="reembed model artifact")
+            if reembed_artifact is None:
+                raise ValueError("approved local reembedding artifact is required")
+            _regular_file(reembed_artifact, label="reembed model artifact")
             raise ValueError("approved local reembedding runner is required")
         derivation = derive_collection_with_oracle(Path(args.oracle_python), Path(args.oracle_source_dir), palace_id, namespace, collection)
         points, mappings, excluded = build_target_points(records, contract, target_updated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
