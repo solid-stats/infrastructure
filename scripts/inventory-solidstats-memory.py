@@ -812,6 +812,8 @@ def _build_source_inventory(
     vectors_digest = hashlib.sha256()
     done_seen = False
     with records_path.open("xb") as records_file, vectors_path.open("xb") as vectors_file:
+        os.chmod(records_path, 0o600)
+        os.chmod(vectors_path, 0o600)
         for row in rows:
             if done_seen:
                 raise ValueError("invalid oracle protocol")

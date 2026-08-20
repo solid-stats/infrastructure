@@ -708,6 +708,14 @@ class InventoryContractTests(unittest.TestCase):
             )
             self.assertNotIn(sentence, summary)
             self.assertNotIn(sentence, json.dumps(result, sort_keys=True))
+            self.assertEqual(0o700, stat.S_IMODE(output.stat().st_mode))
+            for name in (
+                "source-records.jsonl",
+                "source-vectors.jsonl",
+                "recall-fixtures.json",
+                "source-inventory.json",
+            ):
+                self.assertEqual(0o600, stat.S_IMODE((output / name).stat().st_mode))
 
     def test_inventory_rejects_secret_shaped_metadata_keys_before_writing(self) -> None:
         inventory = load_inventory_module()
