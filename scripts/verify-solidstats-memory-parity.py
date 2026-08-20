@@ -293,7 +293,7 @@ def derive_source_distance_rule(repeat_runs: Sequence[Sequence[tuple[str, float]
     if len(repeat_runs) < 3 or serialization_floor <= 0:
         raise ParityFailure("source repeatability evidence is invalid")
     baseline = list(repeat_runs[0])
-    if not baseline or any(not isinstance(item[0], str) for item in baseline):
+    if any(not isinstance(item[0], str) for item in baseline):
         raise ParityFailure("source repeatability evidence is invalid")
     worst_delta = 0.0
     for run in repeat_runs[1:]:
@@ -688,6 +688,8 @@ def _verify_recall(*, base_url: str, collection: str, fixtures: Sequence[Mapping
         compared += result["compared"]
         failures += result["failures"]
         worst_delta = max(worst_delta, float(rule["max_distance_delta"]))
+    if compared == 0:
+        raise ParityFailure("recall evidence is non-vacuous")
     return {"compared": compared, "failures": failures, "excluded_fixtures": len(excluded_indices), "source_repeat_runs": repeats, "rule": "source-repeatability-plus-serialization-floor", "worst_safe_delta": worst_delta}
 
 

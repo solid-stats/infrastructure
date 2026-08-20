@@ -1472,8 +1472,8 @@ class ParityContractTests(unittest.TestCase):
         proof = {"source_label_observation_counts": {"wing": {"other_string": 1, "suffix_marked": 0}}}
         excluded = [{"index": 0, "excluded": True}]
         with mock.patch.object(parity, "_run_source_queries", side_effect=[excluded, excluded, excluded]), mock.patch.object(parity, "_target_query") as target:
-            result = parity._verify_recall(base_url="http://127.0.0.1:6333", collection="collection", fixtures=[fixture], contract=contract, source_proof=proof, snapshot_dir=Path("/snapshot"), fixtures_path=Path("/fixtures"), oracle_python=Path("/python"), oracle_source_dir=Path("/oracle"), repeats=3)
-        self.assertEqual({"compared": 0, "failures": 0, "excluded_fixtures": 1, "source_repeat_runs": 3, "rule": "source-repeatability-plus-serialization-floor", "worst_safe_delta": 0.0}, result)
+            with self.assertRaisesRegex(ValueError, "non-vacuous"):
+                parity._verify_recall(base_url="http://127.0.0.1:6333", collection="collection", fixtures=[fixture], contract=contract, source_proof=proof, snapshot_dir=Path("/snapshot"), fixtures_path=Path("/fixtures"), oracle_python=Path("/python"), oracle_source_dir=Path("/oracle"), repeats=3)
         target.assert_not_called()
 
     def test_source_oracle_protocol_has_exclusive_eligible_and_excluded_rows(self) -> None:
