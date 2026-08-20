@@ -583,6 +583,29 @@ def _derive_collection(snapshot_dir: Path, oracle_python: Path, oracle_source_di
         raise ParityFailure("target collection derivation failed") from error
 
 
+def parse_source_oracle_rows(stdout: str) -> list[dict[str, object]]:
+    """Accept exactly one non-overlapping row form for each source fixture."""
+    rows: list[dict[str, object]] = []
+    for line in stdout.splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ParityFailure("source oracle protocol is invalid") from error
+        if not isinstance(row, dict) or not isinstance(row.get("index"), int) or row["index"] < 0:
+            raise ParityFailure("source oracle protocol is invalid")
+        if set(row) == {"index", "excluded"} and row.get("excluded") is True:
+            rows.append(row)
+            continue
+        if set(row) != {"index", "vector", "ranked"} or not isinstance(row.get("vector"), list) or not isinstance(row.get("ranked"), list):
+            raise ParityFailure("source oracle protocol is invalid")
+        _vector_bytes(row["vector"])
+        ranked = row["ranked"]
+        if any(not isinstance(item, list) or len(item) != 2 or not isinstance(item[0], str) or not item[0] or isinstance(item[1], bool) or not isinstance(item[1], (int, float)) or not math.isfinite(item[1]) for item in ranked):
+            raise ParityFailure("source oracle protocol is invalid")
+        rows.append(row)
+    return rows
+
+
 def _run_source_queries(*, snapshot_dir: Path, fixtures_path: Path, oracle_python: Path, oracle_source_dir: Path, eligible_wings: Sequence[str], excluded_indices: Sequence[int]) -> list[dict[str, object]]:
     inventory = _load_inventory_contract()
     try:
@@ -608,16 +631,7 @@ def _run_source_queries(*, snapshot_dir: Path, fixtures_path: Path, oracle_pytho
             raise ParityFailure("source oracle failed") from error
     if result.returncode != 0:
         raise ParityFailure("source oracle failed")
-    rows: list[dict[str, object]] = []
-    for line in result.stdout.splitlines():
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise ParityFailure("source oracle protocol is invalid") from error
-        if not isinstance(row, dict) or not isinstance(row.get("index"), int) or not isinstance(row.get("vector"), list) or not isinstance(row.get("ranked"), list):
-            raise ParityFailure("source oracle protocol is invalid")
-        rows.append(row)
-    return rows
+    return parse_source_oracle_rows(result.stdout)
 
 
 def _target_query(base_url: str, collection: str, vector: object, filters: Mapping[str, object], top_k: int) -> list[tuple[str, float]]:
