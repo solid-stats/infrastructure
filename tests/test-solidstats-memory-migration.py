@@ -645,7 +645,71 @@ class InventoryContractTests(unittest.TestCase):
             self.assertNotEqual(0, completed.returncode)
             self.assertNotIn("synthetic-secret", completed.stderr)
 
-    def test_inventory_rejects_secret_shaped_metadata_values_before_writing(self) -> None:
+    def test_control_plane_guards_reject_secret_shaped_values_value_free(self) -> None:
+        cases = {
+            "mempalace-config.json": (
+                '{"backend":"chroma","collection_name":"synthetic-records",'
+                '"embedding_model":"synthetic-v1","note":"synthetic-secret-value"}'
+            ),
+            "freeze-attestation.json": (
+                '{"write_freeze_at":"2026-08-20T00:00:00Z",'
+                '"note":"synthetic-secret-value"}'
+            ),
+        }
+        for relative, payload in cases.items():
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                snapshot, oracle, output = self.write_snapshot(root)
+                (snapshot / relative).write_text(payload, encoding="utf-8")
+                command = [
+                    "python3", str(INVENTORY_PATH), "--snapshot-dir", str(snapshot),
+                    "--freeze-attestation", str(snapshot / "freeze-attestation.json"),
+                    "--oracle-source-dir", str(oracle), "--output-dir", str(output),
+                    "--oracle-python", str(self.oracle_python),
+                ]
+                completed = subprocess.run(
+                    command, capture_output=True, text=True, check=False, timeout=5
+                )
+                self.assertNotEqual(0, completed.returncode)
+                self.assertNotIn("synthetic-secret-value", completed.stderr)
+                self.assertFalse(output.exists())
+
+    def test_inventory_preserves_ordinary_lexical_secret_metadata_losslessly(self) -> None:
+        inventory = load_inventory_module()
+        sentence = "This public synthetic prose mentions secret without credentials."
+        metadata = {"note": sentence}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, oracle, output = self.write_snapshot(root)
+            self.oracle_python.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json\n"
+                "collection={'name':'synthetic-records','namespace':'solidstats','palace_id':'synthetic-palace','target_name':'x','embedder':{'model_name':'synthetic-v1','dimension':3},'source_metric':'cosine'}\n"
+                "print(json.dumps({'type':'header','record_count':1,'collection':collection}))\n"
+                f"metadata={metadata!r}\n"
+                "print(json.dumps({'type':'record','index':1,'id':'source-1','mempalace_id':'source-1','point_id':'x','document':'synthetic alpha','metadata':metadata,'embedding':[1.0]}))\n"
+                "print(json.dumps({'type':'done','record_count':1}))\n",
+                encoding="utf-8",
+            )
+            self.oracle_python.chmod(self.oracle_python.stat().st_mode | stat.S_IXUSR)
+            result = inventory.build_source_inventory(
+                snapshot_dir=snapshot,
+                freeze_attestation=snapshot / "freeze-attestation.json",
+                oracle_source_dir=oracle,
+                oracle_python=self.oracle_python,
+                output_dir=output,
+            )
+            emitted = json.loads((output / "source-records.jsonl").read_text(encoding="utf-8"))
+            summary = (output / "source-inventory.json").read_text(encoding="utf-8")
+            self.assertEqual(metadata, emitted["metadata"])
+            self.assertEqual(
+                inventory.canonical_json_bytes(metadata),
+                inventory.canonical_json_bytes(emitted["metadata"]),
+            )
+            self.assertNotIn(sentence, summary)
+            self.assertNotIn(sentence, json.dumps(result, sort_keys=True))
+
+    def test_inventory_rejects_secret_shaped_metadata_keys_before_writing(self) -> None:
         inventory = load_inventory_module()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -654,7 +718,7 @@ class InventoryContractTests(unittest.TestCase):
                 "#!/usr/bin/env python3\n"
                 "import json\n"
                 "print(json.dumps({'type':'header','record_count':1,'collection':{'name':'synthetic-records','namespace':'solidstats','palace_id':'synthetic-palace','target_name':'x','embedder':{'model_name':'synthetic-v1','dimension':3},'source_metric':'cosine'}}))\n"
-                "print(json.dumps({'type':'record','index':1,'id':'source-1','mempalace_id':'source-1','point_id':'x','document':'synthetic alpha','metadata':{'note':'API_TOKEN=synthetic-secret'},'embedding':[1.0]}))\n"
+                "print(json.dumps({'type':'record','index':1,'id':'source-1','mempalace_id':'source-1','point_id':'x','document':'synthetic alpha','metadata':{'api_token':''},'embedding':[1.0]}))\n"
                 "print(json.dumps({'type':'done','record_count':1}))\n",
                 encoding="utf-8",
             )
@@ -667,7 +731,7 @@ class InventoryContractTests(unittest.TestCase):
                     oracle_python=self.oracle_python,
                     output_dir=output,
                 )
-            self.assertNotIn("synthetic-secret", str(context.exception))
+            self.assertNotIn("api_token", str(context.exception))
             self.assertFalse(output.exists())
 
     def test_inventory_applies_configured_record_bound_before_output(self) -> None:
