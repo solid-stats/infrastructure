@@ -515,6 +515,31 @@ class MemoryCutoverContractTests(unittest.TestCase):
                         expected_phase20_bindings=bindings,
                     )
 
+    def test_package_builder_accepts_exactly_one_complete_package(self) -> None:
+        bindings = {"binding_sha256": "9" * 64}
+        package = self.root / "built-package"
+        package.mkdir(mode=0o700)
+        (package / "qdrant.snapshot").write_bytes(b"snapshot")
+        (package / "mempalace-metadata.tar").write_bytes(b"metadata")
+
+        result = RESTORE.create_backup_package(
+            package,
+            run_id=self.run_id,
+            phase20_bindings=bindings,
+        )
+
+        self.assertTrue(result["complete"])
+        self.assertEqual(
+            {"SHA256SUMS", "manifest.json", "mempalace-metadata.tar", "qdrant.snapshot"},
+            {path.name for path in package.iterdir()},
+        )
+        with self.assertRaises(RESTORE.RestoreControlError):
+            RESTORE.create_backup_package(
+                package,
+                run_id=self.run_id,
+                phase20_bindings=bindings,
+            )
+
     def test_exact_package_replay_is_idempotent_but_collision_is_refused(self) -> None:
         bindings = {"binding_sha256": "c" * 64}
         package = self.root / "package"
@@ -551,6 +576,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 binding_sha256="e" * 64,
                 resume_run=False,
             )
+        RESTORE.checkpoint_run(lock, "preflight", "e" * 64)
         RESTORE.checkpoint_run(lock, "backup", "f" * 64)
         lock.release()
 
@@ -624,6 +650,41 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertNotIn("probe", aliases)
         self.assertEqual("protected", aliases["active"])
 
+    def test_occupied_target_and_probe_alias_collision_stop_before_mutation(self) -> None:
+        mutation_calls: list[str] = []
+
+        def request(method: str, path: str, body: object = None) -> object:
+            if method != "GET":
+                mutation_calls.append(path)
+            if path == "/collections":
+                return {"result": {"collections": [{"name": "isolated"}]}}
+            if path == "/aliases":
+                return {
+                    "result": {
+                        "aliases": [
+                            {"alias_name": "probe", "collection_name": "protected"}
+                        ]
+                    }
+                }
+            if path == "/collections/isolated":
+                return {"result": {"status": "green"}}
+            raise AssertionError(path)
+
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "collision"):
+            RESTORE.require_absent_target(
+                request,
+                target_collection="isolated",
+                protected_collection="protected",
+            )
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "collision"):
+            RESTORE.probe_alias_compatibility(
+                request,
+                restored_collection="isolated",
+                probe_alias="probe",
+                exact_image_probe=lambda: True,
+            )
+        self.assertEqual([], mutation_calls)
+
     def test_qdrant_adapter_covers_create_download_recover_and_verify(self) -> None:
         calls: list[tuple[str, str, object, bool]] = []
 
@@ -635,7 +696,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             binary: bool = False,
         ) -> object:
             calls.append((method, path, body, binary))
-            if path.endswith("/snapshots") and method == "POST":
+            if path.endswith("/snapshots?wait=true") and method == "POST":
                 return {"status": "ok", "result": {"name": "fixture.snapshot"}}
             if path.endswith("/fixture.snapshot") and method == "GET":
                 return b"snapshot-bytes"
@@ -765,6 +826,18 @@ class MemoryCutoverContractTests(unittest.TestCase):
         public = RESTORE.backup_job_evidence(job)
         self.assertNotIn("private-collection", json.dumps(public))
         self.assertTrue(public["generated"])
+        dry_runs: list[tuple[str, ...]] = []
+
+        def runner(command: tuple[str, ...], **_kwargs: object) -> object:
+            dry_runs.append(command)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        validation = RESTORE.validate_backup_job(output, runner=runner)
+        self.assertTrue(validation["client_dry_run"])
+        self.assertTrue(validation["server_dry_run"])
+        self.assertEqual(2, len(dry_runs))
+        self.assertIn("--dry-run=client", dry_runs[0])
+        self.assertIn("--dry-run=server", dry_runs[1])
 
     def test_alias_probe_restores_prestate_after_probe_failure(self) -> None:
         aliases: dict[str, str] = {}
@@ -801,6 +874,22 @@ class MemoryCutoverContractTests(unittest.TestCase):
         evidence = self.backup_evidence(bindings)
         result = VALIDATOR.validate_backup_restore_evidence(evidence)
         self.assertEqual("pass", result["verdict"])
+
+        evidence_path = self.root / "21-BACKUP-RESTORE-EVIDENCE.json"
+        self.write_json(evidence_path, evidence)
+        cli = subprocess.run(
+            [sys.executable, str(MODULE_PATH), "--evidence", str(evidence_path)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(0, cli.returncode, cli.stderr)
+        self.assertEqual(
+            ["PASS: Phase 21 backup and restore evidence validated"],
+            cli.stdout.splitlines(),
+        )
+        self.assertEqual([], cli.stderr.splitlines())
 
         for mutation in ("missing", "private", "failed"):
             with self.subTest(mutation=mutation):

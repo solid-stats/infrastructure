@@ -25,6 +25,7 @@ DEFAULT_PARITY = (
 )
 STAGE_SCHEMA = "solidstats-memory-phase21-stage/v1"
 EVIDENCE_SCHEMA = "solidstats-memory-phase21-evidence/v1"
+BACKUP_RESTORE_SCHEMA = "solidstats-memory-backup-restore-evidence/v1"
 STAGES = (
     "PREPARED",
     "STAGED",
@@ -45,6 +46,21 @@ EVIDENCE_FIELDS = {
     "checks",
     "started_at",
     "completed_at",
+    "verdict",
+}
+BACKUP_RESTORE_FIELDS = {
+    "schema",
+    "run_id",
+    "phase20_bindings",
+    "quiescence",
+    "capacity",
+    "package_checks",
+    "object_checks",
+    "target_absence",
+    "restore_checks",
+    "parity_checks",
+    "alias_compatibility",
+    "rollback_state",
     "verdict",
 }
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -120,13 +136,24 @@ def _is_digest_key(key: str) -> bool:
     return key.endswith("_sha256") or key.endswith("_digest")
 
 
-def _validate_value_free_node(value: object, *, key: str, depth: int) -> None:
+def _validate_value_free_node(
+    value: object,
+    *,
+    key: str,
+    depth: int,
+    allow_alias_compatibility: bool,
+) -> None:
     if depth > 12:
         raise Phase21ValidationError("evidence nesting exceeds the public bound")
     if key and (
         not SAFE_KEY.fullmatch(key)
         or (
             not _is_digest_key(key)
+            and not (
+                allow_alias_compatibility
+                and depth == 1
+                and key == "alias_compatibility"
+            )
             and any(part in key for part in FORBIDDEN_KEY_PARTS)
         )
     ):
@@ -137,13 +164,23 @@ def _validate_value_free_node(value: object, *, key: str, depth: int) -> None:
         for child_key, child in value.items():
             if not isinstance(child_key, str):
                 raise Phase21ValidationError("evidence contains a prohibited field")
-            _validate_value_free_node(child, key=child_key, depth=depth + 1)
+            _validate_value_free_node(
+                child,
+                key=child_key,
+                depth=depth + 1,
+                allow_alias_compatibility=allow_alias_compatibility,
+            )
         return
     if isinstance(value, list):
         if len(value) > 128:
             raise Phase21ValidationError("evidence list exceeds the public bound")
         for child in value:
-            _validate_value_free_node(child, key=key, depth=depth + 1)
+            _validate_value_free_node(
+                child,
+                key=key,
+                depth=depth + 1,
+                allow_alias_compatibility=allow_alias_compatibility,
+            )
         return
     if value is None:
         raise Phase21ValidationError("evidence contains a null value")
@@ -159,7 +196,11 @@ def _validate_value_free_node(value: object, *, key: str, depth: int) -> None:
         if not SHA256.fullmatch(value):
             raise Phase21ValidationError("evidence contains an invalid digest")
         return
-    if key == "schema" and value in {STAGE_SCHEMA, EVIDENCE_SCHEMA}:
+    if key == "schema" and value in {
+        STAGE_SCHEMA,
+        EVIDENCE_SCHEMA,
+        BACKUP_RESTORE_SCHEMA,
+    }:
         return
     if key == "run_id" and RUN_ID.fullmatch(value):
         return
@@ -174,7 +215,16 @@ def _validate_value_free_node(value: object, *, key: str, depth: int) -> None:
 
 def validate_value_free_payload(payload: object) -> None:
     """Reject corpus-bearing, identifying, secret, or private-path content."""
-    _validate_value_free_node(payload, key="", depth=0)
+    allow_alias_compatibility = (
+        isinstance(payload, Mapping)
+        and payload.get("schema") == BACKUP_RESTORE_SCHEMA
+    )
+    _validate_value_free_node(
+        payload,
+        key="",
+        depth=0,
+        allow_alias_compatibility=allow_alias_compatibility,
+    )
 
 
 def _parse_timestamp(value: object) -> datetime:
@@ -239,6 +289,73 @@ def validate_evidence_envelope(payload: object) -> dict[str, object]:
         raise Phase21ValidationError("evidence timestamps are out of order")
     if payload.get("verdict") not in {"pass", "fail"}:
         raise Phase21ValidationError("evidence verdict is invalid")
+    return dict(payload)
+
+
+def _require_passing_check(
+    section: Mapping[str, object], key: str, message: str
+) -> None:
+    if section.get(key) is not True:
+        raise Phase21ValidationError(message)
+
+
+def validate_backup_restore_evidence(payload: object) -> dict[str, object]:
+    """Validate the exact aggregate backup and isolated-restore evidence."""
+    validate_value_free_payload(payload)
+    if not isinstance(payload, Mapping) or set(payload) != BACKUP_RESTORE_FIELDS:
+        raise Phase21ValidationError("backup and restore evidence fields are invalid")
+    if payload.get("schema") != BACKUP_RESTORE_SCHEMA:
+        raise Phase21ValidationError("backup and restore evidence schema is invalid")
+    run_id = payload.get("run_id")
+    if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id):
+        raise Phase21ValidationError("backup and restore run identity is invalid")
+    bindings = payload.get("phase20_bindings")
+    if not isinstance(bindings, Mapping) or not bindings:
+        raise Phase21ValidationError("backup and restore bindings are invalid")
+    if any(
+        not isinstance(key, str)
+        or not _is_digest_key(key)
+        or not isinstance(value, str)
+        or not SHA256.fullmatch(value)
+        for key, value in bindings.items()
+    ):
+        raise Phase21ValidationError("backup and restore bindings are invalid")
+    sections: dict[str, Mapping[str, object]] = {}
+    for name in BACKUP_RESTORE_FIELDS - {
+        "schema",
+        "run_id",
+        "phase20_bindings",
+        "verdict",
+    }:
+        section = payload.get(name)
+        if not isinstance(section, Mapping) or not section or not _checks_pass(section):
+            raise Phase21ValidationError(
+                "backup and restore checks are not all passing"
+            )
+        sections[name] = section
+    required_checks = {
+        "quiescence": ("stable",),
+        "capacity": ("sufficient",),
+        "package_checks": ("complete",),
+        "object_checks": ("verified",),
+        "target_absence": ("confirmed",),
+        "restore_checks": ("green", "configuration_match", "count_match"),
+        "parity_checks": ("exact",),
+        "alias_compatibility": ("probe_passed", "restored"),
+        "rollback_state": ("active_state_unchanged",),
+    }
+    for section_name, keys in required_checks.items():
+        for key in keys:
+            _require_passing_check(
+                sections[section_name],
+                key,
+                "backup and restore checks are not all passing",
+            )
+    alias = sections["alias_compatibility"]
+    if alias.get("prestate_sha256") != alias.get("poststate_sha256"):
+        raise Phase21ValidationError("alias prestate was not restored")
+    if payload.get("verdict") != "pass":
+        raise Phase21ValidationError("backup and restore verdict is not passing")
     return dict(payload)
 
 
@@ -383,8 +500,12 @@ def main(argv: list[str] | None = None) -> int:
             raise Phase21ValidationError("evidence input is required")
         payloads = [_load_json(path) for path in paths]
         if len(payloads) == 1 and args.handoff is None and args.check_chain is None:
-            validate_evidence_envelope(payloads[0])
-            message = "PASS: Phase 21 evidence validated"
+            if payloads[0].get("schema") == BACKUP_RESTORE_SCHEMA:
+                validate_backup_restore_evidence(payloads[0])
+                message = "PASS: Phase 21 backup and restore evidence validated"
+            else:
+                validate_evidence_envelope(payloads[0])
+                message = "PASS: Phase 21 evidence validated"
         else:
             handoff = args.handoff or DEFAULT_HANDOFF
             parity = (
