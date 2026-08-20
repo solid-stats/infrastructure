@@ -527,10 +527,15 @@ def _snapshot_identity(snapshot_dir: Path) -> tuple[str, str, str, dict[str, obj
 
 def _public_manifest(payload: Mapping[str, object]) -> None:
     allowed = {"transform_schema", "source_inventory_sha256", "oracle_version", "oracle_revision", "mapping_contract_sha256", "collection_derivation_sha256", "source_vector_contract", "target_vector_contract", "vector_strategy", "vector_strategy_reason", "model_artifact_sha256", "point_count", "source_id_set_sha256", "point_id_set_sha256", "bundle_sha256", "qdrant_image", "qdrant_run_id", "empty_target_proof", "import_result", "created_at"}
-    if set(payload) - allowed or not isinstance(payload.get("qdrant_image"), str) or not PINNED_QDRANT_IMAGE_PATTERN.fullmatch(str(payload["qdrant_image"])):
+    if (
+        set(payload) - allowed
+        or payload.get("transform_schema") != "solidstats-memory-transform/v1"
+        or not isinstance(payload.get("qdrant_image"), str)
+        or not PINNED_QDRANT_IMAGE_PATTERN.fullmatch(str(payload["qdrant_image"]))
+    ):
         raise ValueError("transform manifest is unsafe")
     for key, value in payload.items():
-        if key == "qdrant_image":
+        if key in {"qdrant_image", "transform_schema"}:
             continue
         serialized = canonical_json_bytes(value).decode("utf-8")
         if "/" in serialized or "\\" in serialized:
