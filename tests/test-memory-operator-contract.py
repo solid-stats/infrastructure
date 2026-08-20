@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import importlib.util
+import base64
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -208,6 +211,134 @@ class MemoryOperatorContractTests(unittest.TestCase):
         state.assert_called_once_with()
         measured.assert_called_once_with()
 
+    def test_client_state_matches_only_exact_solidstats_registrations(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        entries = [
+            {
+                "name": "mempalace",
+                "enabled": True,
+                "url": OPERATOR.LEGACY_SOLIDSTATS_MCP_URL,
+            },
+            {
+                "name": "solidstats_memory",
+                "enabled": True,
+                "transport": {"url": OPERATOR.MEMORY_PUBLIC_URL},
+            },
+            {
+                "name": "mempalace_personal",
+                "enabled": True,
+                "url": "https://personal.invalid/mempalace",
+            },
+            {
+                "name": "vocalclub_memory",
+                "enabled": True,
+                "url": "https://vocalclub.invalid/solidstats-looking-path",
+            },
+            {
+                "name": "mempalace",
+                "enabled": True,
+                "url": "https://foreign.invalid/solidstats/mcp",
+            },
+        ]
+        with mock.patch.object(runtime, "_run", return_value=json.dumps(entries).encode()):
+            state, writer_count = runtime._mcp_client_state()
+        self.assertEqual(writer_count, 0)
+        self.assertEqual(len(state["legacy"]), 1)
+        self.assertEqual(len(state["replacement"]), 1)
+        self.assertEqual(
+            state["replacement"][0]["write_capability"],
+            "unproven-by-registration",
+        )
+        self.assertEqual(
+            state["legacy"][0]["write_capability"],
+            "frozen-read-only-contract",
+        )
+        self.assertNotIn("personal.invalid", json.dumps(state))
+        self.assertNotIn("vocalclub.invalid", json.dumps(state))
+
+    def test_legacy_read_registration_is_not_counted_as_active_writer(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        entry = {
+            "name": "mempalace",
+            "enabled": True,
+            "url": OPERATOR.LEGACY_SOLIDSTATS_MCP_URL,
+        }
+        with mock.patch.object(runtime, "_run", return_value=json.dumps([entry]).encode()):
+            state, writer_count = runtime._mcp_client_state()
+        self.assertEqual(writer_count, 0)
+        self.assertTrue(state["legacy"][0]["enabled"])
+
+    def test_enabled_replacement_blocks_quiescence_without_being_called_writer(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        client_state = {
+            "registration_sha256": "1" * 64,
+            "legacy": [],
+            "replacement": [{"enabled": True}],
+        }
+        with (
+            mock.patch.object(runtime, "_namespace_exists", return_value=False),
+            mock.patch.object(
+                runtime, "_mcp_client_state", return_value=(client_state, 0)
+            ),
+            mock.patch.object(
+                runtime,
+                "_public_route_state",
+                return_value={"url_binding": "2" * 64, "status": 404},
+            ),
+        ):
+            _prestate, quiescence = runtime._measure_prestate()
+        self.assertEqual(quiescence, {"stable": False, "writer_count": 0})
+
+    def test_runtime_secrets_never_distribute_admin_key_to_consumers(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.qdrant_key = self.root / "admin"
+        runtime.mcp_token = self.root / "mcp"
+        runtime.qdrant_key.write_text("synthetic-admin-key", encoding="ascii")
+        runtime.mcp_token.write_text("synthetic-mcp-token", encoding="ascii")
+        runtime.config = {"private_collection": "synthetic-own-collection"}
+        applied = []
+
+        def kubectl(_arguments, **kwargs):
+            applied.append(kwargs["input_value"])
+            return b""
+
+        with (
+            mock.patch.object(
+                runtime,
+                "_source_s3_values",
+                return_value={
+                    "S3_BUCKET": "bucket",
+                    "S3_ACCESS_KEY_ID": "access",
+                    "S3_SECRET_ACCESS_KEY": "secret",
+                },
+            ),
+            mock.patch.object(runtime, "_kubectl", side_effect=kubectl),
+        ):
+            runtime._apply_runtime_secrets()
+        by_name = {item["metadata"]["name"]: item["stringData"] for item in applied}
+        self.assertEqual(by_name["qdrant-runtime"]["QDRANT_API_KEY"], "synthetic-admin-key")
+        for name, key in (
+            ("mempalace-runtime", "MEMPALACE_QDRANT_API_KEY"),
+            ("memory-backup-runtime", "QDRANT_API_KEY"),
+            ("memory-observer-runtime", "QDRANT_API_KEY"),
+        ):
+            self.assertNotEqual(by_name[name][key], "synthetic-admin-key")
+            header, payload, signature = by_name[name][key].split(".")
+            actual = base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))
+            expected = hmac.new(
+                b"synthetic-admin-key",
+                f"{header}.{payload}".encode("ascii"),
+                hashlib.sha256,
+            ).digest()
+            self.assertTrue(hmac.compare_digest(actual, expected))
+        mempalace_payload = by_name["mempalace-runtime"]["MEMPALACE_QDRANT_API_KEY"].split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(mempalace_payload + "=" * (-len(mempalace_payload) % 4)))
+        self.assertEqual(
+            claims["access"],
+            [{"collection": "synthetic-own-collection", "access": "rw"}],
+        )
+        self.assertNotIn("synthetic-foreign-collection", json.dumps(claims))
+
     def test_capacity_uses_retained_snapshot_and_live_node_not_bundle_total(self) -> None:
         bundle = self.root / "bundle"
         bundle.mkdir(mode=0o700)
@@ -215,6 +346,7 @@ class MemoryOperatorContractTests(unittest.TestCase):
         (bundle / "points.jsonl").write_bytes(b"x" * 4096)
         runtime = object.__new__(OPERATOR.Runtime)
         runtime.bundle_dir = bundle
+        runtime.baseline_snapshot = bundle / "qdrant.snapshot"
         runtime.config = {"qdrant_storage": "4Gi"}
         storage_classes = {
             "items": [
@@ -249,6 +381,7 @@ class MemoryOperatorContractTests(unittest.TestCase):
         bundle.mkdir(mode=0o700)
         runtime = object.__new__(OPERATOR.Runtime)
         runtime.bundle_dir = bundle
+        runtime.baseline_snapshot = bundle / "qdrant.snapshot"
         runtime.config = {"qdrant_storage": "4Gi"}
         with self.assertRaisesRegex(OPERATOR.OperatorError, "private file"):
             runtime._measure_capacity()

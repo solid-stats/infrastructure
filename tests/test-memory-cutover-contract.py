@@ -294,6 +294,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "capacity": {
                 "sufficient": True,
                 "snapshot_bytes": 10,
+                "baseline_snapshot_bytes": 10,
+                "baseline_bound_bytes": 10 + 1024 * 1024,
                 "reserve_bytes": 10,
                 "required_bytes": 30,
                 "pvc_requested_bytes": 40,
@@ -360,6 +362,34 @@ class MemoryCutoverContractTests(unittest.TestCase):
             },
             "verdict": "pass",
         }
+
+    def test_live_snapshot_capacity_is_bound_to_retained_baseline(self) -> None:
+        capacity = {
+            "pvc_requested_bytes": 8 * 1024 * 1024,
+            "pvc_capacity_bytes": 8 * 1024 * 1024,
+            "pvc_free_bytes": 8 * 1024 * 1024,
+            "node_free_bytes": 8 * 1024 * 1024,
+            "reserve_bytes": 1024 * 1024,
+        }
+        accepted = RESTORE.require_live_snapshot_capacity(
+            baseline_snapshot_bytes=1024 * 1024,
+            live_snapshot_bytes=2 * 1024 * 1024,
+            capacity=capacity,
+        )
+        self.assertEqual(accepted["snapshot_bytes"], 2 * 1024 * 1024)
+        self.assertEqual(accepted["baseline_snapshot_bytes"], 1024 * 1024)
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "baseline"):
+            RESTORE.require_live_snapshot_capacity(
+                baseline_snapshot_bytes=1024 * 1024,
+                live_snapshot_bytes=2 * 1024 * 1024 + 1,
+                capacity=capacity,
+            )
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "insufficient"):
+            RESTORE.require_live_snapshot_capacity(
+                baseline_snapshot_bytes=1024 * 1024,
+                live_snapshot_bytes=2 * 1024 * 1024,
+                capacity={**capacity, "pvc_requested_bytes": 4 * 1024 * 1024},
+            )
 
     def test_complete_synthetic_chain_reaches_sealed(self) -> None:
         result = self.validate_chain(self.make_chain(), require_complete=True)

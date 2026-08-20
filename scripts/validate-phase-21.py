@@ -74,6 +74,8 @@ BACKUP_RESTORE_SECTION_FIELDS = {
     "capacity": {
         "sufficient",
         "snapshot_bytes",
+        "baseline_snapshot_bytes",
+        "baseline_bound_bytes",
         "reserve_bytes",
         "required_bytes",
         "pvc_requested_bytes",
@@ -486,6 +488,10 @@ def validate_backup_restore_evidence(payload: object) -> dict[str, object]:
         < capacity.get("pvc_requested_bytes", 0)
         or capacity.get("pvc_free_bytes", 0) < capacity.get("required_bytes", 0)
         or capacity.get("node_free_bytes", 0) < capacity.get("required_bytes", 0)
+        or capacity.get("snapshot_bytes", 0)
+        > capacity.get("baseline_bound_bytes", 0)
+        or capacity.get("baseline_snapshot_bytes", 0)
+        > capacity.get("baseline_bound_bytes", 0)
     ):
         raise Phase21ValidationError("backup and restore capacity is invalid")
     package = sections["package_checks"]

@@ -76,6 +76,8 @@ spec:
                 secretKeyRef:
                   name: qdrant-runtime
                   key: QDRANT_API_KEY
+            - name: QDRANT__SERVICE__JWT_RBAC
+              value: "true"
           readinessProbe:
             httpGet:
               path: /healthz

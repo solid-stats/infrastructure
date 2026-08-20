@@ -607,6 +607,44 @@ def require_restore_capacity(
     }
 
 
+def require_live_snapshot_capacity(
+    *, baseline_snapshot_bytes: int, live_snapshot_bytes: int, capacity: Mapping[str, object]
+) -> dict[str, object]:
+    """Bind live recovery size to the retained baseline and measured headroom."""
+    baseline = _require_positive_int(
+        baseline_snapshot_bytes, "baseline snapshot size is invalid"
+    )
+    live = _require_positive_int(live_snapshot_bytes, "live snapshot size is invalid")
+    # Allow bounded serialization variance and modest growth, but make a large
+    # corpus/capacity drift a fresh operator decision before recovery.
+    maximum = baseline + max(baseline // 4, 1024 * 1024)
+    if live > maximum:
+        raise RestoreControlError("live snapshot exceeds the retained baseline bound")
+    required_keys = {
+        "pvc_requested_bytes",
+        "node_free_bytes",
+        "reserve_bytes",
+    }
+    if not isinstance(capacity, Mapping) or not required_keys <= set(capacity):
+        raise RestoreControlError("restore capacity proof is unavailable")
+    measured = require_restore_capacity(
+        snapshot_bytes=live,
+        pvc_requested_bytes=capacity["pvc_requested_bytes"],
+        node_free_bytes=capacity["node_free_bytes"],
+        reserve_bytes=capacity["reserve_bytes"],
+    )
+    result = {
+        **measured,
+        "baseline_snapshot_bytes": baseline,
+        "baseline_bound_bytes": maximum,
+    }
+    for key in ("pvc_capacity_bytes", "pvc_free_bytes"):
+        result[key] = _require_positive_int(
+            capacity.get(key), "restore capacity proof is unavailable"
+        )
+    return result
+
+
 def create_snapshot(request: Callable[..., object], source_collection: str) -> str:
     """Create a collection snapshot and return its validated opaque name."""
     source = _require_name(source_collection, "snapshot source is invalid")
@@ -1891,6 +1929,11 @@ def _run_isolated_restore(
     capacity = preflight.get("capacity")
     if not isinstance(capacity, Mapping) or capacity.get("sufficient") is not True:
         raise RestoreControlError("restore capacity proof is unavailable")
+    live_capacity = require_live_snapshot_capacity(
+        baseline_snapshot_bytes=capacity.get("snapshot_bytes"),
+        live_snapshot_bytes=package.get("snapshot_bytes"),
+        capacity=capacity,
+    )
     current = _stage_bindings(inputs)
     if current != bindings:
         raise RestoreControlError("Phase 20 binding drift detected before mutation")
@@ -1903,6 +1946,7 @@ def _run_isolated_restore(
     return {
         "bindings": bindings,
         "target_absence": absence,
+        "capacity": live_capacity,
         "recovery": recovery,
     }
 
@@ -2012,7 +2056,7 @@ def _run_verify_restore(
         "run_id": inputs.run_id,
         "phase20_bindings": bindings,
         "quiescence": quiescence,
-        "capacity": preflight["capacity"],
+        "capacity": restored["capacity"],
         "package_checks": backup["package_checks"],
         "object_checks": backup["object_checks"],
         "target_absence": restored["target_absence"],

@@ -5,6 +5,10 @@ from __future__ import annotations
 
 import os
 import re
+import base64
+import hashlib
+import hmac
+import json
 import shutil
 import signal
 import subprocess
@@ -106,6 +110,7 @@ class MemorySecretRendererContractTests(unittest.TestCase):
 
     values = {
         "MEMORY_QDRANT_API_KEY": "synthetic-qdrant-key",
+        "MEMORY_QDRANT_COLLECTION": "synthetic-own-collection",
         "MEMORY_MCP_HTTP_TOKEN": "synthetic-mcp-token",
         "S3_BUCKET": "synthetic-bucket",
         "S3_ACCESS_KEY_ID": "synthetic-access-key",
@@ -122,13 +127,67 @@ class MemorySecretRendererContractTests(unittest.TestCase):
         rendered = self.render(self.values)
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
         documents = list(yaml.safe_load_all(rendered.stdout))
-        self.assertEqual([document["metadata"]["name"] for document in documents], ["qdrant-runtime", "mempalace-runtime", "memory-backup-runtime"])
+        self.assertEqual([document["metadata"]["name"] for document in documents], ["qdrant-runtime", "mempalace-runtime", "memory-backup-runtime", "memory-observer-runtime"])
         self.assertTrue(all(document["metadata"]["namespace"] == "solidstats-memory" for document in documents))
         self.assertEqual(set(documents[0]["stringData"]), {"QDRANT_API_KEY"})
         self.assertEqual(set(documents[1]["stringData"]), {"MEMPALACE_QDRANT_API_KEY", "MEMPALACE_MCP_HTTP_TOKEN"})
         self.assertEqual(set(documents[2]["stringData"]), {"QDRANT_API_KEY", "S3_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"})
+        self.assertEqual(set(documents[3]["stringData"]), {"QDRANT_API_KEY"})
+        self.assertEqual(
+            documents[0]["stringData"]["QDRANT_API_KEY"],
+            self.values["MEMORY_QDRANT_API_KEY"],
+        )
+        self.assertNotEqual(
+            documents[1]["stringData"]["MEMPALACE_QDRANT_API_KEY"],
+            self.values["MEMORY_QDRANT_API_KEY"],
+        )
+        self.assertNotEqual(
+            documents[2]["stringData"]["QDRANT_API_KEY"],
+            self.values["MEMORY_QDRANT_API_KEY"],
+        )
         self.assertNotIn("S3_ENDPOINT", rendered.stdout)
         self.assertNotIn("S3_PREFIX", rendered.stdout)
+
+    def decode_and_verify(self, token: str) -> dict[str, object]:
+        header, payload, signature = token.split(".")
+        padded = payload + "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(padded))
+        expected = hmac.new(
+            self.values["MEMORY_QDRANT_API_KEY"].encode(),
+            f"{header}.{payload}".encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        actual = base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))
+        self.assertTrue(hmac.compare_digest(expected, actual))
+        return claims
+
+    def test_renderer_signs_least_privilege_qdrant_tokens(self) -> None:
+        documents = list(yaml.safe_load_all(self.render(self.values).stdout))
+        claims = {
+            document["metadata"]["name"]: self.decode_and_verify(
+                document["stringData"][
+                    "MEMPALACE_QDRANT_API_KEY"
+                    if document["metadata"]["name"] == "mempalace-runtime"
+                    else "QDRANT_API_KEY"
+                ]
+            )
+            for document in documents[1:]
+        }
+        own = [
+            {"collection": self.values["MEMORY_QDRANT_COLLECTION"], "access": "rw"}
+        ]
+        self.assertEqual(claims["mempalace-runtime"]["access"], own)
+        self.assertEqual(claims["memory-backup-runtime"]["access"], own)
+        self.assertEqual(
+            claims["memory-observer-runtime"]["access"],
+            [
+                {
+                    "collection": self.values["MEMORY_QDRANT_COLLECTION"],
+                    "access": "r",
+                }
+            ],
+        )
+        self.assertNotIn("synthetic-foreign-collection", json.dumps(claims))
 
     def test_missing_input_fails_before_any_yaml_output(self) -> None:
         for missing in self.values:
@@ -200,7 +259,17 @@ class MemoryDeployWorkflowContractTests(unittest.TestCase):
             self.assertIn(f"secrets.{name}", self.workflow)
         secret_names = set(re.findall(r"secrets\.([A-Z0-9_]+)", self.workflow))
         established = {"DEPLOY_SSH_PRIVATE_KEY", "DEPLOY_SSH_KNOWN_HOSTS", "DEPLOY_SSH_HOST", "DEPLOY_SSH_USER", "K8S_CA_CERT"}
-        self.assertEqual(secret_names - established - {"S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"}, {"K8S_MEMORY_TOKEN", "MEMORY_QDRANT_API_KEY", "MEMORY_MCP_HTTP_TOKEN"})
+        self.assertEqual(
+            secret_names
+            - established
+            - {"S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"},
+            {
+                "K8S_MEMORY_TOKEN",
+                "MEMORY_QDRANT_API_KEY",
+                "MEMORY_QDRANT_COLLECTION",
+                "MEMORY_MCP_HTTP_TOKEN",
+            },
+        )
 
 
 class MemoryValidatorContractTests(unittest.TestCase):

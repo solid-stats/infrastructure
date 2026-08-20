@@ -96,6 +96,11 @@ def require_workload_safety(docs: dict[str, str]) -> None:
         doc = docs[name]
         require("readinessProbe:" in doc and "livenessProbe:" in doc, f"{name} lacks probes")
     require(QDRANT_IMAGE in docs["StatefulSet/qdrant"], "Qdrant image digest is not pinned to the verified artifact")
+    require(
+        'name: QDRANT__SERVICE__JWT_RBAC\n              value: "true"'
+        in docs["StatefulSet/qdrant"],
+        "Qdrant JWT RBAC is not enabled",
+    )
     require("type: ClusterIP" in docs["Service/qdrant"], "Qdrant must be a private ClusterIP service")
     require("clusterIP: None" in docs["Service/qdrant"], "Qdrant StatefulSet requires a headless governing service")
     require("type: LoadBalancer" not in docs["Service/qdrant"] and "type: NodePort" not in docs["Service/qdrant"], "Qdrant is publicly exposed")
@@ -222,6 +227,11 @@ def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
         require(marker in observer, f"observer misses {marker}")
     compile(textwrap.dedent(observer.split("exporter.py: |", 1)[1]), "exporter.py", "exec")
     deployment = docs["Deployment/solidstats-memory-observer"]
+    require(
+        "name: memory-observer-runtime" in deployment
+        and "name: qdrant-runtime" not in deployment,
+        "observer must use its read-only Qdrant credential",
+    )
     require("MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST" in deployment or not PLACEHOLDER_RE.search(deployment), "observer image is not rendered")
     require("automountServiceAccountToken: false" in deployment and "port: 9108" in docs["Service/solidstats-memory-observer"], "observer boundary is incomplete")
 
@@ -294,7 +304,16 @@ def require_deploy_input_contract() -> None:
         require(f"secrets.{name}" in workflow and f'required("{name}")' in secret_renderer, f"S3 secret contract missing: {name}")
     names = set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow))
     established = {"DEPLOY_SSH_PRIVATE_KEY", "DEPLOY_SSH_KNOWN_HOSTS", "DEPLOY_SSH_HOST", "DEPLOY_SSH_USER", "K8S_CA_CERT", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"}
-    require(names - established == {"K8S_MEMORY_TOKEN", "MEMORY_QDRANT_API_KEY", "MEMORY_MCP_HTTP_TOKEN"}, "memory-specific secret inventory changed")
+    require(
+        names - established
+        == {
+            "K8S_MEMORY_TOKEN",
+            "MEMORY_QDRANT_API_KEY",
+            "MEMORY_QDRANT_COLLECTION",
+            "MEMORY_MCP_HTTP_TOKEN",
+        },
+        "memory-specific secret inventory changed",
+    )
     identity = workflow.index("auth whoami")
     for mutation in ("--dry-run=server", "apply --server-side"):
         require(identity < workflow.index(mutation), "memory identity check must precede mutation")

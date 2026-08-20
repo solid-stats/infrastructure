@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import base64
 import hashlib
 import hmac
 import http.client
@@ -70,6 +71,7 @@ PACKAGE_MEMBERS = (
     "qdrant.snapshot",
 )
 MEMORY_PUBLIC_URL = "https://solid-stats.ru/solidstats/mcp"
+LEGACY_SOLIDSTATS_MCP_URL = "https://89.223.124.200:8443/solidstats/mcp"
 S3_ENDPOINT = "https://s3.twcstorage.ru"
 OFFICIAL_MEMPALACE_IMAGE = (
     "ghcr.io/mempalace/mempalace@"
@@ -100,6 +102,19 @@ def canonical(value: object) -> bytes:
 
 def digest(value: object) -> str:
     return hashlib.sha256(canonical(value)).hexdigest()
+
+
+def qdrant_jwt(secret_value: str, payload: Mapping[str, object]) -> str:
+    """Create the exact HS256 token format accepted by Qdrant JWT RBAC."""
+    header = {"alg": "HS256", "typ": "JWT"}
+
+    def encode(value: object) -> str:
+        return base64.urlsafe_b64encode(canonical(value)).rstrip(b"=").decode("ascii")
+
+    segments = [encode(header), encode(dict(payload))]
+    signing_input = ".".join(segments).encode("ascii")
+    signature = hmac.new(secret_value.encode(), signing_input, hashlib.sha256).digest()
+    return ".".join((*segments, base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")))
 
 
 def storage_bytes(value: object) -> int:
@@ -324,6 +339,7 @@ class Runtime:
             "repo_root",
             "state_root",
             "bundle_dir",
+            "baseline_snapshot_path",
             "kube_context",
             "source_secret_namespace",
             "source_secret_name",
@@ -346,6 +362,12 @@ class Runtime:
         self.repo_root = Path(str(config["repo_root"])).resolve(strict=True)
         self.state_root = private_directory(Path(str(config["state_root"])), create=True)
         self.bundle_dir = private_directory(Path(str(config["bundle_dir"])))
+        self.baseline_snapshot = Path(str(config["baseline_snapshot_path"])).resolve(
+            strict=True
+        )
+        baseline_details = regular_file(self.baseline_snapshot)
+        if stat.S_IMODE(baseline_details.st_mode) != 0o600:
+            raise OperatorError("baseline snapshot mode is unsafe")
         self.context = safe_name(config["kube_context"], "Kubernetes context is invalid")
         self.source_secret_namespace = safe_name(
             config["source_secret_namespace"], "source Secret binding is invalid"
@@ -663,15 +685,39 @@ class Runtime:
             raise OperatorError("MCP client pre-state probe failed")
         writers = 0
         legacy = []
+        replacement = []
         for entry in entries:
-            encoded = canonical(entry).lower()
-            relevant = b"mempalace" in encoded or b"solidstats" in encoded
-            if relevant and isinstance(entry, Mapping):
-                if entry.get("name") != "solidstats_memory":
-                    legacy.append(entry)
-                if entry.get("enabled") is True:
-                    writers += 1
-        return {"all": value, "legacy": legacy}, writers
+            if not isinstance(entry, Mapping):
+                continue
+            transport = entry.get("transport")
+            url = entry.get("url")
+            if not isinstance(url, str) and isinstance(transport, Mapping):
+                url = transport.get("url")
+            enabled = entry.get("enabled") is True
+            name = entry.get("name")
+            if name == "mempalace" and url == LEGACY_SOLIDSTATS_MCP_URL:
+                legacy.append(
+                    {
+                        "name": "mempalace",
+                        "url_binding_sha256": digest(LEGACY_SOLIDSTATS_MCP_URL),
+                        "enabled": enabled,
+                        "write_capability": "frozen-read-only-contract",
+                    }
+                )
+            elif name == "solidstats_memory" and url == MEMORY_PUBLIC_URL:
+                replacement.append(
+                    {
+                        "name": "solidstats_memory",
+                        "url_binding_sha256": digest(MEMORY_PUBLIC_URL),
+                        "enabled": enabled,
+                        "write_capability": "unproven-by-registration",
+                    }
+                )
+        return {
+            "registration_sha256": digest(value),
+            "legacy": legacy,
+            "replacement": replacement,
+        }, writers
 
     def _measure_prestate(self) -> tuple[dict[str, str], dict[str, object]]:
         namespace_exists = self._namespace_exists()
@@ -699,14 +745,20 @@ class Runtime:
         prestate = {
             "active_alias_sha256": digest(alias_state),
             "nginx_sha256": digest(nginx_state),
-            "mcp_registration_sha256": digest(client_state["all"]),
+            "mcp_registration_sha256": client_state["registration_sha256"],
             "legacy_runtime_sha256": digest(client_state["legacy"]),
             "schedule_sha256": digest(schedule_state),
         }
-        return prestate, {"stable": writer_count == 0, "writer_count": writer_count}
+        replacement_enabled = any(
+            entry.get("enabled") is True for entry in client_state["replacement"]
+        )
+        return prestate, {
+            "stable": writer_count == 0 and not replacement_enabled,
+            "writer_count": writer_count,
+        }
 
     def _measure_capacity(self) -> dict[str, int]:
-        snapshot_bytes = regular_file(self.bundle_dir / "qdrant.snapshot").st_size
+        snapshot_bytes = regular_file(self.baseline_snapshot).st_size
         requested = storage_bytes(self.config["qdrant_storage"])
         classes = self._kubectl_json(["get", "storageclass"])
         class_items = classes.get("items") if isinstance(classes, Mapping) else None
@@ -1054,24 +1106,49 @@ class Runtime:
 
     def _apply_runtime_secrets(self) -> None:
         s3 = self._source_s3_values()
+        admin_key = self.qdrant_key.read_text(encoding="ascii")
+        collection_access = [
+            {"collection": self.config["private_collection"], "access": "rw"}
+        ]
+        mempalace_token = qdrant_jwt(
+            admin_key,
+            {"sub": "solidstats-memory-mempalace", "access": collection_access},
+        )
+        backup_token = qdrant_jwt(
+            admin_key,
+            {"sub": "solidstats-memory-backup", "access": collection_access},
+        )
+        observer_token = qdrant_jwt(
+            admin_key,
+            {
+                "sub": "solidstats-memory-observer",
+                "access": [
+                    {
+                        "collection": self.config["private_collection"],
+                        "access": "r",
+                    }
+                ],
+            },
+        )
         documents = [
-            ("qdrant-runtime", {"QDRANT_API_KEY": self.qdrant_key.read_text(encoding="ascii")}),
+            ("qdrant-runtime", {"QDRANT_API_KEY": admin_key}),
             (
                 "mempalace-runtime",
                 {
-                    "MEMPALACE_QDRANT_API_KEY": self.qdrant_key.read_text(encoding="ascii"),
+                    "MEMPALACE_QDRANT_API_KEY": mempalace_token,
                     "MEMPALACE_MCP_HTTP_TOKEN": self.mcp_token.read_text(encoding="ascii"),
                 },
             ),
             (
                 "memory-backup-runtime",
                 {
-                    "QDRANT_API_KEY": self.qdrant_key.read_text(encoding="ascii"),
+                    "QDRANT_API_KEY": backup_token,
                     "S3_BUCKET": s3["S3_BUCKET"],
                     "AWS_ACCESS_KEY_ID": s3["S3_ACCESS_KEY_ID"],
                     "AWS_SECRET_ACCESS_KEY": s3["S3_SECRET_ACCESS_KEY"],
                 },
             ),
+            ("memory-observer-runtime", {"QDRANT_API_KEY": observer_token}),
         ]
         for name, string_data in documents:
             document = {
