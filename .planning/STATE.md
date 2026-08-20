@@ -6,7 +6,7 @@ current_phase: 21
 current_phase_name: Restore, Cutover & Recovery
 status: paused
 stopped_at: Phase 20 completed and verified; paused before Phase 21 per user request
-last_updated: "2026-08-20T09:41:31.495Z"
+last_updated: "2026-08-20T11:02:40.973Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 20 completed and verified; Phase 21 intentionally paused
 progress:
@@ -281,6 +281,7 @@ Recent decisions affecting current work:
 | 260614-tvy | Migrate CD from WireGuard to SSH tunnel for k3s access (Timeweb blocks inbound UDP at the hypervisor — WG dead; TCP/SSH works). New ssh-tunnel-up.sh + kubeconfig 127.0.0.1:16443 with tls-server-name; both workflows swap WG→SSH. wg-tunnel-up.sh + WG secrets initially retained (later fully removed in 260614-ulu) | 2026-06-14 | 1bade73 | [260614-tvy-migrate-cd-from-wireguard-to-ssh-tunnel-](./quick/260614-tvy-migrate-cd-from-wireguard-to-ssh-tunnel-/) |
 | 260614-ulu | Remove all WireGuard remnants from the repo (WG fully decommissioned — server+local interfaces, GitHub WG_* secrets, VPS ufw rules all torn down out-of-band). Deleted wg-tunnel-up.sh; reworked bootstrap-edge.sh + validate-edge.py + teardown-edge.sh (6443 private behind the SSH forward under ufw default-deny, no wg0 rule); swept README/AGENTS/6 docs + 5 script comments; renamed docs/wireguard-access.md→k3s-api-access.md. Zero WG refs outside .planning | 2026-06-14 | d7a4858 | [260614-ulu-remove-wireguard-remnants-from-repo-cd-r](./quick/260614-ulu-remove-wireguard-remnants-from-repo-cd-r/) |
 | 260617-024 | Split replays-fetcher into a continuous page-1 **watch Deployment** (52-replays-fetcher-watch.yaml, args watch, node-exec heartbeat liveness) + a nightly full **run-once CronJob** (50-..., 08:00 Europe/Moscow, suspend off); both pinned to the watch-daemon image 9f091bf | 2026-06-17 | 04ed606 | [260617-024-split-replays-fetcher-into-watch-deploym](./quick/260617-024-split-replays-fetcher-into-watch-deploym/) |
+| 6 | Correct stale milestone plan counter in ROADMAP.md | 2026-08-20 | b41619c | — |
 
 ## Deferred Items
 
