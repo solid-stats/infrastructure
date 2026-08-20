@@ -1,49 +1,57 @@
 {
   "version": "1.0",
-  "timestamp": "2026-08-20T09:45:30.734Z",
+  "timestamp": "2026-08-20T16:11:04.531Z",
   "phase": "21",
   "phase_name": "Restore, Cutover & Recovery",
-  "phase_dir": ".planning",
-  "plan": 0,
-  "task": 0,
-  "total_tasks": 0,
+  "phase_dir": ".planning/phases/21-restore-cutover-recovery",
+  "plan": 2,
+  "task": 2,
+  "total_tasks": 2,
   "status": "paused",
   "completed_tasks": [
     {
-      "id": 20,
-      "name": "Complete and verify Local Corpus Migration",
+      "id": 1,
+      "name": "Implement fail-closed backup and isolated restore control",
       "status": "done",
-      "commit": "e469b9b"
+      "commit": "7c0ccab"
     }
   ],
   "remaining_tasks": [
     {
-      "id": 21,
-      "name": "Discuss, plan, and execute Restore, Cutover & Recovery",
+      "id": 2,
+      "name": "Authorize and prove one live backup plus isolated restore",
       "status": "not_started"
     }
   ],
-  "blockers": [],
+  "blockers": [
+    {
+      "description": "The live JsonOperatorAdapter requires an absolute private operator executable implementing all bounded JSON operations; no such executable has been built yet.",
+      "type": "technical",
+      "workaround": "Create and validate a restrictive ephemeral operator under a mode-0700 private run root before the first mutation."
+    }
+  ],
   "async_jobs": [],
   "human_actions_pending": [],
   "decisions": [
     {
-      "decision": "Preserve lossless source data even when that retains duplicate representations and approved exclusions outside the target import.",
-      "rationale": "The approved mapping contract prioritizes preventing data loss over storage duplication.",
-      "phase": "20"
+      "decision": "The user's approval covers exactly one live preflight, one-shot backup, isolated restore, parity check, and temporary alias compatibility probe.",
+      "rationale": "Active alias, nginx, client registrations, legacy service, and recurring schedule activation remain outside Plan 21-02 Task 2.",
+      "phase": "21"
     },
     {
-      "decision": "Use strict cross-engine ANN equivalence instead of exact ordered top-k identity.",
-      "rationale": "Chroma and Qdrant build different HNSW graphs; exact field, ID, metadata, timestamp, and vector parity remains zero-tolerance while recall requires equal lengths, exact top-1, at least 80 percent overlap, preserved common-result order, and bounded common distances.",
-      "phase": "20"
+      "decision": "Keep the live operator private and ephemeral instead of committing credentials or private bindings.",
+      "rationale": "The repository may retain only value-free aggregate evidence; secrets, private paths, collection names, and raw responses must stay outside Git and command output.",
+      "phase": "21"
     },
     {
-      "decision": "Remove the disposable local Qdrant target only after parity and handoff validation pass.",
-      "rationale": "Phase 21 must start from retained provenance-bound snapshot, source, bundle, report, and handoff artifacts rather than a leftover target runtime.",
-      "phase": "20"
+      "decision": "Recurring backup activation remains gated by the revised Plan 21-04 quiescence, metadata consistency, API-access, recovery, and write-resumption proof.",
+      "rationale": "A successful initial quiescent backup does not prove steady-state package consistency after clients can write.",
+      "phase": "21"
     }
   ],
-  "uncommitted_files": [],
-  "next_action": "Run $gsd-resume-work, confirm STATE.md and ROADMAP.md still point to Phase 21, then run $gsd-discuss-phase 21.",
-  "context_notes": "Phase 20 is complete and verified. Phase 21 has no directory, context, or plans yet. The disposable Qdrant collection, container, and data directory were removed after a passing parity report. Retained private snapshot, source quartet, and bundle remain local and must be rediscovered through their provenance-bound public artifacts without printing or committing private paths or values. No background processes or async jobs remain."
+  "uncommitted_files": [
+    ".gsd/dispatch-isolation-sentinel.json (pre-existing untracked orchestration artifact; preserve and do not stage)"
+  ],
+  "next_action": "Run $gsd-resume-work, verify the Plan 21-02 worktree is clean at 7c0ccab and the solidstats-memory namespace is still absent, then dispatch a fresh GSD executor for Task 2 with the existing explicit live-operation approval.",
+  "context_notes": "Plan 21-01 is complete on the milestone branch at f2e4c6b. Plan 21-02 Task 1 is complete in .claude/worktrees/agent-p21-02-wave1 on branch worktree-agent-p21-02-wave1 with commits 9dbd7e9, 8639ee5, dbf5db5, and 7c0ccab; the worktree is clean and has not been merged or pushed. The four-file memory suite passes 112/112. No live Task 2 mutation occurred: the solidstats-memory namespace and its resources are absent, no backup or restore process is running, and there are no async job manifests. Retained Phase 20 private inputs and live credentials are locally available but must be rediscovered without printing private values or paths."
 }
