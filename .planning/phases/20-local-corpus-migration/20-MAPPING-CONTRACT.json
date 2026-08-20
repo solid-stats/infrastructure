@@ -3,7 +3,7 @@
   "status": "approved",
   "source_inventory_sha256": "4dee25e8b4b44193e6b138214f0161d75f77771811ad12cab9ea5a07b358b9c1",
   "approved_at": "2026-08-20T07:42:36Z",
-  "approval_digest": "a1e4c6ada44f4ec24c05f12093a8f13a2bd34ce92d5e6faa029c573ca7cbf956",
+  "approval_digest": "d3d36fd9229203f4207a6b678894cf4a4eb7fcca00ec7a767ec49997d2e81142",
   "timestamp_semantics": {
     "preserved_fields": [
       "content_date",
@@ -42,6 +42,7 @@
     "retention": "Retain excluded records in the immutable source snapshot and private evidence for separate audit; do not delete them."
   },
   "preservation_representation": {
+    "approval_token": "approve-complete-contract",
     "standard_fields": "Keep the source identifier, document bytes, and reused vector exact in the standard MemPalace/Qdrant fields.",
     "operational_metadata": "Use a copy of source metadata with only operational wing changed for archive routing; retain original room and every other field unchanged.",
     "source_metadata_copy": {
