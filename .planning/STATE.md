@@ -5,15 +5,15 @@ milestone_name: SolidStats Memory Isolation
 current_phase: 20
 current_phase_name: Local Corpus Migration
 status: ready_to_execute
-stopped_at: Completed 20-07-PLAN.md; Plan 20-09 pending execution
-last_updated: "2026-08-20T08:51:15+07:00"
+stopped_at: Completed 20-09-PLAN.md; Plan 20-04 ready to execute
+last_updated: "2026-08-20T10:00:00+07:00"
 last_activity: 2026-08-20
-last_activity_desc: Plan 20-07 complete; exact-image inventory diagnosed and Plan 20-09 ready
+last_activity_desc: Plan 20-09 complete; exact-image source inventory passed and Plan 20-04 ready
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 15
-  completed_plans: 10
+  completed_plans: 11
   percent: 25
 ---
 
@@ -31,9 +31,9 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 20 — Local Corpus Migration
-Plan: 20-09 of 9 — source-admission lexical gap closure
+Plan: 20-04 of 9 — real-source evidence publication
 Status: Ready to execute
-Last activity: 2026-08-20 — Plan 20-07 complete; exact-image inventory diagnosed and Plan 20-09 ready
+Last activity: 2026-08-20 — Plan 20-09 complete; main-owned exact-image inventory passed and Plan 20-04 is ready
 
 **Plan 20-07 completion evidence:**
 
@@ -42,17 +42,20 @@ Last activity: 2026-08-20 — Plan 20-07 complete; exact-image inventory diagnos
 - All 30 offline tests, compile, CLI help, and policy/validator zero-diff gates passed.
 - Timestamp precedence/normalization, target routing, legacy labels, excluded-source disposition, and preservation representation remain unresolved for the blocking Plan 20-08 human checkpoint.
 
-**Value-free exact-image inventory evidence:**
+**Plan 20-09 completion and value-free exact-image evidence:**
 
-- Records 1..2063 passed source admission.
-- Record 2064 failed in fixed category `metadata_secret_value` with detail `secret:lexical_only`.
-- No corpus value was copied into repository evidence. Plan 20-09 closes this source-admission gap before Plan 20-04 reruns complete inventory.
+- All 34 offline tests, compile, CLI help, policy validation, and policy/validator zero-diff gates passed.
+- The pinned exact image ran with networking disabled and emitted only the successful contract-validation line.
+- The inventory completed 19,555 records with a matching number of vectors, matching private line totals, exactly four expected private files, restrictive directory and file modes, matching cross-artifact checksums, and a fresh authoritative snapshot-digest match.
+- Schema version 1, the private-evidence marker, and shape evidence were present. Temporary container and probe artifacts were removed; the immutable snapshot and successful private inventory remain retained for Plan 20-04.
+- No corpus values, identifiers, metadata values, documents, vectors, paths, credentials, or secrets were copied into repository evidence.
+- Timestamp precedence/normalization, wing mapping, room/archive treatment, agent/other-wing disposition, and preservation representation remain unresolved. No mapping decision was selected; Plan 20-08 remains the later blocking human checkpoint.
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 10 (this milestone)
+- Total plans completed: 11/15 (this milestone)
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -64,7 +67,7 @@ Last activity: 2026-08-20 — Plan 20-07 complete; exact-image inventory diagnos
 | 08 | 3 | - | - |
 | 09 | 1 | - | - |
 | 19 | 6 | - | - |
-| 20 | 4 | - | - |
+| 20 | 5 | - | - |
 
 **Recent Trend:**
 
@@ -110,6 +113,7 @@ Last activity: 2026-08-20 — Plan 20-07 complete; exact-image inventory diagnos
 | Phase 20 P02 | 5        | 2 tasks | 2 files |
 | Phase 20 P03 | 1m       | 2 tasks | 1 files |
 | Phase 20 P07 | 0m       | 2 tasks | 2 files |
+| Phase 20 P09 | 0m       | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -261,11 +265,11 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-20T08:51:15+07:00
-Stopped at: Completed 20-07-PLAN.md; Plan 20-09 pending execution
+Last session: 2026-08-20T10:00:00+07:00
+Stopped at: Completed 20-09-PLAN.md; Plan 20-04 ready to execute
 Resume file: None
 
 ## Operator Next Steps
 
-- Execute Plan 20-09, then require the main-owned exact-image inventory rerun before Plan 20-04.
-- Keep Plan 20-08 blocked until complete sanitized inventory evidence is available for explicit human mapping approval.
+- Execute Plan 20-04 using the retained successful private inventory to publish sanitized real-source evidence.
+- Keep the authoritative dependency chain `20-03 -> 20-07 -> 20-09 -> 20-04 -> 20-08 -> 20-05 -> 20-06` and retain the blocking human checkpoint at Plan 20-08.

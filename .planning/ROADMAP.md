@@ -363,13 +363,15 @@ Plans:
 
 **Plans**: TBD
 
-### 🚧 v4.0 SolidStats Memory Isolation (Planned)
+### 🚧 v4.0 SolidStats Memory Isolation (In Progress)
 
 **Milestone Goal:** Isolate SolidStats memory from all personal and product
 palaces, migrate the accepted corpus locally into private Qdrant using a
 source-reviewed transform and evidence-backed embedding strategy, and cut over
 only after backup, restore, auth, MCP, recall, capture, restart, and reboot
 verification.
+
+**Milestone plan progress:** 11/15 plans complete.
 
 #### Phase 19: SolidStats Memory Foundation
 
@@ -386,7 +388,7 @@ strategy, transform locally, and prove identifier/metadata/vector/recall parity
 in isolated Qdrant.
 **Depends on:** Phase 19
 **Requirements:** MIG-01..02
-**Plans:** 4/9 plans executed; Plan 20-09 ready to execute
+**Plans:** 5/9 plans executed; Plan 20-04 real-source evidence publication is next
 
 - [x] 20-01-PLAN.md — migration contract and synthetic evidence chain
 - [x] 20-02-PLAN.md — bounded v3.5.0 source inventory and deterministic fixtures
@@ -396,7 +398,7 @@ in isolated Qdrant.
 - [ ] 20-06-PLAN.md — exact parity report and Phase 21 handoff
 - [x] 20-07-PLAN.md — lossless source-boundary repair and value-free shape evidence
 - [ ] 20-08-PLAN.md — blocking human mapping checkpoint after real inventory
-- [ ] 20-09-PLAN.md — diagnosed metadata source-admission gap closure
+- [x] 20-09-PLAN.md — diagnosed metadata source-admission gap closure and exact-image gate
 
 **Authoritative dependency chain:** `20-03 -> 20-07 -> 20-09 -> 20-04 -> 20-08 -> 20-05 -> 20-06`. Filename order does not override these dependencies.
 
@@ -445,6 +447,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 17. Network Isolation & Stack Validation | v3.0 | 3/3 | Complete | 2026-06-14 |
 | 18. App-side Error SDK | v3.0 | 1/1 | Complete | 2026-06-14 |
 | 19. SolidStats Memory Foundation | v4.0 | 6/6 | Complete | 2026-08-20 |
-| 20. Local Corpus Migration | v4.0 | 4/9 | In Progress | |
+| 20. Local Corpus Migration | v4.0 | 5/9 | In Progress | |
 | 21. Restore, Cutover & Recovery | v4.0 | 0/TBD | Blocked on Phase 20 | |
 | 22. Archive Distillation | v4.0 | 0/TBD | Blocked on Phase 21 | |
