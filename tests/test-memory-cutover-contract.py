@@ -7,6 +7,7 @@ from copy import deepcopy
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +21,14 @@ SPEC = importlib.util.spec_from_file_location("phase21_validator", MODULE_PATH)
 assert SPEC and SPEC.loader
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)
+
+RESTORE_PATH = ROOT / "scripts" / "restore-solidstats-memory.py"
+RESTORE_SPEC = importlib.util.spec_from_file_location(
+    "solidstats_memory_restore", RESTORE_PATH
+)
+assert RESTORE_SPEC and RESTORE_SPEC.loader
+RESTORE = importlib.util.module_from_spec(RESTORE_SPEC)
+RESTORE_SPEC.loader.exec_module(RESTORE)
 
 STAGES = (
     "PREPARED",
@@ -126,6 +135,179 @@ class MemoryCutoverContractTests(unittest.TestCase):
             parity_path=self.parity,
             require_complete=require_complete,
         )
+
+    @staticmethod
+    def write_json(path: Path, value: object) -> None:
+        path.write_bytes(
+            json.dumps(
+                value,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            + b"\n"
+        )
+
+    @staticmethod
+    def sha256(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def make_phase20_fixture(self) -> dict[str, Path]:
+        phase20 = self.root / "phase20"
+        bundle = phase20 / "bundle"
+        bundle.mkdir(parents=True)
+        source = phase20 / "20-SOURCE-INVENTORY.json"
+        mapping = phase20 / "20-MAPPING-CONTRACT.json"
+        transform = phase20 / "20-TRANSFORM-MANIFEST.json"
+        parity = phase20 / "20-PARITY-REPORT.json"
+        handoff = phase20 / "20-PHASE21-HANDOFF.json"
+        self.write_json(
+            source,
+            {
+                "schema": "solidstats-memory-source-inventory/v1",
+                "record_count": 3,
+            },
+        )
+        source_sha = self.sha256(source)
+        self.write_json(
+            mapping,
+            {
+                "schema": "solidstats-memory-mapping-contract/v1",
+                "source_inventory_sha256": source_sha,
+                "record_count": 3,
+            },
+        )
+        mapping_sha = self.sha256(mapping)
+        (bundle / "id-map.json").write_bytes(b"{}\n")
+        (bundle / "points.ndjson").write_bytes(b'{"id":"fixture"}\n')
+        bundle_manifest = bundle / "bundle-manifest.json"
+        self.write_json(
+            bundle_manifest,
+            {
+                "schema": "solidstats-memory-bundle/v1",
+                "record_count": 3,
+                "files": {
+                    "id-map.json": self.sha256(bundle / "id-map.json"),
+                    "points.ndjson": self.sha256(bundle / "points.ndjson"),
+                },
+            },
+        )
+        bundle_digests = {
+            path.name: self.sha256(path)
+            for path in sorted(bundle.iterdir())
+        }
+        self.write_json(
+            transform,
+            {
+                "schema": "solidstats-memory-transform-manifest/v1",
+                "record_count": 3,
+                "source_inventory_sha256": source_sha,
+                "mapping_contract_sha256": mapping_sha,
+                "bundle_file_sha256": bundle_digests,
+            },
+        )
+        transform_sha = self.sha256(transform)
+        self.write_json(
+            parity,
+            {
+                "parity_schema": "solidstats-memory-parity/v1",
+                "verdict": "pass",
+                "record_count": 3,
+                "transform_manifest_sha256": transform_sha,
+            },
+        )
+        parity_sha = self.sha256(parity)
+        self.write_json(
+            handoff,
+            {
+                "handoff_schema": "solidstats-memory-phase21-handoff/v1",
+                "record_count": 3,
+                "source_inventory_sha256": source_sha,
+                "mapping_contract_sha256": mapping_sha,
+                "transform_manifest_sha256": transform_sha,
+                "parity_report_sha256": parity_sha,
+                "bundle_file_sha256": bundle_digests,
+            },
+        )
+        return {
+            "bundle": bundle,
+            "source": source,
+            "mapping": mapping,
+            "transform": transform,
+            "parity": parity,
+            "handoff": handoff,
+        }
+
+    def make_backup_package(
+        self,
+        package: Path,
+        *,
+        run_id: str,
+        bindings: dict[str, str],
+    ) -> None:
+        package.mkdir()
+        (package / "qdrant.snapshot").write_bytes(b"snapshot-fixture")
+        (package / "mempalace-metadata.tar").write_bytes(b"metadata-fixture")
+        manifest = {
+            "schema": "solidstats-memory-backup-package/v1",
+            "run_id": run_id,
+            "phase20_bindings": bindings,
+            "members": {
+                "mempalace_metadata_tar_sha256": self.sha256(
+                    package / "mempalace-metadata.tar"
+                ),
+                "qdrant_snapshot_sha256": self.sha256(
+                    package / "qdrant.snapshot"
+                ),
+            },
+        }
+        self.write_json(package / "manifest.json", manifest)
+        lines = [
+            f"{self.sha256(package / name)}  {name}"
+            for name in (
+                "manifest.json",
+                "mempalace-metadata.tar",
+                "qdrant.snapshot",
+            )
+        ]
+        (package / "SHA256SUMS").write_text(
+            "\n".join(lines) + "\n", encoding="ascii"
+        )
+
+    def backup_evidence(self, bindings: dict[str, str]) -> dict[str, object]:
+        digest = "a" * 64
+        return {
+            "schema": "solidstats-memory-backup-restore-evidence/v1",
+            "run_id": self.run_id,
+            "phase20_bindings": bindings,
+            "quiescence": {"stable": True, "tree_sha256": digest},
+            "capacity": {
+                "sufficient": True,
+                "required_bytes": 30,
+                "pvc_free_bytes": 40,
+                "node_free_bytes": 50,
+            },
+            "package_checks": {
+                "complete": True,
+                "package_sha256": digest,
+            },
+            "object_checks": {"verified": True, "object_count": 4},
+            "target_absence": {"confirmed": True},
+            "restore_checks": {
+                "green": True,
+                "configuration_match": True,
+                "count_match": True,
+            },
+            "parity_checks": {"exact": True, "record_count": 3},
+            "alias_compatibility": {
+                "probe_passed": True,
+                "prestate_sha256": digest,
+                "poststate_sha256": digest,
+                "restored": True,
+            },
+            "rollback_state": {"active_state_unchanged": True},
+            "verdict": "pass",
+        }
 
     def test_complete_synthetic_chain_reaches_sealed(self) -> None:
         result = self.validate_chain(self.make_chain(), require_complete=True)
@@ -269,6 +451,225 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(["PASS: Phase 21 evidence chain validated"], result.stdout.splitlines())
         self.assertEqual([], result.stderr.splitlines())
+
+    def test_phase20_drift_stops_before_private_bundle_reads(self) -> None:
+        paths = self.make_phase20_fixture()
+        paths["mapping"].write_bytes(b"{}\n")
+        private_reads: list[Path] = []
+
+        def tracking_digest(path: Path) -> str:
+            if paths["bundle"] in path.parents:
+                private_reads.append(path)
+            return self.sha256(path)
+
+        with self.assertRaisesRegex(
+            RESTORE.RestoreControlError, "Phase 20 public binding"
+        ):
+            RESTORE.recompute_phase20_bindings(
+                handoff_path=paths["handoff"],
+                parity_path=paths["parity"],
+                source_inventory_path=paths["source"],
+                mapping_contract_path=paths["mapping"],
+                transform_manifest_path=paths["transform"],
+                bundle_dir=paths["bundle"],
+                digest_file=tracking_digest,
+            )
+
+        self.assertEqual([], private_reads)
+
+    def test_phase20_bindings_cover_public_and_retained_bundle_digests(self) -> None:
+        paths = self.make_phase20_fixture()
+        bindings = RESTORE.recompute_phase20_bindings(
+            handoff_path=paths["handoff"],
+            parity_path=paths["parity"],
+            source_inventory_path=paths["source"],
+            mapping_contract_path=paths["mapping"],
+            transform_manifest_path=paths["transform"],
+            bundle_dir=paths["bundle"],
+        )
+
+        self.assertEqual(self.sha256(paths["handoff"]), bindings["handoff_sha256"])
+        self.assertEqual(self.sha256(paths["parity"]), bindings["parity_report_sha256"])
+        self.assertRegex(bindings["binding_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_package_rejects_missing_empty_and_checksum_mismatch(self) -> None:
+        bindings = {"binding_sha256": "b" * 64}
+        mutations = ("missing", "empty", "checksum")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                package = self.root / f"package-{mutation}"
+                self.make_backup_package(
+                    package, run_id=self.run_id, bindings=bindings
+                )
+                if mutation == "missing":
+                    os.unlink(package / "qdrant.snapshot")
+                elif mutation == "empty":
+                    (package / "qdrant.snapshot").write_bytes(b"")
+                else:
+                    (package / "qdrant.snapshot").write_bytes(b"changed")
+                with self.assertRaises(RESTORE.RestoreControlError):
+                    RESTORE.verify_backup_package(
+                        package,
+                        expected_run_id=self.run_id,
+                        expected_phase20_bindings=bindings,
+                    )
+
+    def test_exact_package_replay_is_idempotent_but_collision_is_refused(self) -> None:
+        bindings = {"binding_sha256": "c" * 64}
+        package = self.root / "package"
+        remote = self.root / "object-store"
+        self.make_backup_package(package, run_id=self.run_id, bindings=bindings)
+        first = RESTORE.store_backup_package(
+            package, remote, prefix="backups/run", binding_sha256="c" * 64
+        )
+        second = RESTORE.store_backup_package(
+            package, remote, prefix="backups/run", binding_sha256="c" * 64
+        )
+        self.assertEqual("uploaded", first["status"])
+        self.assertEqual("reused", second["status"])
+
+        (package / "qdrant.snapshot").write_bytes(b"collision")
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "collision"):
+            RESTORE.store_backup_package(
+                package, remote, prefix="backups/run", binding_sha256="c" * 64
+            )
+
+    def test_run_lock_blocks_parallel_work_and_resumes_verified_stage(self) -> None:
+        evidence_dir = self.root / "evidence"
+        lock = RESTORE.acquire_run_lock(
+            evidence_dir,
+            run_id=self.run_id,
+            binding_sha256="d" * 64,
+            resume_run=False,
+        )
+        self.addCleanup(lock.release)
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "locked"):
+            RESTORE.acquire_run_lock(
+                evidence_dir,
+                run_id="42" * 16,
+                binding_sha256="e" * 64,
+                resume_run=False,
+            )
+        RESTORE.checkpoint_run(lock, "backup", "f" * 64)
+        lock.release()
+
+        resumed = RESTORE.acquire_run_lock(
+            evidence_dir,
+            run_id=self.run_id,
+            binding_sha256="d" * 64,
+            resume_run=True,
+        )
+        self.addCleanup(resumed.release)
+        self.assertEqual("backup", resumed.state["last_stage"])
+        self.assertEqual("f" * 64, resumed.state["last_evidence_sha256"])
+
+    def test_target_capacity_recovery_and_alias_probe_fail_closed(self) -> None:
+        calls: list[tuple[str, str, object]] = []
+        aliases: dict[str, str] = {"active": "protected"}
+
+        def request(method: str, path: str, body: object = None) -> object:
+            calls.append((method, path, body))
+            if path == "/collections":
+                return {"result": {"collections": [{"name": "protected"}]}}
+            if path == "/aliases":
+                return {
+                    "result": {
+                        "aliases": [
+                            {"alias_name": alias, "collection_name": collection}
+                            for alias, collection in aliases.items()
+                        ]
+                    }
+                }
+            if path.startswith("/collections/isolated") and method == "GET":
+                raise RESTORE.QdrantNotFound("absent")
+            if path == "/collections/aliases" and method == "POST":
+                for action in body["actions"]:
+                    if "create_alias" in action:
+                        item = action["create_alias"]
+                        aliases[item["alias_name"]] = item["collection_name"]
+                    if "delete_alias" in action:
+                        aliases.pop(action["delete_alias"]["alias_name"], None)
+                return {"status": "ok"}
+            return {"status": "ok", "result": True}
+
+        absence = RESTORE.require_absent_target(
+            request,
+            target_collection="isolated",
+            protected_collection="protected",
+        )
+        self.assertTrue(absence["confirmed"])
+        capacity = RESTORE.require_restore_capacity(
+            snapshot_bytes=10,
+            pvc_free_bytes=30,
+            node_free_bytes=31,
+            reserve_bytes=5,
+        )
+        self.assertEqual(25, capacity["required_bytes"])
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "priority"):
+            RESTORE.recover_snapshot(
+                request,
+                target_collection="isolated",
+                snapshot_location="file:///snapshot",
+                priority="replica",
+            )
+
+        probe = RESTORE.probe_alias_compatibility(
+            request,
+            restored_collection="isolated",
+            probe_alias="probe",
+            exact_image_probe=lambda: True,
+        )
+        self.assertTrue(probe["restored"])
+        self.assertNotIn("probe", aliases)
+        self.assertEqual("protected", aliases["active"])
+
+    def test_alias_probe_restores_prestate_after_probe_failure(self) -> None:
+        aliases: dict[str, str] = {}
+
+        def request(method: str, path: str, body: object = None) -> object:
+            if path == "/aliases":
+                return {
+                    "result": {
+                        "aliases": [
+                            {"alias_name": alias, "collection_name": collection}
+                            for alias, collection in aliases.items()
+                        ]
+                    }
+                }
+            for action in body["actions"]:
+                if "create_alias" in action:
+                    item = action["create_alias"]
+                    aliases[item["alias_name"]] = item["collection_name"]
+                if "delete_alias" in action:
+                    aliases.pop(action["delete_alias"]["alias_name"], None)
+            return {"status": "ok"}
+
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "probe failed"):
+            RESTORE.probe_alias_compatibility(
+                request,
+                restored_collection="isolated",
+                probe_alias="probe",
+                exact_image_probe=lambda: False,
+            )
+        self.assertEqual({}, aliases)
+
+    def test_backup_restore_evidence_schema_is_strict_and_value_free(self) -> None:
+        bindings = {"binding_sha256": "1" * 64}
+        evidence = self.backup_evidence(bindings)
+        result = VALIDATOR.validate_backup_restore_evidence(evidence)
+        self.assertEqual("pass", result["verdict"])
+
+        for mutation in ("missing", "private", "failed"):
+            with self.subTest(mutation=mutation):
+                invalid = deepcopy(evidence)
+                if mutation == "missing":
+                    del invalid["package_checks"]
+                elif mutation == "private":
+                    invalid["restore_checks"]["collection_identifier"] = "private"
+                else:
+                    invalid["restore_checks"]["green"] = False
+                with self.assertRaises(VALIDATOR.Phase21ValidationError):
+                    VALIDATOR.validate_backup_restore_evidence(invalid)
 
 
 if __name__ == "__main__":
