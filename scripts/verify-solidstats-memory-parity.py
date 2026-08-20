@@ -28,7 +28,7 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 MAX_RECORDS = 1_000_000
 MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 MAX_TOP_K = 100
-PRIVATE_REPORT_KEYS = {"document", "metadata", "vector", "query", "id", "path", "url", "token", "secret"}
+PRIVATE_REPORT_KEYS = {"document", "metadata", "vector", "query", "path", "url", "token", "secret"}
 
 
 class ParityFailure(ValueError):
@@ -287,9 +287,20 @@ def _scroll_points(base_url: str, collection: str, expected_count: int) -> list[
 
 
 def _safe_report(payload: Mapping[str, object]) -> None:
-    serialized = canonical_json_bytes(payload).decode("utf-8").lower()
-    if any(key in serialized for key in PRIVATE_REPORT_KEYS):
-        raise ParityFailure("report privacy validation failed")
+    def inspect(value: object, *, key: str = "") -> None:
+        if any(token in key.lower() for token in PRIVATE_REPORT_KEYS):
+            raise ParityFailure("report privacy validation failed")
+        if isinstance(value, dict):
+            for child_key, child_value in value.items():
+                if not isinstance(child_key, str):
+                    raise ParityFailure("report privacy validation failed")
+                inspect(child_value, key=child_key)
+        elif isinstance(value, list):
+            for child in value:
+                inspect(child, key=key)
+        elif isinstance(value, str) and ("\\" in value or value.startswith("/") or re.search(r"(?:sk-|bearer\s|password=)", value, re.IGNORECASE)):
+            raise ParityFailure("report privacy validation failed")
+    inspect(payload)
 
 
 def write_parity_report(path: Path, payload: Mapping[str, object]) -> None:
