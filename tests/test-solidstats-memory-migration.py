@@ -1325,6 +1325,20 @@ class ParityContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unstable"):
             parity.derive_source_distance_rule([stable[0], [("b", 0.20), ("a", 0.10)], stable[0]], serialization_floor=1e-6)
 
+    def test_stable_empty_fixture_requires_empty_target_and_nonvacuous_suite(self) -> None:
+        parity = load_parity_module()
+        rule = parity.derive_source_distance_rule([[], [], []], serialization_floor=1e-6)
+        self.assertEqual({"compared": 0, "failures": 0}, parity.compare_recall_rankings([], [], rule))
+        self.assertEqual(1, parity.compare_recall_rankings([], [("target", 0.1)], rule)["failures"])
+        fixture = {"filters": {"wing": "web"}, "query_record_digest": "a" * 64, "source_distances": [], "source_metric": "cosine-distance", "source_ordered_ids": [], "source_runs": 2, "top_k": 1}
+        empty = [{"index": 0, "vector": [1.0], "ranked": []}]
+        contract = {"source_wing_to_target_wing": {"canonical_repository_rules": {"web": "web-archive"}, "shared_source_rule": {}}}
+        proof = {"source_label_observation_counts": {"wing": {"other_string": 0, "suffix_marked": 0}}}
+        with mock.patch.object(parity, "_run_source_queries", side_effect=[empty, empty, empty]), mock.patch.object(parity, "_target_query", return_value=[]) as target:
+            with self.assertRaisesRegex(ValueError, "non-vacuous"):
+                parity._verify_recall(base_url="http://127.0.0.1:6333", collection="collection", fixtures=[fixture], contract=contract, source_proof=proof, snapshot_dir=Path("/snapshot"), fixtures_path=Path("/fixtures"), oracle_python=Path("/python"), oracle_source_dir=Path("/oracle"), repeats=3)
+        target.assert_called_once()
+
     def test_fresh_oracle_baseline_supersedes_bruteforce_fixture_ranking(self) -> None:
         parity = load_parity_module()
         fixture = {
