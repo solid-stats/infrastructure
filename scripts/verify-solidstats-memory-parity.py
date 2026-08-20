@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -489,10 +490,19 @@ def _load_fixture_list(path: Path) -> list[dict[str, object]]:
             raise ParityFailure("recall fixtures are invalid")
         if not isinstance(fixture["filters"], dict) or not SHA256.fullmatch(str(fixture["query_record_digest"])) or fixture["source_metric"] != "cosine-distance" or not isinstance(fixture["top_k"], int) or not 0 < fixture["top_k"] <= MAX_TOP_K:
             raise ParityFailure("recall fixtures are invalid")
-        if not isinstance(fixture["source_ordered_ids"], list) or not isinstance(fixture["source_distances"], list) or len(fixture["source_ordered_ids"]) != len(fixture["source_distances"]) or len(fixture["source_ordered_ids"]) > fixture["top_k"]:
+        if not isinstance(fixture["source_runs"], int) or fixture["source_runs"] < 2 or not isinstance(fixture["source_ordered_ids"], list) or not isinstance(fixture["source_distances"], list) or len(fixture["source_ordered_ids"]) != len(fixture["source_distances"]) or len(fixture["source_ordered_ids"]) > fixture["top_k"]:
+            raise ParityFailure("recall fixtures are invalid")
+        if any(not isinstance(source_id, str) or not source_id for source_id in fixture["source_ordered_ids"]) or len(set(fixture["source_ordered_ids"])) != len(fixture["source_ordered_ids"]) or any(isinstance(distance, bool) or not isinstance(distance, (int, float)) or not math.isfinite(distance) for distance in fixture["source_distances"]):
             raise ParityFailure("recall fixtures are invalid")
         checked.append(fixture)
     return checked
+
+
+def validate_fixture_provenance(fixtures_path: Path, inventory_proof: Path) -> None:
+    proof = _load_json(inventory_proof, "source inventory proof")
+    expected = proof.get("recall_fixtures_sha256")
+    if not isinstance(expected, str) or not SHA256.fullmatch(expected) or sha256_file(_regular_file(fixtures_path, "recall fixtures")) != expected:
+        raise ParityFailure("recall fixture provenance is invalid")
 
 
 def _load_inventory_contract() -> object:
@@ -573,23 +583,25 @@ def _verify_recall(*, base_url: str, collection: str, fixtures: Sequence[Mapping
     worst_delta = 0.0
     for index, fixture in enumerate(fixtures):
         source_runs: list[list[tuple[str, float]]] = []
+        source_vectors: list[bytes] = []
         query_vector: object | None = None
         for run in runs:
             row = run[index]
-            if row.get("index") != index or query_vector is None and not isinstance(row.get("vector"), list):
+            if row.get("index") != index or not isinstance(row.get("vector"), list):
                 raise ParityFailure("source oracle protocol is invalid")
-            query_vector = row["vector"]
+            source_vectors.append(_vector_bytes(row["vector"]))
+            if query_vector is None:
+                query_vector = row["vector"]
             ranked = row["ranked"]
             if not isinstance(ranked, list):
                 raise ParityFailure("source oracle protocol is invalid")
             source_runs.append([(str(item[0]), float(item[1])) for item in ranked if isinstance(item, list) and len(item) == 2 and isinstance(item[0], str) and isinstance(item[1], (int, float))])
         if any(len(run) != len(source_runs[0]) for run in source_runs):
             raise ParityFailure("source oracle protocol is invalid")
+        if any(vector != source_vectors[0] for vector in source_vectors[1:]):
+            raise ParityFailure("source query vector is unstable")
         rule = derive_source_distance_rule(source_runs, serialization_floor=2 ** -24)
         expected = source_runs[0]
-        fixture_ids = fixture.get("source_ordered_ids")
-        if fixture_ids != [source_id for source_id, _distance in expected]:
-            raise ParityFailure("frozen source fixture drift")
         target = _target_query(base_url, collection, query_vector, map_fixture_filters(fixture.get("filters", {}), contract), int(fixture["top_k"]))
         normalized = [(str(uuid.uuid5(UUID_NAMESPACE, source_id)), distance) for source_id, distance in expected]
         result = compare_recall_rankings(normalized, target, rule)
@@ -749,6 +761,9 @@ def main(argv: list[str] | None = None) -> int:
         if hashlib.sha256(canonical_json_bytes(derivation)).hexdigest() != transform.get("collection_derivation_sha256"):
             raise ParityFailure("target collection derivation mismatch")
         fixtures = _load_fixture_list(Path(args.recall_fixtures))
+        validate_fixture_provenance(Path(args.recall_fixtures), Path(args.source_inventory_proof))
+        if any(fixture["top_k"] != args.top_k for fixture in fixtures):
+            raise ParityFailure("recall fixture bounds are invalid")
         if args.check_only:
             print("PASS: parity provenance validated")
             return 0
