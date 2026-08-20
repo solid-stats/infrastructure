@@ -11,6 +11,7 @@ import stat
 import tempfile
 import unittest
 import uuid
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -502,6 +503,66 @@ class InventoryContractTests(unittest.TestCase):
                 self.assertNotIn("source_timestamp", actual["metadata"])
                 self.assertNotIn("archive_state", actual["metadata"])
                 self.assertNotIn("routing", actual["metadata"])
+
+    def test_inventory_emits_deterministic_value_free_source_shapes(self) -> None:
+        inventory = load_inventory_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, oracle, first_output = self.write_snapshot(root)
+            second_output = root / "second-inventory"
+            first = inventory.build_source_inventory(
+                snapshot_dir=snapshot,
+                freeze_attestation=snapshot / "freeze-attestation.json",
+                oracle_source_dir=oracle,
+                oracle_python=self.oracle_python,
+                output_dir=first_output,
+            )
+            second = inventory.build_source_inventory(
+                snapshot_dir=snapshot,
+                freeze_attestation=snapshot / "freeze-attestation.json",
+                oracle_source_dir=oracle,
+                oracle_python=self.oracle_python,
+                output_dir=second_output,
+            )
+            self.assertEqual(first["source_shape_evidence"], second["source_shape_evidence"])
+            self.assertEqual(first["output_checksums"], second["output_checksums"])
+            evidence = first["source_shape_evidence"]
+            self.assertEqual(2, evidence["fields"]["source_timestamp"]["present"])
+            self.assertEqual(
+                {"string": 2},
+                evidence["fields"]["source_timestamp"]["types"],
+            )
+            self.assertEqual(
+                {"utc_timestamp": 2},
+                evidence["fields"]["source_timestamp"]["formats"],
+            )
+            self.assertEqual(
+                {"canonical_repository_unsuffixed": 1, "suffix_marked": 1},
+                evidence["source_labels"]["wing"],
+            )
+            summary = (first_output / "source-inventory.json").read_text(encoding="utf-8")
+            for value in ("SolidStats", "decisions", "synthetic alpha", "source-1"):
+                self.assertNotIn(value, summary)
+
+    def test_inventory_rejects_snapshot_digest_drift(self) -> None:
+        inventory = load_inventory_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, oracle, output = self.write_snapshot(root)
+            original_digest = inventory._snapshot_digest(snapshot)
+            with mock.patch.object(
+                inventory,
+                "_snapshot_digest",
+                side_effect=[original_digest, "0" * 64],
+            ), self.assertRaisesRegex(ValueError, "snapshot digest changed"):
+                inventory.build_source_inventory(
+                    snapshot_dir=snapshot,
+                    freeze_attestation=snapshot / "freeze-attestation.json",
+                    oracle_source_dir=oracle,
+                    oracle_python=self.oracle_python,
+                    output_dir=output,
+                )
+            self.assertFalse(output.exists())
 
     def test_inventory_rejects_duplicate_ids_and_symlinked_input(self) -> None:
         inventory = load_inventory_module()
