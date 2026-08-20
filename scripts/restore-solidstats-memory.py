@@ -1361,6 +1361,40 @@ def generate_backup_job(
             raise RestoreControlError("private Job environment is invalid")
         injected.append({"name": name, "value": value})
     container["env"] = [*existing_env, *injected]
+    required_runtime = {"BACKUP_RUN_ID", "PHASE20_BINDINGS_JSON"}
+    if not required_runtime.issubset(private_environment):
+        raise RestoreControlError("private Job environment is incomplete")
+    container["command"] = ["/bin/sh", "-ec"]
+    container["args"] = [
+        """\
+work_dir="/tmp/${BACKUP_RUN_ID}"
+mkdir -p "${work_dir}"
+snapshot_json="${work_dir}/snapshot.json"
+curl --fail --show-error --silent -X POST \\
+  -H "api-key: ${QDRANT_API_KEY}" \\
+  "${QDRANT_URL}/collections/${QDRANT_COLLECTION}/snapshots" > "${snapshot_json}"
+snapshot_name="$(tr -d '[:space:]' < "${snapshot_json}" | sed -n 's/.*"name":"\\([^"]*\\)".*/\\1/p' | head -n 1)"
+test -n "${snapshot_name}"
+curl --fail --show-error --silent -H "api-key: ${QDRANT_API_KEY}" \\
+  "${QDRANT_URL}/collections/${QDRANT_COLLECTION}/snapshots/${snapshot_name}" \\
+  -o "${work_dir}/qdrant.snapshot"
+tar --create --file "${work_dir}/metadata-before.tar" --directory /metadata palace
+tar --create --file "${work_dir}/mempalace-metadata.tar" --directory /metadata palace
+tar --create --file "${work_dir}/metadata-after.tar" --directory /metadata palace
+test "$(sha256sum "${work_dir}/metadata-before.tar" | cut -d' ' -f1)" = \\
+  "$(sha256sum "${work_dir}/metadata-after.tar" | cut -d' ' -f1)"
+rm "${work_dir}/metadata-before.tar" "${work_dir}/metadata-after.tar" "${snapshot_json}"
+snapshot_sha="$(sha256sum "${work_dir}/qdrant.snapshot" | cut -d' ' -f1)"
+metadata_sha="$(sha256sum "${work_dir}/mempalace-metadata.tar" | cut -d' ' -f1)"
+printf '{"schema":"solidstats-memory-backup-package/v1","run_id":"%s","phase20_bindings":%s,"members":{"mempalace_metadata_tar_sha256":"%s","qdrant_snapshot_sha256":"%s"}}\n' \\
+  "${BACKUP_RUN_ID}" "${PHASE20_BINDINGS_JSON}" "${metadata_sha}" "${snapshot_sha}" \\
+  > "${work_dir}/manifest.json"
+sha256sum "${work_dir}/manifest.json" "${work_dir}/mempalace-metadata.tar" \\
+  "${work_dir}/qdrant.snapshot" > "${work_dir}/SHA256SUMS"
+aws --endpoint-url "${S3_ENDPOINT}" s3 cp --recursive \\
+  "${work_dir}" "s3://${S3_BUCKET}/${S3_PREFIX}${BACKUP_RUN_ID}/"
+"""
+    ]
     labels = {}
     template_metadata = template.get("metadata")
     if isinstance(template_metadata, Mapping) and isinstance(

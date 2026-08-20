@@ -864,7 +864,13 @@ class MemoryCutoverContractTests(unittest.TestCase):
         job = RESTORE.generate_backup_job(
             cronjob,
             run_id=self.run_id,
-            private_environment={"QDRANT_COLLECTION": "private-collection"},
+            private_environment={
+                "BACKUP_RUN_ID": self.run_id,
+                "PHASE20_BINDINGS_JSON": json.dumps(
+                    {"binding_sha256": "1" * 64}, separators=(",", ":")
+                ),
+                "QDRANT_COLLECTION": "private-collection",
+            },
         )
         output = self.root / "private" / "job.json"
         RESTORE.write_private_json(output, job)
@@ -875,6 +881,13 @@ class MemoryCutoverContractTests(unittest.TestCase):
         public = RESTORE.backup_job_evidence(job)
         self.assertNotIn("private-collection", json.dumps(public))
         self.assertTrue(public["generated"])
+        command = job["spec"]["template"]["spec"]["containers"][0]["args"][0]
+        self.assertIn('"schema":"solidstats-memory-backup-package/v1"', command)
+        self.assertIn('"phase20_bindings":%s', command)
+        self.assertIn(
+            'sha256sum "${work_dir}/manifest.json" "${work_dir}/mempalace-metadata.tar"',
+            command,
+        )
         dry_runs: list[tuple[str, ...]] = []
 
         def runner(command: tuple[str, ...], **_kwargs: object) -> object:
@@ -1064,7 +1077,13 @@ class MemoryCutoverContractTests(unittest.TestCase):
                             },
                         },
                     },
-                    {"PRIVATE_BINDING": "synthetic-value"},
+                    {
+                        "BACKUP_RUN_ID": self_run_id,
+                        "PHASE20_BINDINGS_JSON": json.dumps(
+                            current_bindings, separators=(",", ":"), sort_keys=True
+                        ),
+                        "PRIVATE_BINDING": "synthetic-value",
+                    },
                 )
 
             def run_command(self, command: tuple[str, ...], **_kwargs: object) -> object:
