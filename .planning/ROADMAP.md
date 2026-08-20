@@ -43,7 +43,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 19: SolidStats Memory Foundation** - Repository-local policy,
   validation, runtime-boundary plans, and offline tooling are ready.
 
-- [ ] **Phase 20: Local Corpus Migration** - The frozen Chroma corpus is
+- [x] **Phase 20: Local Corpus Migration** - The frozen Chroma corpus is
   transformed locally using reviewed mapping and embedding evidence.
 
 - [ ] **Phase 21: Restore, Cutover & Recovery** - Backups restore in isolation;
@@ -388,7 +388,7 @@ strategy, transform locally, and prove identifier/metadata/vector/recall parity
 in isolated Qdrant.
 **Depends on:** Phase 19
 **Requirements:** MIG-01..02
-**Plans:** 9/9 plans executed; exact parity evidence and Phase 21 handoff passed
+**Plans:** 9/9 plans complete
 
 - [x] 20-01-PLAN.md — migration contract and synthetic evidence chain
 - [x] 20-02-PLAN.md — bounded v3.5.0 source inventory and deterministic fixtures
@@ -447,6 +447,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 17. Network Isolation & Stack Validation | v3.0 | 3/3 | Complete | 2026-06-14 |
 | 18. App-side Error SDK | v3.0 | 1/1 | Complete | 2026-06-14 |
 | 19. SolidStats Memory Foundation | v4.0 | 6/6 | Complete | 2026-08-20 |
-| 20. Local Corpus Migration | v4.0 | 8/9 | In Progress | |
-| 21. Restore, Cutover & Recovery | v4.0 | 0/TBD | Blocked on Phase 20 | |
+| 20. Local Corpus Migration | v4.0 | 9/9 | Complete | 2026-08-20 |
+| 21. Restore, Cutover & Recovery | v4.0 | 0/TBD | Not started; paused before Phase 21 | |
 | 22. Archive Distillation | v4.0 | 0/TBD | Blocked on Phase 21 | |

@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: SolidStats Memory Isolation
-current_phase: 20
-current_phase_name: Local Corpus Migration
-status: in_progress
-stopped_at: Completed 20-06-PLAN.md; Phase 21 is next
-last_updated: "2026-08-20T08:39:32.052Z"
+current_phase: 21
+current_phase_name: Restore, Cutover & Recovery
+status: paused
+stopped_at: Phase 20 completed and verified; paused before Phase 21 per user request
+last_updated: "2026-08-20T09:41:31.495Z"
 last_activity: 2026-08-20
-last_activity_desc: Plan 20-05 completed local transform and isolated import
+last_activity_desc: Phase 20 completed and verified; Phase 21 intentionally paused
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 15
-  completed_plans: 14
-  percent: 25
+  completed_plans: 15
+  percent: 50
 ---
 
 <!-- markdownlint-disable MD013 MD033 -->
@@ -30,10 +30,10 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 ## Current Position
 
-Phase: 20 — Local Corpus Migration
-Plan: 20-06 of 9 — exact parity report and Phase 21 handoff
-Status: Complete — Phase 21 live restore boundary is next
-Last activity: 2026-08-20 — Plan 20-05 completed local transform and isolated import
+Phase: 21 — Restore, Cutover & Recovery
+Plan: Not started
+Status: Paused before Phase 21 per user request
+Last activity: 2026-08-20 — Phase 20 completed and verified
 
 **Plan 20-07 completion evidence:**
 
@@ -77,16 +77,18 @@ Last activity: 2026-08-20 — Plan 20-05 completed local transform and isolated 
 
 - The exact v3.5.0 transform used the approved contract and current source proof,
   then imported deterministic bounded batches into a fresh loopback-only target.
+
 - The retained target passed empty-target, pinned-image, schema, acknowledgement,
   final-count, run-ID, and target-ID-set-digest evidence without publishing private data.
-- Plan 20-06 is next and consumes the retained private bundle and local target
-  for field, vector, and recall parity only.
+
+- Plan 20-06 completed and verified local field, ID, vector, and ANN recall parity;
+  pass-only cleanup removed the disposable target.
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 12/15 (this milestone)
+- Total plans completed: 15/15 (defined milestone plans)
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -98,7 +100,7 @@ Last activity: 2026-08-20 — Plan 20-05 completed local transform and isolated 
 | 08 | 3 | - | - |
 | 09 | 1 | - | - |
 | 19 | 6 | - | - |
-| 20 | 6 | - | - |
+| 20 | 9 | - | - |
 
 **Recent Trend:**
 
@@ -302,10 +304,11 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 ## Session Continuity
 
 Last session: 2026-08-20T08:39:32.040Z
-Stopped at: Completed 20-06-PLAN.md; Phase 21 is next
+Stopped at: Phase 20 completed and verified; paused before Phase 21 per user request
 Resume file: None
 
 ## Operator Next Steps
 
-- Keep the authoritative dependency chain `20-03 -> 20-07 -> 20-09 -> 20-04 -> 20-08 -> 20-05 -> 20-06`.
-- Execute Plan 20-06 only from the retained Plan 20-05 target and approved current contract; do not claim Phase 21 readiness until parity passes.
+- Phase 21 is not started; resume only when the user requests planning or execution.
+
+- Phase 21 must recompute the sealed handoff and provenance digests before any live restore; do not resume it until the user requests planning or execution.
