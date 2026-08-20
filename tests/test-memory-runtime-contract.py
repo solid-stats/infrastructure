@@ -75,6 +75,31 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
         self.assertNotIn("key: S3_ENDPOINT", backup)
         self.assertNotIn("key: S3_PREFIX", backup)
 
+    def test_mempalace_uses_the_pinned_exact_image_cli_contract(self) -> None:
+        documents = list(
+            yaml.safe_load_all(
+                (ROOT / "k8s" / "memory" / "20-mempalace.yaml").read_text()
+            )
+        )
+        deployment = next(document for document in documents if document["kind"] == "Deployment")
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(container["command"], ["mempalace-mcp"])
+        self.assertEqual(
+            container["args"],
+            [
+                "--palace",
+                "/data/palace",
+                "--backend",
+                "qdrant",
+                "--transport",
+                "http",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8765",
+            ],
+        )
+
 
 class MemorySecretRendererContractTests(unittest.TestCase):
     """Secret rendering accepts only the approved secret-input inventory."""

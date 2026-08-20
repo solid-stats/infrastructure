@@ -73,7 +73,8 @@ spec:
         - name: mempalace
           image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST
           imagePullPolicy: IfNotPresent
-          args: ["serve", "--transport", "http", "--host", "0.0.0.0", "--port", "8765"]
+          command: ["mempalace-mcp"]
+          args: ["--palace", "/data/palace", "--backend", "qdrant", "--transport", "http", "--host", "0.0.0.0", "--port", "8765"]
           ports:
             - name: http-mcp
               containerPort: 8765
