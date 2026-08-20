@@ -424,10 +424,14 @@ class InventoryContractTests(unittest.TestCase):
             )
         self.oracle_python.write_text(
             "#!/usr/bin/env python3\n"
-            "import json, sys, time, uuid\n"
+            "import json, stat, sys, time, uuid\n"
             "from pathlib import Path\n"
             "check_only = '--check-only' in sys.argv\n"
             "palace_path = Path(sys.argv[sys.argv.index('--palace-path') + 1])\n"
+            "if stat.S_IMODE(palace_path.stat().st_mode) != 0o700:\n"
+            "  raise SystemExit('oracle scratch directory mode')\n"
+            "if stat.S_IMODE((palace_path / 'chroma.sqlite3').stat().st_mode) != 0o600:\n"
+            "  raise SystemExit('oracle scratch file mode')\n"
             "(palace_path / 'oracle-marker').write_text('synthetic marker', encoding='utf-8')\n"
             + ready_write
             + "collection = {'name':'synthetic-records','namespace':'solidstats',"
@@ -618,6 +622,11 @@ class InventoryContractTests(unittest.TestCase):
                     for name in directories:
                         (Path(current) / name).chmod(0o500)
                 (snapshot / "palace").chmod(0o500)
+                authoritative_digest = inventory._snapshot_digest(snapshot)
+                authoritative_modes = {
+                    path.relative_to(snapshot).as_posix(): stat.S_IMODE(path.lstat().st_mode)
+                    for path in (snapshot / "palace").rglob("*")
+                }
                 scratch_before = set(Path(tempfile.gettempdir()).glob("solidstats-memory-oracle-*"))
                 result = inventory.build_source_inventory(
                     snapshot_dir=snapshot,
@@ -628,6 +637,14 @@ class InventoryContractTests(unittest.TestCase):
                     check_only=check_only,
                 )
                 self.assertFalse((snapshot / "palace" / "oracle-marker").exists())
+                self.assertEqual(authoritative_digest, inventory._snapshot_digest(snapshot))
+                self.assertEqual(
+                    authoritative_modes,
+                    {
+                        path.relative_to(snapshot).as_posix(): stat.S_IMODE(path.lstat().st_mode)
+                        for path in (snapshot / "palace").rglob("*")
+                    },
+                )
                 self.assertEqual(
                     scratch_before,
                     set(Path(tempfile.gettempdir()).glob("solidstats-memory-oracle-*")),
@@ -641,6 +658,7 @@ class InventoryContractTests(unittest.TestCase):
             snapshot, oracle, output = self.write_snapshot(root)
             ready_file = root / "oracle-ready"
             self.write_side_effecting_oracle(ready_file=ready_file)
+            scratch_before = set(Path(tempfile.gettempdir()).glob("solidstats-memory-oracle-*"))
 
             def mutate_authoritative_snapshot() -> None:
                 deadline = time.monotonic() + 2
@@ -663,6 +681,10 @@ class InventoryContractTests(unittest.TestCase):
             self.assertFalse(writer.is_alive())
             self.assertTrue((snapshot / "external-drift").exists())
             self.assertFalse(output.exists())
+            self.assertEqual(
+                scratch_before,
+                set(Path(tempfile.gettempdir()).glob("solidstats-memory-oracle-*")),
+            )
 
     def test_inventory_rejects_duplicate_ids_and_symlinked_input(self) -> None:
         inventory = load_inventory_module()

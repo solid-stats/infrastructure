@@ -723,6 +723,28 @@ def _write_private_json(output_dir: Path, name: str, value: object, *, jsonl: bo
     return sha256_bytes(payload)
 
 
+def _normalize_oracle_scratch_modes(root: Path) -> None:
+    """Make the disposable oracle copy writable without following unsafe entries."""
+    for current, directories, filenames in os.walk(root, followlinks=False):
+        current_path = Path(current)
+        current_mode = _lstat_kind(current_path)
+        if stat.S_ISLNK(current_mode) or not stat.S_ISDIR(current_mode):
+            raise ValueError("unsafe oracle scratch component")
+        os.chmod(current_path, 0o700)
+        for name in directories:
+            candidate = current_path / name
+            mode = _lstat_kind(candidate)
+            if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+                raise ValueError("unsafe oracle scratch component")
+            os.chmod(candidate, 0o700)
+        for name in filenames:
+            candidate = current_path / name
+            mode = _lstat_kind(candidate)
+            if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+                raise ValueError("unsafe oracle scratch component")
+            os.chmod(candidate, 0o600)
+
+
 def _oracle_scratch_rows(
     *,
     oracle_python: Path,
@@ -742,6 +764,7 @@ def _oracle_scratch_rows(
             shutil.copytree(palace_root, scratch_palace, symlinks=True)
         except (OSError, shutil.Error) as error:
             raise ValueError("unable to prepare oracle scratch") from error
+        _normalize_oracle_scratch_modes(scratch_palace)
         _assert_safe_tree(scratch_palace, label="oracle scratch")
         _safe_file(
             scratch_palace,
