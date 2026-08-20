@@ -1347,6 +1347,59 @@ class ParityContractTests(unittest.TestCase):
             target.assert_not_called()
             docker.assert_not_called()
 
+    def test_container_attestation_requires_exact_image_loopback_and_run_label(self) -> None:
+        parity = load_parity_module()
+        manifest = {
+            "qdrant_image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.0-unprivileged@sha256:" + "a" * 64,
+            "qdrant_run_id": "run-20-05",
+        }
+        inspect = [{
+            "Config": {
+                "Image": manifest["qdrant_image"],
+                "Labels": {"solidstats.plan": "20-05", "solidstats.qdrant-run-id": "run-20-05"},
+            },
+            "HostConfig": {"PortBindings": {"6333/tcp": [{"HostIp": "127.0.0.1", "HostPort": "6333"}]}},
+        }]
+        with mock.patch.object(parity.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps(inspect), "")):
+            parity.validate_container_attestation("qdrant", manifest)
+        inspect[0]["Config"]["Labels"]["solidstats.qdrant-run-id"] = "different"
+        with mock.patch.object(parity.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps(inspect), "")):
+            with self.assertRaisesRegex(ValueError, "run-bound"):
+                parity.validate_container_attestation("qdrant", manifest)
+
+    def test_report_and_handoff_allow_only_safe_schema_and_bind_cleanup(self) -> None:
+        parity = load_parity_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            report = root / "report.json"
+            handoff = root / "handoff.json"
+            report_payload = parity.make_parity_report(
+                provenance={"source_inventory_sha256": "a" * 64, "mapping_contract_sha256": "b" * 64, "transform_manifest_sha256": "c" * 64},
+                transform={"bundle_sha256": "d" * 64, "oracle_version": "3.5.0", "oracle_revision": "v3.5.0", "qdrant_image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.0-unprivileged@sha256:" + "e" * 64, "qdrant_run_id": "run", "collection_derivation_sha256": "f" * 64, "vector_strategy": "reuse"},
+                results={"field_parity": {"compared": 1, "failures": 0}, "id_parity": {"compared": 1, "failures": 0}, "vector_parity": {"compared": 1, "failures": 0}, "recall_parity": {"compared": 1, "failures": 0}},
+            )
+            parity.write_parity_report(report, report_payload)
+            handoff_payload = parity.make_phase21_handoff(report, report_payload, {"bundle-manifest.json": "d" * 64})
+            parity.write_phase21_handoff(handoff, handoff_payload)
+            self.assertTrue(report.is_file())
+            self.assertTrue(handoff.is_file())
+            with self.assertRaisesRegex(ValueError, "privacy"):
+                parity.write_parity_report(root / "bad.json", dict(report_payload, field_parity={"document": "private"}))
+            with self.assertRaisesRegex(ValueError, "cleanup requires"):
+                parity.validate_cleanup_binding(report, handoff, expected_run_id="different", expected_collection="collection")
+
+    def test_target_filter_mapping_rejects_unbound_source_wings(self) -> None:
+        parity = load_parity_module()
+        contract = {
+            "source_wing_to_target_wing": {
+                "canonical_repository_rules": {"web": "web-archive"},
+                "shared_source_rule": {"SolidStats": "SolidStats-archive"},
+            },
+        }
+        self.assertEqual({"wing": "web-archive", "room": "room"}, parity.map_fixture_filters({"wing": "web", "room": "room"}, contract))
+        with self.assertRaisesRegex(ValueError, "unbound"):
+            parity.map_fixture_filters({"wing": "Agent"}, contract)
+
 
 if __name__ == "__main__":
     unittest.main()
