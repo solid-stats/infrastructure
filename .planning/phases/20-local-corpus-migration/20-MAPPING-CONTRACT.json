@@ -3,7 +3,7 @@
   "status": "approved",
   "source_inventory_sha256": "4dee25e8b4b44193e6b138214f0161d75f77771811ad12cab9ea5a07b358b9c1",
   "approved_at": "2026-08-20T07:42:36Z",
-  "approval_digest": "d3d36fd9229203f4207a6b678894cf4a4eb7fcca00ec7a767ec49997d2e81142",
+  "approval_digest": "49732104c6ce7f1cca2593af12b920f2934ffb8756b7df8addf8ed6dd5ff9bd6",
   "timestamp_semantics": {
     "preserved_fields": [
       "content_date",
@@ -54,6 +54,13 @@
       "collision_rule": "Fail closed when source metadata already contains _solidstats_migration."
     },
     "parity_rule": "Compare nested source_metadata exactly for every imported record.",
-    "independent_safety_copy": "Retain the immutable source snapshot and private bundle as independent safety copies."
+    "independent_safety_copy": "Retain the immutable source snapshot and private bundle as independent safety copies.",
+    "duplication_acceptance": "Operational metadata and the exact nested source metadata are intentionally duplicated because preventing data loss outweighs avoiding two representations.",
+    "archive_immutability_and_recovery": {
+      "agent_rule": "Agents must not write, update, or delete records in *-archive or SolidStats-archive wings.",
+      "adjacent_contract": "The cross-repo agent contract will enforce this rule; that adjacent change is deferred and is not edited by this plan.",
+      "recovery_boundary": "Recovery relies on the immutable source snapshot, Qdrant snapshots, off-host backups, and tested restore.",
+      "accepted_residual_risk": "Residual direct API, token, and software-bug mutation risk is accepted."
+    }
   }
 }

@@ -11,9 +11,9 @@ provides:
   - fail-closed routing and preservation rules for Plan 20-05
 affects: [20-05, 20-06, MIG-02]
 actuals:
-  tokens: 3668
+  tokens: 4268
   tasks: 1
-  commits: 3
+  commits: 4
 tech-stack:
   added: []
   patterns:
@@ -63,6 +63,8 @@ transform.
   and preservation decisions in the required contract shape.
 - Bound the contract to the exact current source-inventory file bytes and to
   the explicit `approve-complete-contract` approval token.
+- Recorded the approved archive immutability, recovery boundary, residual-risk,
+  and duplication-acceptance rules without changing the adjacent agent contract.
 - Kept the contract limited to public rules and labels; it contains no corpus
   records, source identifiers, documents, metadata values, vectors, private
   paths, environment values, or credentials.
@@ -81,6 +83,8 @@ normalized decision rules.
    (`docs`)
 2. **Task 1 correction: bind the approval token in the digest** — `649fdfc`
    (`fix`)
+3. **Task 1 correction: complete preservation and recovery rules** — current
+   correction commit (`fix`)
 
 ## Files Created/Modified
 
@@ -104,6 +108,8 @@ normalized decision rules.
 - Preserve exact original metadata inside `_solidstats_migration.source_metadata`
   while operational metadata changes only the archive-routing wing; fail closed
   on a reserved-key collision.
+- Keep archives agent-immutable, retain snapshot and backup recovery paths, and
+  accept the remaining direct mutation risk and intentional metadata duplication.
 
 ## Deviations from Plan
 
@@ -120,7 +126,19 @@ normalized decision rules.
   required the token.
 - **Committed in:** `649fdfc`
 
-**Total deviations:** 1 auto-fixed (Rule 2 - Missing Critical)
+**2. [Rule 2 - Missing Critical] Completed preservation and recovery approval rules**
+
+- **Found during:** Post-plan contract review
+- **Issue:** The contract omitted the approved archive immutability, recovery,
+  residual-risk, and duplication-acceptance decisions.
+- **Fix:** Added the approved rules within `preservation_representation` and
+  recomputed the canonical approval digest.
+- **Files modified:** `20-MAPPING-CONTRACT.json`, `20-08-SUMMARY.md`
+- **Verification:** The strengthened contract check requires the nested rules
+  and recomputes the digest.
+- **Committed in:** Current correction commit
+
+**Total deviations:** 2 auto-fixed (Rule 2 - Missing Critical)
 
 ## Issues Encountered
 
@@ -139,5 +157,6 @@ deployment, cutover, and external mutation remain unclaimed.
 ## Self-Check: PASSED
 
 - The approved contract and summary exist at their required phase paths.
-- Task commits `9d8b54e` and `649fdfc` exist in the repository history.
+- Task commits `9d8b54e`, `649fdfc`, and the current correction exist in the
+  repository history.
 - The contract, JSON/privacy checks, Markdown lint, and diff check passed.
