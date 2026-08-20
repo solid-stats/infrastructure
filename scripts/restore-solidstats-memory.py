@@ -136,6 +136,8 @@ class StageAdapter(Protocol):
 
     def apply_manifests(self, rendered: object) -> Mapping[str, object]: ...
 
+    def inspect_runtime(self) -> Mapping[str, object]: ...
+
     def load_backup_inputs(
         self,
     ) -> tuple[dict[str, object], dict[str, str]]: ...
@@ -1665,7 +1667,7 @@ def _run_preflight(
         raise RestoreControlError("preflight result is incomplete")
     reachability = _require_exact_true_map(
         observed.get("reachability"),
-        {"kubernetes", "qdrant", "s3"},
+        {"kubernetes", "s3"},
         "required services are unreachable",
     )
     prestate = _require_prestate(observed.get("prestate"))
@@ -1705,6 +1707,15 @@ def _run_preflight(
         or applied.get("recurring_schedule_changed") is not False
     ):
         raise RestoreControlError("operator manifest apply proof is invalid")
+    runtime = adapter.inspect_runtime()
+    if (
+        not isinstance(runtime, Mapping)
+        or set(runtime) != {"qdrant_reachable", "workloads_ready"}
+        or runtime.get("qdrant_reachable") is not True
+        or runtime.get("workloads_ready") is not True
+    ):
+        raise RestoreControlError("isolated runtime is not ready")
+    reachability["qdrant"] = True
     return {
         "bindings": bindings,
         "reachability": reachability,
@@ -2127,6 +2138,9 @@ class JsonOperatorAdapter:
                 "apply-manifests", {"rendered": rendered}, timeout=600
             )
         )
+
+    def inspect_runtime(self) -> Mapping[str, object]:
+        return self._mapping(self._call("inspect-runtime", {}, timeout=600))
 
     def load_backup_inputs(self) -> tuple[dict[str, object], dict[str, str]]:
         value = self._call("load-backup-inputs", {}, timeout=60)

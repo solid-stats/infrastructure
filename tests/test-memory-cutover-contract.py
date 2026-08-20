@@ -970,7 +970,6 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 return {
                     "reachability": {
                         "kubernetes": True,
-                        "qdrant": True,
                         "s3": True,
                     },
                     "prestate": {
@@ -1037,6 +1036,10 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     "marker_count": len(RESTORE.OPERATOR_MARKERS),
                     "recurring_schedule_changed": False,
                 }
+
+            def inspect_runtime(self) -> dict[str, object]:
+                events.append("inspect-runtime")
+                return {"qdrant_reachable": True, "workloads_ready": True}
 
             def load_backup_inputs(self) -> tuple[dict[str, object], dict[str, str]]:
                 events.append("load-backup-inputs")
@@ -1244,6 +1247,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "dry-run-client",
                 "dry-run-server",
                 "apply-manifests",
+                "inspect-runtime",
                 "load-backup-inputs",
                 "job-client-dry-run",
                 "job-server-dry-run",
@@ -1252,7 +1256,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "remote-inventory",
                 "download-package",
             ],
-            events[:12],
+            events[:13],
         )
         self.assertLess(events.index("phase20-parity"), events.index("exact-image-probe"))
         self.assertLess(events.index("exact-image-probe"), events.index("verify-prestate"))
@@ -1289,7 +1293,6 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 return {
                     "reachability": {
                         "kubernetes": True,
-                        "qdrant": True,
                         "s3": True,
                     },
                     "prestate": {
