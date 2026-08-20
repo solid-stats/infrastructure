@@ -1,49 +1,65 @@
 {
   "version": "1.0",
-  "timestamp": "2026-08-20T09:45:30.734Z",
+  "timestamp": "2026-08-20T18:52:00Z",
   "phase": "21",
   "phase_name": "Restore, Cutover & Recovery",
-  "phase_dir": ".planning",
-  "plan": 0,
-  "task": 0,
-  "total_tasks": 0,
+  "phase_dir": ".planning/phases/21-restore-cutover-recovery",
+  "plan": 2,
+  "task": 2,
+  "total_tasks": 2,
   "status": "paused",
   "completed_tasks": [
     {
-      "id": 20,
-      "name": "Complete and verify Local Corpus Migration",
+      "id": 1,
+      "name": "Implement fail-closed backup and isolated restore control",
       "status": "done",
-      "commit": "e469b9b"
+      "commit": "7c0ccab"
     }
   ],
   "remaining_tasks": [
     {
-      "id": 21,
-      "name": "Discuss, plan, and execute Restore, Cutover & Recovery",
-      "status": "not_started"
+      "id": 2,
+      "name": "Authorize and prove one live backup plus isolated restore",
+      "status": "blocked"
     }
   ],
-  "blockers": [],
+  "blockers": [
+    {
+      "description": "No accessible retained Phase 20 bundle matches the three public handoff digests.",
+      "type": "precondition",
+      "workaround": "Restore or mount the digest-bound bundle, or restore the immutable snapshot and private source artifacts required to reconstruct and re-verify it."
+    }
+  ],
   "async_jobs": [],
   "human_actions_pending": [],
   "decisions": [
     {
-      "decision": "Preserve lossless source data even when that retains duplicate representations and approved exclusions outside the target import.",
-      "rationale": "The approved mapping contract prioritizes preventing data loss over storage duplication.",
-      "phase": "20"
+      "decision": "The user's approval covers exactly one live Plan 21-02 preflight, one-shot backup, isolated restore, parity check, and temporary alias compatibility probe.",
+      "rationale": "Active alias, nginx, client registrations, legacy service, and recurring schedule activation remain outside Plan 21-02 Task 2.",
+      "phase": "21"
     },
     {
-      "decision": "Use strict cross-engine ANN equivalence instead of exact ordered top-k identity.",
-      "rationale": "Chroma and Qdrant build different HNSW graphs; exact field, ID, metadata, timestamp, and vector parity remains zero-tolerance while recall requires equal lengths, exact top-1, at least 80 percent overlap, preserved common-result order, and bounded common distances.",
-      "phase": "20"
+      "decision": "Keep the live operator private and ephemeral instead of committing credentials or private bindings.",
+      "rationale": "The repository may retain only value-free aggregate evidence; secrets, private paths, collection names, and raw responses must stay outside Git and command output.",
+      "phase": "21"
     },
     {
-      "decision": "Remove the disposable local Qdrant target only after parity and handoff validation pass.",
-      "rationale": "Phase 21 must start from retained provenance-bound snapshot, source, bundle, report, and handoff artifacts rather than a leftover target runtime.",
-      "phase": "20"
+      "decision": "Recurring backup activation remains gated by Plan 21-04 consistency and recovery proof.",
+      "rationale": "A successful initial quiescent backup does not prove steady-state package consistency after clients can write.",
+      "phase": "21"
+    },
+    {
+      "decision": "Runtime Qdrant readiness is checked only after the isolated manifests are applied.",
+      "rationale": "The namespace is intentionally absent before Task 2, so pre-apply Qdrant reachability was an impossible contract.",
+      "phase": "21"
+    },
+    {
+      "decision": "The one-shot backup producer emits the exact accepted package manifest and deterministic checksum order.",
+      "rationale": "Live output must satisfy verify_backup_package without weakening the approved schema.",
+      "phase": "21"
     }
   ],
   "uncommitted_files": [],
-  "next_action": "Run $gsd-resume-work, confirm STATE.md and ROADMAP.md still point to Phase 21, then run $gsd-discuss-phase 21.",
-  "context_notes": "Phase 20 is complete and verified. Phase 21 has no directory, context, or plans yet. The disposable Qdrant collection, container, and data directory were removed after a passing parity report. Retained private snapshot, source quartet, and bundle remain local and must be rediscovered through their provenance-bound public artifacts without printing or committing private paths or values. No background processes or async jobs remain."
+  "next_action": "Restore or mount the digest-bound Phase 20 bundle, or the immutable snapshot and private source artifacts needed to reconstruct it, then resume Plan 21-02 Task 2 in the existing worktree.",
+  "context_notes": "Worktree worktree-agent-p21-02-wave1 is at d27578a after Rule 1 fixes bf61d1a and d27578a. The full memory suite passes 112/112. Namespace solidstats-memory remains absent and no live mutation occurred. Required bundle members and public SHA-256 digests are: bundle-manifest.json=43f362c0a922d1b8b6dea9825c148891b072c238338657a45caf328a3f285449, id-map.jsonl=afb26d9fc2d2fc8b674ef0de1671f28c6d31d3fd59a7d13aa6650bdc06d6d64b, points.jsonl=6657d582492c430cab5b53a5c0626b20b7c2142b431dc059eb9f74cec5247e8c. Safe recovery checks exhausted the accessible filesystem, retained Docker bind data, and currently accessible SolidStats S3 objects. SSH authentication was unavailable to the orchestrator. The existing approval boundaries remain unchanged; CronJob activation remains excluded and suspend must stay true."
 }
