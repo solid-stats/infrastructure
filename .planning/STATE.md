@@ -5,15 +5,15 @@ milestone_name: SolidStats Memory Isolation
 current_phase: 20
 current_phase_name: Local Corpus Migration
 status: ready_to_execute
-stopped_at: Completed 20-03-PLAN.md
-last_updated: "2026-08-20T00:11:03.942Z"
+stopped_at: Completed 20-07-PLAN.md; Plan 20-09 pending execution
+last_updated: "2026-08-20T08:51:15+07:00"
 last_activity: 2026-08-20
-last_activity_desc: Phase 20 plans verified and ready to execute
+last_activity_desc: Plan 20-07 complete; exact-image inventory diagnosed and Plan 20-09 ready
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 12
-  completed_plans: 9
+  total_plans: 15
+  completed_plans: 10
   percent: 25
 ---
 
@@ -31,15 +31,28 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 20 — Local Corpus Migration
-Plan: 4 of 6 — contract tests and evidence schemas
+Plan: 20-09 of 9 — source-admission lexical gap closure
 Status: Ready to execute
-Last activity: 2026-08-20 — Phase 20 plans verified and ready to execute
+Last activity: 2026-08-20 — Plan 20-07 complete; exact-image inventory diagnosed and Plan 20-09 ready
+
+**Plan 20-07 completion evidence:**
+
+- Summary: `20-07-SUMMARY.md` at `888e960`.
+- Four TDD commits plus the summary commit: five commits total.
+- All 30 offline tests, compile, CLI help, and policy/validator zero-diff gates passed.
+- Timestamp precedence/normalization, target routing, legacy labels, excluded-source disposition, and preservation representation remain unresolved for the blocking Plan 20-08 human checkpoint.
+
+**Value-free exact-image inventory evidence:**
+
+- Records 1..2063 passed source admission.
+- Record 2064 failed in fixed category `metadata_secret_value` with detail `secret:lexical_only`.
+- No corpus value was copied into repository evidence. Plan 20-09 closes this source-admission gap before Plan 20-04 reruns complete inventory.
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 14 (this milestone)
+- Total plans completed: 10 (this milestone)
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -51,7 +64,7 @@ Last activity: 2026-08-20 — Phase 20 plans verified and ready to execute
 | 08 | 3 | - | - |
 | 09 | 1 | - | - |
 | 19 | 6 | - | - |
-| 20 | 0 | - | - |
+| 20 | 4 | - | - |
 
 **Recent Trend:**
 
@@ -96,6 +109,7 @@ Last activity: 2026-08-20 — Phase 20 plans verified and ready to execute
 | Phase 20 P01 | 7m       | 3 tasks | 3 files |
 | Phase 20 P02 | 5        | 2 tasks | 2 files |
 | Phase 20 P03 | 1m       | 2 tasks | 1 files |
+| Phase 20 P07 | 0m       | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -247,10 +261,11 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-20T00:11:03.935Z
-Stopped at: Completed 20-03-PLAN.md
+Last session: 2026-08-20T08:51:15+07:00
+Stopped at: Completed 20-07-PLAN.md; Plan 20-09 pending execution
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Execute Plan 20-09, then require the main-owned exact-image inventory rerun before Plan 20-04.
+- Keep Plan 20-08 blocked until complete sanitized inventory evidence is available for explicit human mapping approval.
