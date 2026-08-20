@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import stat
@@ -611,6 +612,12 @@ class InventoryContractTests(unittest.TestCase):
                 root = Path(temporary)
                 snapshot, oracle, output = self.write_snapshot(root)
                 self.write_side_effecting_oracle()
+                for current, directories, filenames in os.walk(snapshot / "palace"):
+                    for name in filenames:
+                        (Path(current) / name).chmod(0o400)
+                    for name in directories:
+                        (Path(current) / name).chmod(0o500)
+                (snapshot / "palace").chmod(0o500)
                 scratch_before = set(Path(tempfile.gettempdir()).glob("solidstats-memory-oracle-*"))
                 result = inventory.build_source_inventory(
                     snapshot_dir=snapshot,
