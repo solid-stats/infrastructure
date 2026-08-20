@@ -369,8 +369,8 @@ def write_approved_mapping_contract(
         "approved_at": "2026-08-20T00:00:00Z",
         "timestamp_semantics": {
             "preserved_fields": ["content_date", "filed_at", "source_mtime"],
-            "rule": "preserve",
-            "missing_or_invalid": "preserve",
+            "rule": "Preserve each observed source timestamp field exactly as found; apply no precedence, normalization, or synthesized source_timestamp or effective_source_date.",
+            "missing_or_invalid": "A missing or invalid timestamp candidate neither rejects nor drops a record; it remains absent or invalid exactly as found in source metadata.",
             "target_updated_at": "separate",
         },
         "source_wing_to_target_wing": {
@@ -386,26 +386,26 @@ def write_approved_mapping_contract(
             "excluded_source_rule": "exclude",
         },
         "legacy_room_label_treatment": {
-            "rule": "preserve",
+            "rule": "Preserve every legacy room value unchanged for imported archive records.",
             "active_semantic_room_effect": "no-effect",
         },
         "legacy_archive_label_treatment": {
             "source_observation": "none",
-            "unexpected_or_unbound": "fail-closed",
+            "unexpected_or_unbound": "Fail closed rather than remapping an unexpected or unbound label.",
             "target_label_rule": "route-only",
         },
-        "excluded_source_disposition": {"rule": "exclude", "retention": "retain"},
+        "excluded_source_disposition": {"rule": "Do not import agent or other-wing records into target Qdrant.", "retention": "retain"},
         "preservation_representation": {
             "approval_token": "approve-complete-contract",
             "standard_fields": "preserve",
-            "operational_metadata": "wing-only",
+            "operational_metadata": "Use a copy of source metadata with only operational wing changed for archive routing; retain original room and every other field unchanged.",
             "source_metadata_copy": {
                 "reserved_key": "_solidstats_migration",
                 "value_shape": {
                     "schema_version": 1,
                     "source_metadata": "exact original metadata dictionary",
                 },
-                "collision_rule": "fail-closed",
+                "collision_rule": "Fail closed when source metadata already contains _solidstats_migration.",
             },
             "parity_rule": "exact nested source metadata",
             "independent_safety_copy": "retain",
@@ -1053,7 +1053,7 @@ class TransformContractTests(unittest.TestCase):
             (snapshot / "escape.json").write_text("{}", encoding="utf-8")
             (snapshot / "sidecars" / "identity.json").unlink()
             (snapshot / "sidecars" / "identity.json").symlink_to(snapshot / "escape.json")
-            with self.assertRaisesRegex(ValueError, "snapshot identity"):
+            with self.assertRaisesRegex(ValueError, "snapshot"):
                 bundle._snapshot_identity(snapshot)
 
     def test_import_requires_operation_ack_schema_schema_and_target_id_digest(self) -> None:

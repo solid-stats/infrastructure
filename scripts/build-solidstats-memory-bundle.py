@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -31,6 +32,7 @@ MAX_METADATA_BYTES = 64 * 1024
 MAX_VECTOR_DIMENSION = 65_536
 MAX_JSON_BYTES = 64 * 1024 * 1024
 RESERVED_METADATA_KEY = "_solidstats_migration"
+PINNED_QDRANT_IMAGE_PATTERN = re.compile(r"^[A-Za-z0-9./:_-]+@sha256:[0-9a-f]{64}$")
 
 
 class VectorStrategy:
@@ -68,6 +70,19 @@ def _regular_file(path: Path, *, label: str, max_bytes: int = MAX_JSON_BYTES) ->
         raise ValueError(f"{label} is unsafe") from error
     except ValueError as error:
         raise ValueError(f"{label} is unsafe") from error
+
+
+def _contained_regular_file(root: Path, relative: object, *, label: str, max_bytes: int = MAX_JSON_BYTES) -> Path:
+    if not _nonempty_string(relative):
+        raise ValueError(f"{label} is unsafe")
+    candidate_relative = Path(str(relative))
+    if candidate_relative.is_absolute() or ".." in candidate_relative.parts:
+        raise ValueError(f"{label} is unsafe")
+    candidate = root / candidate_relative
+    resolved = _regular_file(candidate, label=label, max_bytes=max_bytes)
+    if root not in (resolved, *resolved.parents):
+        raise ValueError(f"{label} is unsafe")
+    return resolved
 
 
 def _regular_executable(path: Path, *, label: str) -> Path:
@@ -154,7 +169,12 @@ def _validate_contract_shape(contract: Mapping[str, object]) -> None:
         raise ValueError("mapping contract preservation rules are incomplete")
     metadata_copy = preservation.get("source_metadata_copy")
     recovery = preservation.get("archive_immutability_and_recovery")
-    if not isinstance(metadata_copy, dict) or metadata_copy.get("reserved_key") != RESERVED_METADATA_KEY or metadata_copy.get("collision_rule") != "fail-closed":
+    collision_rule = metadata_copy.get("collision_rule") if isinstance(metadata_copy, dict) else None
+    normalized_collision_rule = " ".join(collision_rule.lower().split()) if isinstance(collision_rule, str) else ""
+    if not isinstance(metadata_copy, dict) or metadata_copy.get("reserved_key") != RESERVED_METADATA_KEY or not (
+        normalized_collision_rule.startswith("fail closed")
+        and f"already contains {RESERVED_METADATA_KEY}" in normalized_collision_rule
+    ):
         raise ValueError("mapping contract preservation rules are incomplete")
     shape = metadata_copy.get("value_shape")
     if not isinstance(shape, dict) or shape.get("schema_version") != 1 or shape.get("source_metadata") != "exact original metadata dictionary":
@@ -163,6 +183,16 @@ def _validate_contract_shape(contract: Mapping[str, object]) -> None:
         "agent_rule", "adjacent_contract", "recovery_boundary", "accepted_residual_risk"
     )):
         raise ValueError("mapping contract preservation rules are incomplete")
+    expected_rules = (
+        (timestamps.get("rule"), "Preserve each observed source timestamp field exactly as found; apply no precedence, normalization, or synthesized source_timestamp or effective_source_date."),
+        (timestamps.get("missing_or_invalid"), "A missing or invalid timestamp candidate neither rejects nor drops a record; it remains absent or invalid exactly as found in source metadata."),
+        (contract["legacy_room_label_treatment"].get("rule"), "Preserve every legacy room value unchanged for imported archive records."),
+        (contract["legacy_archive_label_treatment"].get("unexpected_or_unbound"), "Fail closed rather than remapping an unexpected or unbound label."),
+        (contract["excluded_source_disposition"].get("rule"), "Do not import agent or other-wing records into target Qdrant."),
+        (preservation.get("operational_metadata"), "Use a copy of source metadata with only operational wing changed for archive routing; retain original room and every other field unchanged."),
+    )
+    if any(actual != expected for actual, expected in expected_rules):
+        raise ValueError("mapping contract semantic rules are incompatible")
 
 
 def load_approved_mapping_contract(inventory_proof: Path, mapping_contract: Path) -> dict[str, object]:
@@ -340,30 +370,121 @@ def _qdrant_request(base_url: str, method: str, path: str, body: object | None =
     return decoded
 
 
-def verify_empty_target(base_url: str, collection: str) -> None:
+def load_pinned_qdrant_image(manifest_path: Path) -> str:
+    manifest = _regular_file(manifest_path, label="Qdrant manifest", max_bytes=4 * 1024 * 1024)
+    try:
+        images = [
+            match.group(1)
+            for line in manifest.read_text(encoding="utf-8").splitlines()
+            if (match := re.fullmatch(r"\s*image:\s*([^\s#]+)\s*", line))
+        ]
+    except (OSError, UnicodeDecodeError) as error:
+        raise ValueError("Qdrant image is unavailable") from error
+    pinned = [image for image in images if "qdrant" in image]
+    if len(pinned) != 1 or not PINNED_QDRANT_IMAGE_PATTERN.fullmatch(pinned[0]):
+        raise ValueError("Qdrant image is not exactly pinned by digest")
+    return pinned[0]
+
+
+def point_id_set_sha256(points: Iterable[Mapping[str, object]]) -> str:
+    point_ids: list[str] = []
+    for point in points:
+        point_id = point.get("id")
+        if not _nonempty_string(point_id):
+            raise ValueError("target point ID is invalid")
+        point_ids.append(str(point_id))
+    if len(point_ids) != len(set(point_ids)):
+        raise ValueError("target point IDs are not unique")
+    return sha256_bytes(canonical_json_bytes(sorted(point_ids)))
+
+
+def verify_empty_target(base_url: str, collection: str) -> dict[str, int]:
     result = _qdrant_request(base_url, "POST", f"/collections/{quote(collection, safe='')}/points/count", {"exact": True})
     payload = result.get("result")
     if not isinstance(payload, dict) or payload.get("count") != 0:
         raise ValueError("target collection is not empty")
+    return {"exact_count": 0}
 
 
-def import_batches(base_url: str, collection: str, points: list[dict[str, object]], *, dimension: int, batch_size: int) -> dict[str, object]:
+def verify_collection_schema(base_url: str, collection: str, *, dimension: int) -> None:
+    result = _qdrant_request(base_url, "GET", f"/collections/{quote(collection, safe='')}")
+    payload = result.get("result")
+    if not isinstance(payload, dict):
+        raise ValueError("local Qdrant collection schema is invalid")
+    config = payload.get("config")
+    params = config.get("params") if isinstance(config, dict) else None
+    vectors = params.get("vectors") if isinstance(params, dict) else None
+    if not isinstance(vectors, dict) or vectors.get("size") != dimension or vectors.get("distance") != "Cosine":
+        raise ValueError("local Qdrant collection schema is invalid")
+
+
+def _completed_operation(result: Mapping[str, object]) -> bool:
+    payload = result.get("result")
+    return isinstance(payload, dict) and isinstance(payload.get("operation_id"), int) and payload.get("status") == "completed"
+
+
+def target_point_id_set_sha256(base_url: str, collection: str, *, expected_count: int) -> str:
+    if not 0 < expected_count <= MAX_RECORDS:
+        raise ValueError("target point count is invalid")
+    point_ids: list[str] = []
+    offset: object | None = None
+    encoded = quote(collection, safe="")
+    while True:
+        body: dict[str, object] = {"limit": min(1000, expected_count), "with_payload": False, "with_vector": False}
+        if offset is not None:
+            body["offset"] = offset
+        response = _qdrant_request(base_url, "POST", f"/collections/{encoded}/points/scroll", body)
+        payload = response.get("result")
+        if not isinstance(payload, dict) or not isinstance(payload.get("points"), list):
+            raise ValueError("local Qdrant target IDs are invalid")
+        for point in payload["points"]:
+            if not isinstance(point, dict) or not _nonempty_string(point.get("id")):
+                raise ValueError("local Qdrant target IDs are invalid")
+            point_ids.append(str(point["id"]))
+        if len(point_ids) > expected_count:
+            raise ValueError("local Qdrant target IDs are invalid")
+        offset = payload.get("next_page_offset")
+        if offset is None:
+            break
+    if len(point_ids) != expected_count:
+        raise ValueError("local Qdrant target IDs are invalid")
+    return point_id_set_sha256({"id": point_id} for point_id in point_ids)
+
+
+def import_batches(
+    base_url: str, collection: str, points: list[dict[str, object]], *, dimension: int,
+    batch_size: int, expected_point_id_digest: str, qdrant_run_id: str | None = None,
+) -> dict[str, object]:
     if not 0 < batch_size <= 1000:
         raise ValueError("batch size is invalid")
     encoded = quote(collection, safe="")
-    _qdrant_request(base_url, "PUT", f"/collections/{encoded}", {"vectors": {"size": dimension, "distance": "Cosine"}})
-    verify_empty_target(base_url, collection)
+    create_result = _qdrant_request(base_url, "PUT", f"/collections/{encoded}", {"vectors": {"size": dimension, "distance": "Cosine"}})
+    if create_result.get("result") is not True:
+        raise ValueError("local Qdrant collection creation was not acknowledged")
+    empty_target_proof = verify_empty_target(base_url, collection)
+    verify_collection_schema(base_url, collection, dimension=dimension)
     acknowledgements = 0
     for index in range(0, len(points), batch_size):
         result = _qdrant_request(base_url, "PUT", f"/collections/{encoded}/points?wait=true", {"points": points[index:index + batch_size]})
-        if result.get("result") is not True:
+        if not _completed_operation(result):
             raise ValueError("local Qdrant batch was not acknowledged")
         acknowledgements += 1
     final = _qdrant_request(base_url, "POST", f"/collections/{encoded}/points/count", {"exact": True})
     count = final.get("result", {}).get("count") if isinstance(final.get("result"), dict) else None
     if count != len(points):
         raise ValueError("local Qdrant point count is invalid")
-    return {"batch_acknowledgements": acknowledgements, "point_count": count}
+    target_digest = target_point_id_set_sha256(base_url, collection, expected_count=len(points))
+    if target_digest != expected_point_id_digest:
+        raise ValueError("local Qdrant target point IDs are invalid")
+    result = {
+        "batch_acknowledgements": acknowledgements,
+        "empty_target_proof": empty_target_proof,
+        "point_count": count,
+        "target_point_id_set_sha256": target_digest,
+    }
+    if qdrant_run_id is not None:
+        result["qdrant_run_id"] = qdrant_run_id
+    return result
 
 
 def derive_collection_with_oracle(oracle_python: Path, oracle_source_dir: Path, palace_id: str, namespace: str, source_collection: str) -> dict[str, str]:
@@ -390,16 +511,13 @@ print(json.dumps({'derived_collection': QdrantBackend()._remote_collection_name(
 
 def _snapshot_identity(snapshot_dir: Path) -> tuple[str, str, str, dict[str, object]]:
     root = _safe_directory(snapshot_dir, label="snapshot")
-    identity = _load_json(root / "palace-identity.json", label="snapshot identity")
-    config = _load_json(root / "mempalace-config.json", label="snapshot config")
+    manifest = _load_json(root / "snapshot-manifest.json", label="snapshot manifest")
+    identity = _load_json(_contained_regular_file(root, manifest.get("identity_sidecar"), label="snapshot identity"), label="snapshot identity")
+    config = _load_json(_contained_regular_file(root, manifest.get("config_sidecar"), label="snapshot config"), label="snapshot config")
     palace_id, namespace, collection = identity.get("palace_id"), identity.get("namespace"), config.get("collection_name")
     if not all(_nonempty_string(value) for value in (palace_id, namespace, collection)):
         raise ValueError("snapshot identity is invalid")
-    manifest = _load_json(root / "snapshot-manifest.json", label="snapshot manifest")
-    embedder_path = manifest.get("embedder_sidecar")
-    if not _nonempty_string(embedder_path):
-        raise ValueError("snapshot identity is invalid")
-    embedder = _load_json(root / str(embedder_path), label="snapshot embedder")
+    embedder = _load_json(_contained_regular_file(root, manifest.get("embedder_sidecar"), label="snapshot embedder"), label="snapshot embedder")
     source_identity = embedder.get(collection)
     if not isinstance(source_identity, dict):
         raise ValueError("snapshot identity is invalid")
@@ -408,8 +526,14 @@ def _snapshot_identity(snapshot_dir: Path) -> tuple[str, str, str, dict[str, obj
 
 def _public_manifest(payload: Mapping[str, object]) -> None:
     allowed = {"transform_schema", "source_inventory_sha256", "oracle_version", "oracle_revision", "mapping_contract_sha256", "collection_derivation_sha256", "source_vector_contract", "target_vector_contract", "vector_strategy", "vector_strategy_reason", "model_artifact_sha256", "point_count", "source_id_set_sha256", "point_id_set_sha256", "bundle_sha256", "qdrant_image", "qdrant_run_id", "empty_target_proof", "import_result", "created_at"}
-    if set(payload) - allowed or any(isinstance(value, str) and ("/" in value or "\\" in value) for value in payload.values()):
+    if set(payload) - allowed or not isinstance(payload.get("qdrant_image"), str) or not PINNED_QDRANT_IMAGE_PATTERN.fullmatch(str(payload["qdrant_image"])):
         raise ValueError("transform manifest is unsafe")
+    for key, value in payload.items():
+        if key == "qdrant_image":
+            continue
+        serialized = canonical_json_bytes(value).decode("utf-8")
+        if "/" in serialized or "\\" in serialized:
+            raise ValueError("transform manifest is unsafe")
     target = ROOT / ".planning/phases/20-local-corpus-migration/20-TRANSFORM-MANIFEST.json"
     temporary = target.with_suffix(".tmp")
     temporary.write_bytes(canonical_json_bytes(payload) + b"\n")
@@ -429,6 +553,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--oracle-source-dir", required=True)
     parser.add_argument("--reembed-model-artifact", required=True)
     parser.add_argument("--qdrant-url", required=True)
+    parser.add_argument("--qdrant-image", required=True)
+    parser.add_argument("--qdrant-image-manifest", default=ROOT / "k8s/memory/10-qdrant.yaml", type=Path)
     parser.add_argument("--snapshot-dir", required=True, help="private immutable snapshot used only for identity sidecars")
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--check-only", action="store_true")
@@ -460,11 +586,19 @@ def main(argv: list[str] | None = None) -> int:
             ids_digest = _write_private(output_dir / "id-map.jsonl", mappings, jsonl=True)
             bundle = {"bundle_schema": "solidstats-memory-private-bundle/v1", "points_sha256": points_digest, "id_map_sha256": ids_digest, "point_count": len(points), "excluded_count": len(excluded)}
             bundle_digest = _write_private(output_dir / "bundle-manifest.json", bundle)
-            result = import_batches(_loopback_url(args.qdrant_url), derivation["derived_collection"], points, dimension=len(points[0]["vector"]), batch_size=args.batch_size)
+            pinned_qdrant_image = load_pinned_qdrant_image(Path(args.qdrant_image_manifest))
+            if args.qdrant_image != pinned_qdrant_image:
+                raise ValueError("Qdrant image does not match the pinned manifest")
+            qdrant_run_id = uuid.uuid4().hex
+            result = import_batches(
+                _loopback_url(args.qdrant_url), derivation["derived_collection"], points,
+                dimension=len(points[0]["vector"]), batch_size=args.batch_size,
+                expected_point_id_digest=point_id_set_sha256(points), qdrant_run_id=qdrant_run_id,
+            )
         except Exception:
             shutil.rmtree(output_dir, ignore_errors=True)
             raise
-        _public_manifest({"transform_schema": "solidstats-memory-transform/v1", "source_inventory_sha256": sha256_file(Path(args.source_inventory_proof)), "oracle_version": "3.5.0", "oracle_revision": "v3.5.0", "mapping_contract_sha256": sha256_file(Path(args.mapping_contract)), "collection_derivation_sha256": sha256_bytes(canonical_json_bytes(derivation)), "source_vector_contract": "v3.5.0-source-cosine", "target_vector_contract": "qdrant-cosine", "vector_strategy": strategy.strategy, "vector_strategy_reason": strategy.reason, "model_artifact_sha256": strategy.model_artifact_sha256, "point_count": len(points), "source_id_set_sha256": sha256_bytes(canonical_json_bytes(sorted(item["source_id"] for item in mappings))), "point_id_set_sha256": sha256_bytes(canonical_json_bytes(sorted(item["point_id"] for item in mappings))), "bundle_sha256": bundle_digest, "qdrant_image": "pinned-local-qdrant", "qdrant_run_id": uuid.uuid4().hex, "empty_target_proof": "passed", "import_result": result, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        _public_manifest({"transform_schema": "solidstats-memory-transform/v1", "source_inventory_sha256": sha256_file(Path(args.source_inventory_proof)), "oracle_version": "3.5.0", "oracle_revision": "v3.5.0", "mapping_contract_sha256": sha256_file(Path(args.mapping_contract)), "collection_derivation_sha256": sha256_bytes(canonical_json_bytes(derivation)), "source_vector_contract": "v3.5.0-source-cosine", "target_vector_contract": "qdrant-cosine", "vector_strategy": strategy.strategy, "vector_strategy_reason": strategy.reason, "model_artifact_sha256": strategy.model_artifact_sha256, "point_count": len(points), "source_id_set_sha256": sha256_bytes(canonical_json_bytes(sorted(item["source_id"] for item in mappings))), "point_id_set_sha256": point_id_set_sha256(points), "bundle_sha256": bundle_digest, "qdrant_image": pinned_qdrant_image, "qdrant_run_id": qdrant_run_id, "empty_target_proof": result["empty_target_proof"], "import_result": result, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
         print("PASS: private bundle imported into loopback Qdrant")
         return 0
     except ValueError as error:
