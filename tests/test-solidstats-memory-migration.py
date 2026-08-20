@@ -27,6 +27,7 @@ VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)
 INVENTORY_PATH = ROOT / "scripts" / "inventory-solidstats-memory.py"
 BUNDLE_PATH = ROOT / "scripts" / "build-solidstats-memory-bundle.py"
+PARITY_PATH = ROOT / "scripts" / "verify-solidstats-memory-parity.py"
 UUID_NAMESPACE = uuid.UUID("c06c3fc7-5c14-4dc4-84c2-24a5f72d8dc1")
 
 
@@ -350,6 +351,14 @@ def load_inventory_module() -> object:
 
 def load_bundle_module() -> object:
     spec = importlib.util.spec_from_file_location("memory_bundle", BUNDLE_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_parity_module() -> object:
+    spec = importlib.util.spec_from_file_location("memory_parity", PARITY_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -1251,6 +1260,92 @@ class TransformContractTests(unittest.TestCase):
                     contract,
                     target_updated_at="fixed",
                 )
+
+
+class ParityContractTests(unittest.TestCase):
+    def write_provenance(self, root: Path) -> tuple[Path, Path, Path]:
+        proof = root / "source-inventory.json"
+        contract = root / "mapping-contract.json"
+        transform = root / "transform-manifest.json"
+        write_json(proof, {"inventory_schema": "synthetic/v1"})
+        write_approved_mapping_contract(contract, proof)
+        write_json(transform, {
+            "transform_schema": "solidstats-memory-transform/v1",
+            "source_inventory_sha256": hashlib.sha256(proof.read_bytes()).hexdigest(),
+            "mapping_contract_sha256": hashlib.sha256(contract.read_bytes()).hexdigest(),
+        })
+        return proof, contract, transform
+
+    def test_provenance_failures_stop_before_target_or_output(self) -> None:
+        parity = load_parity_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            proof, contract, transform = self.write_provenance(root)
+            for mutation in ("missing", "unapproved", "proof-drift", "transform-drift"):
+                with self.subTest(mutation=mutation):
+                    if mutation == "missing":
+                        candidate = root / "missing.json"
+                    else:
+                        candidate = contract
+                        payload = json.loads(contract.read_text(encoding="utf-8"))
+                        if mutation == "unapproved":
+                            payload["status"] = "draft"
+                            write_json(contract, payload)
+                        elif mutation == "proof-drift":
+                            proof.write_text('{"inventory_schema":"changed/v1"}', encoding="utf-8")
+                        else:
+                            manifest = json.loads(transform.read_text(encoding="utf-8"))
+                            manifest["mapping_contract_sha256"] = "0" * 64
+                            write_json(transform, manifest)
+                    with mock.patch.object(parity, "_qdrant_request") as target:
+                        with self.assertRaisesRegex(ValueError, "provenance|mapping contract|transform"):
+                            parity.validate_provenance(proof, candidate, transform)
+                    target.assert_not_called()
+                    proof, contract, transform = self.write_provenance(root)
+
+    def test_exact_field_vector_and_ingestion_timestamp_contract(self) -> None:
+        parity = load_parity_module()
+        source = [{"id": "synthetic", "document": "bytes", "metadata": {"wing": "archive", "filed_at": "opaque", "nested": {"n": 1}}, "vector": [1.0, 0.0]}]
+        target = [{"id": str(uuid.uuid5(UUID_NAMESPACE, "synthetic")), "payload": {"mempalace_id": "synthetic", "document": "bytes", "metadata": {"wing": "archive", "filed_at": "opaque", "nested": {"n": 1}}, "updated_at": "ingested-later"}, "vector": [1.0, 0.0]}]
+        self.assertEqual({"compared": 1, "failures": 0}, parity.compare_documents_metadata_timestamps(source, target))
+        self.assertEqual({"compared": 1, "failures": 0}, parity.compare_vectors(source, target, strategy="reuse", dimension=2, metric="Cosine"))
+        target[0]["payload"]["metadata"]["nested"]["n"] = "1"
+        self.assertEqual(1, parity.compare_documents_metadata_timestamps(source, target)["failures"])
+        target[0]["payload"]["metadata"]["nested"]["n"] = 1
+        target[0]["vector"] = [1.0, 0.0000001]
+        self.assertEqual(1, parity.compare_vectors(source, target, strategy="reuse", dimension=2, metric="Cosine")["failures"])
+
+    def test_source_derived_rule_rejects_unstable_and_target_cannot_widen_it(self) -> None:
+        parity = load_parity_module()
+        stable = [[("a", 0.10), ("b", 0.20)], [("a", 0.10), ("b", 0.20)], [("a", 0.10), ("b", 0.20)]]
+        rule = parity.derive_source_distance_rule(stable, serialization_floor=1e-6)
+        self.assertEqual(1e-6, rule["max_distance_delta"])
+        self.assertEqual({"compared": 2, "failures": 0}, parity.compare_recall_rankings(stable[0], [("a", 0.10), ("b", 0.20)], rule))
+        self.assertEqual(1, parity.compare_recall_rankings(stable[0], [("a", 0.10001), ("b", 0.20)], rule)["failures"])
+        with self.assertRaisesRegex(ValueError, "unstable"):
+            parity.derive_source_distance_rule([stable[0], [("b", 0.20), ("a", 0.10)]], serialization_floor=1e-6)
+
+    def test_cleanup_requires_passing_handoff_and_disjoint_run_bound_paths(self) -> None:
+        parity = load_parity_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            retained = root / "retained"
+            retained.mkdir()
+            with mock.patch.object(parity, "_qdrant_request") as target, mock.patch.object(parity.subprocess, "run") as docker:
+                with self.assertRaisesRegex(ValueError, "passing handoff"):
+                    parity.cleanup_isolated_target(
+                        handoff={"verdict": "fail"}, expected_run_id="run", collection="collection",
+                        container="container", data_dir=runtime, private_root=root, retained_roots=[retained], qdrant_url="http://127.0.0.1:6333",
+                    )
+                with self.assertRaisesRegex(ValueError, "retained"):
+                    parity.cleanup_isolated_target(
+                        handoff={"verdict": "pass", "qdrant_run_id": "run"}, expected_run_id="run", collection="collection",
+                        container="container", data_dir=retained, private_root=root, retained_roots=[retained], qdrant_url="http://127.0.0.1:6333",
+                    )
+            target.assert_not_called()
+            docker.assert_not_called()
 
 
 if __name__ == "__main__":
