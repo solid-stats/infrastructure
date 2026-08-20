@@ -388,14 +388,14 @@ strategy, transform locally, and prove identifier/metadata/vector/recall parity
 in isolated Qdrant.
 **Depends on:** Phase 19
 **Requirements:** MIG-01..02
-**Plans:** 8/9 plans executed; Plan 20-06 parity report is next
+**Plans:** 9/9 plans executed; exact parity evidence and Phase 21 handoff passed
 
 - [x] 20-01-PLAN.md — migration contract and synthetic evidence chain
 - [x] 20-02-PLAN.md — bounded v3.5.0 source inventory and deterministic fixtures
 - [x] 20-03-PLAN.md — frozen source, exact oracle, and local runtime prerequisite gate
 - [x] 20-04-PLAN.md — complete real inventory and sanitized source evidence
 - [x] 20-05-PLAN.md — approved local transform and isolated target import
-- [ ] 20-06-PLAN.md — exact parity report and Phase 21 handoff
+- [x] 20-06-PLAN.md — exact parity report and Phase 21 handoff
 - [x] 20-07-PLAN.md — lossless source-boundary repair and value-free shape evidence
 - [x] 20-08-PLAN.md — blocking human mapping checkpoint after real inventory
 - [x] 20-09-PLAN.md — diagnosed metadata source-admission gap closure and exact-image gate

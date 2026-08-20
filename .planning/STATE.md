@@ -5,7 +5,7 @@ milestone_name: SolidStats Memory Isolation
 current_phase: 20
 current_phase_name: Local Corpus Migration
 status: in_progress
-stopped_at: Completed 20-05-PLAN.md; Plan 20-06 is next
+stopped_at: Completed 20-06-PLAN.md; Phase 21 is next
 last_updated: "2026-08-20T08:39:32.052Z"
 last_activity: 2026-08-20
 last_activity_desc: Plan 20-05 completed local transform and isolated import
@@ -32,7 +32,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 Phase: 20 — Local Corpus Migration
 Plan: 20-06 of 9 — exact parity report and Phase 21 handoff
-Status: Ready for Plan 20-06 parity verification
+Status: Complete — Phase 21 live restore boundary is next
 Last activity: 2026-08-20 — Plan 20-05 completed local transform and isolated import
 
 **Plan 20-07 completion evidence:**
@@ -302,7 +302,7 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 ## Session Continuity
 
 Last session: 2026-08-20T08:39:32.040Z
-Stopped at: Completed 20-05-PLAN.md; Plan 20-06 is next
+Stopped at: Completed 20-06-PLAN.md; Phase 21 is next
 Resume file: None
 
 ## Operator Next Steps
