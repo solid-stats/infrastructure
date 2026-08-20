@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ assert SPEC and SPEC.loader
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)
 INVENTORY_PATH = ROOT / "scripts" / "inventory-solidstats-memory.py"
+BUNDLE_PATH = ROOT / "scripts" / "build-solidstats-memory-bundle.py"
 UUID_NAMESPACE = uuid.UUID("c06c3fc7-5c14-4dc4-84c2-24a5f72d8dc1")
 
 
@@ -343,6 +345,83 @@ def load_inventory_module() -> object:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_bundle_module() -> object:
+    spec = importlib.util.spec_from_file_location("memory_bundle", BUNDLE_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def write_approved_mapping_contract(
+    path: Path,
+    inventory_proof: Path,
+    *,
+    infrastructure_target: str = "infrastructure-archive",
+) -> dict[str, object]:
+    """Write a complete synthetic approval-bound contract without corpus data."""
+    contract: dict[str, object] = {
+        "contract_schema": "solidstats-memory-mapping-contract/v1",
+        "status": "approved",
+        "source_inventory_sha256": hashlib.sha256(inventory_proof.read_bytes()).hexdigest(),
+        "approved_at": "2026-08-20T00:00:00Z",
+        "timestamp_semantics": {
+            "preserved_fields": ["content_date", "filed_at", "source_mtime"],
+            "rule": "preserve",
+            "missing_or_invalid": "preserve",
+            "target_updated_at": "separate",
+        },
+        "source_wing_to_target_wing": {
+            "routing_authority": "synthetic",
+            "canonical_repository_rules": {
+                "infrastructure": infrastructure_target,
+                "replay-parser-2": "replay-parser-2-archive",
+                "replays-fetcher": "replays-fetcher-archive",
+                "server-2": "server-2-archive",
+                "web": "web-archive",
+            },
+            "shared_source_rule": {"SolidStats": "SolidStats-archive"},
+            "excluded_source_rule": "exclude",
+        },
+        "legacy_room_label_treatment": {
+            "rule": "preserve",
+            "active_semantic_room_effect": "no-effect",
+        },
+        "legacy_archive_label_treatment": {
+            "source_observation": "none",
+            "unexpected_or_unbound": "fail-closed",
+            "target_label_rule": "route-only",
+        },
+        "excluded_source_disposition": {"rule": "exclude", "retention": "retain"},
+        "preservation_representation": {
+            "approval_token": "approve-complete-contract",
+            "standard_fields": "preserve",
+            "operational_metadata": "wing-only",
+            "source_metadata_copy": {
+                "reserved_key": "_solidstats_migration",
+                "value_shape": {
+                    "schema_version": 1,
+                    "source_metadata": "exact original metadata dictionary",
+                },
+                "collision_rule": "fail-closed",
+            },
+            "parity_rule": "exact nested source metadata",
+            "independent_safety_copy": "retain",
+            "duplication_acceptance": "accepted",
+            "archive_immutability_and_recovery": {
+                "agent_rule": "no archive mutation",
+                "adjacent_contract": "deferred",
+                "recovery_boundary": "separate",
+                "accepted_residual_risk": "accepted",
+            },
+        },
+    }
+    canonical = json.dumps(contract, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    contract["approval_digest"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    write_json(path, contract)
+    return contract
 
 
 class InventoryContractTests(unittest.TestCase):
@@ -909,6 +988,145 @@ class InventoryContractTests(unittest.TestCase):
                     output_dir=output,
                 )
             self.assertFalse(output.exists())
+
+
+class TransformContractTests(unittest.TestCase):
+    def write_contract_inputs(self, root: Path) -> tuple[Path, Path]:
+        proof = root / "inventory-proof.json"
+        write_json(proof, {"schema": "synthetic", "count": 2})
+        contract = root / "mapping-contract.json"
+        write_approved_mapping_contract(contract, proof)
+        return proof, contract
+
+    def test_preflight_rejects_unapproved_incomplete_stale_and_tampered_contracts(self) -> None:
+        bundle = load_bundle_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            proof, contract_path = self.write_contract_inputs(root)
+            self.assertEqual(
+                "approved",
+                bundle.load_approved_mapping_contract(proof, contract_path)["status"],
+            )
+            for mutation in (
+                lambda contract: contract.update(status="draft"),
+                lambda contract: contract.pop("legacy_room_label_treatment"),
+                lambda contract: contract.update(source_inventory_sha256="0" * 64),
+                lambda contract: contract["preservation_representation"].update(
+                    source_metadata_copy={"reserved_key": "_solidstats_migration"}
+                ),
+                lambda contract: contract["timestamp_semantics"].update(rule="tampered"),
+            ):
+                with self.subTest(mutation=mutation), self.assertRaisesRegex(
+                    ValueError, "mapping contract"
+                ):
+                    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+                    mutation(contract)
+                    write_json(contract_path, contract)
+                    bundle.load_approved_mapping_contract(proof, contract_path)
+                write_approved_mapping_contract(contract_path, proof)
+
+    def test_vector_strategy_requires_all_six_reuse_predicates(self) -> None:
+        bundle = load_bundle_module()
+        source = {
+            "embedder_identity": "synthetic-embedder",
+            "embedder_configuration": {"normalization": "none"},
+            "dimension": 3,
+            "metric": "cosine",
+            "serialization": "json-f32",
+        }
+        target = {
+            "embedder_identity": "synthetic-embedder",
+            "embedder_configuration": {"normalization": "none"},
+            "dimension": 3,
+            "metric": "Cosine",
+            "serialization": "json-f32",
+        }
+        self.assertEqual("reuse", bundle.select_vector_strategy(source, target).strategy)
+        for key, replacement in (
+            ("embedder_identity", "different-embedder"),
+            ("embedder_configuration", {"normalization": "l2"}),
+            ("dimension", 4),
+            ("metric", "Dot"),
+            ("serialization", "protobuf-f32"),
+        ):
+            with self.subTest(predicate=key):
+                changed = dict(target)
+                changed[key] = replacement
+                strategy = bundle.select_vector_strategy(
+                    source, changed, reembed_model_artifact=Path("/synthetic/model")
+                )
+                self.assertEqual("reembed", strategy.strategy)
+                self.assertIn(key, strategy.reason)
+
+    def test_transform_preserves_nested_metadata_and_bijective_v350_ids(self) -> None:
+        bundle = load_bundle_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            proof, contract_path = self.write_contract_inputs(Path(temporary))
+            contract = bundle.load_approved_mapping_contract(proof, contract_path)
+            sources = [
+                {
+                    "id": "synthetic-eligible",
+                    "document": "synthetic document",
+                    "metadata": {"room": "legacy-room", "wing": "infrastructure", "filed_at": "opaque"},
+                    "vector": [0.0, 1.0, 0.0],
+                },
+                {
+                    "id": "synthetic-excluded",
+                    "document": "synthetic excluded document",
+                    "metadata": {"room": "legacy-room", "wing": "Agent"},
+                    "vector": [1.0, 0.0, 0.0],
+                },
+            ]
+            points, id_map, excluded = bundle.build_target_points(
+                sources, contract, target_updated_at="2026-08-20T00:00:00Z"
+            )
+            self.assertEqual(1, len(points))
+            self.assertEqual(["synthetic-excluded"], excluded)
+            point = points[0]
+            self.assertEqual("synthetic-eligible", point["payload"]["mempalace_id"])
+            self.assertEqual(str(uuid.uuid5(UUID_NAMESPACE, "synthetic-eligible")), point["id"])
+            self.assertEqual("infrastructure-archive", point["payload"]["metadata"]["wing"])
+            self.assertEqual("legacy-room", point["payload"]["metadata"]["room"])
+            self.assertEqual(
+                sources[0]["metadata"],
+                point["payload"]["metadata"]["_solidstats_migration"]["source_metadata"],
+            )
+            self.assertEqual("2026-08-20T00:00:00Z", point["payload"]["updated_at"])
+            self.assertEqual(["synthetic-eligible"], [mapping["source_id"] for mapping in id_map])
+
+    def test_contract_rules_change_routing_without_a_builtin_default(self) -> None:
+        bundle = load_bundle_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            proof = root / "inventory-proof.json"
+            write_json(proof, {"schema": "synthetic"})
+            standard = root / "standard.json"
+            contrasting = root / "contrasting.json"
+            write_approved_mapping_contract(standard, proof)
+            write_approved_mapping_contract(
+                contrasting, proof, infrastructure_target="synthetic-archive-b"
+            )
+            source = [{"id": "synthetic-id", "document": "synthetic", "metadata": {"wing": "infrastructure", "room": "legacy"}, "vector": [1.0]}]
+            first, _first_map, _first_excluded = bundle.build_target_points(
+                source, bundle.load_approved_mapping_contract(proof, standard), target_updated_at="fixed"
+            )
+            second, _second_map, _second_excluded = bundle.build_target_points(
+                source, bundle.load_approved_mapping_contract(proof, contrasting), target_updated_at="fixed"
+            )
+            self.assertEqual("infrastructure-archive", first[0]["payload"]["metadata"]["wing"])
+            self.assertEqual("synthetic-archive-b", second[0]["payload"]["metadata"]["wing"])
+
+    def test_reserved_metadata_collision_fails_before_points_exist(self) -> None:
+        bundle = load_bundle_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            proof, contract_path = self.write_contract_inputs(Path(temporary))
+            contract = bundle.load_approved_mapping_contract(proof, contract_path)
+            with self.assertRaisesRegex(ValueError, "reserved metadata"):
+                bundle.build_target_points(
+                    [{"id": "synthetic", "document": "synthetic", "metadata": {"wing": "SolidStats", "_solidstats_migration": {}}, "vector": [1.0]}],
+                    contract,
+                    target_updated_at="fixed",
+                )
 
 
 if __name__ == "__main__":
