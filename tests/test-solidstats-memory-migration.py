@@ -1325,6 +1325,15 @@ class ParityContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unstable"):
             parity.derive_source_distance_rule([stable[0], [("b", 0.20), ("a", 0.10)], stable[0]], serialization_floor=1e-6)
 
+    def test_ann_equivalence_requires_top1_overlap_order_and_common_distance(self) -> None:
+        parity = load_parity_module()
+        source = [("a", 0.1), ("b", 0.2), ("c", 0.3), ("d", 0.4), ("e", 0.5)]
+        target = [("a", 0.1), ("b", 0.2), ("c", 0.3), ("d", 0.4), ("x", 0.5)]
+        self.assertEqual(0, parity.compare_ann_recall_rankings(source, target, {"max_distance_delta": 0.0})["failures"])
+        self.assertGreater(parity.compare_ann_recall_rankings(source, [("b", 0.2), *target[1:]], {"max_distance_delta": 0.0})["failures"], 0)
+        self.assertGreater(parity.compare_ann_recall_rankings(source, [("a", 0.1), ("c", 0.3), ("b", 0.2), ("d", 0.4), ("x", 0.5)], {"max_distance_delta": 0.0})["failures"], 0)
+        self.assertGreater(parity.compare_ann_recall_rankings(source, [("a", 0.1), ("b", 0.2), ("c", 0.3), ("x", 0.4), ("y", 0.5)], {"max_distance_delta": 0.0})["failures"], 0)
+
     def test_stable_empty_fixture_requires_empty_target_and_nonvacuous_suite(self) -> None:
         parity = load_parity_module()
         rule = parity.derive_source_distance_rule([[], [], []], serialization_floor=1e-6)
