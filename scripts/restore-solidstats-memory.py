@@ -1378,9 +1378,12 @@ test -n "${snapshot_name}"
 curl --fail --show-error --silent -H "api-key: ${QDRANT_API_KEY}" \\
   "${QDRANT_URL}/collections/${QDRANT_COLLECTION}/snapshots/${snapshot_name}" \\
   -o "${work_dir}/qdrant.snapshot"
-tar --create --file "${work_dir}/metadata-before.tar" --directory /metadata palace
-tar --create --file "${work_dir}/mempalace-metadata.tar" --directory /metadata palace
-tar --create --file "${work_dir}/metadata-after.tar" --directory /metadata palace
+archive_metadata() {
+  python3 -c 'import sys, tarfile; archive = tarfile.open(sys.argv[1], "w"); archive.add("/metadata/palace", arcname="palace"); archive.close()' "$1"
+}
+archive_metadata "${work_dir}/metadata-before.tar"
+archive_metadata "${work_dir}/mempalace-metadata.tar"
+archive_metadata "${work_dir}/metadata-after.tar"
 test "$(sha256sum "${work_dir}/metadata-before.tar" | cut -d' ' -f1)" = \\
   "$(sha256sum "${work_dir}/metadata-after.tar" | cut -d' ' -f1)"
 rm "${work_dir}/metadata-before.tar" "${work_dir}/metadata-after.tar" "${snapshot_json}"

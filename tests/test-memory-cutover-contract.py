@@ -888,6 +888,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
             'sha256sum "${work_dir}/manifest.json" "${work_dir}/mempalace-metadata.tar"',
             command,
         )
+        self.assertIn("python3 -c 'import sys, tarfile", command)
+        self.assertNotIn("tar --create", command)
         dry_runs: list[tuple[str, ...]] = []
 
         def runner(command: tuple[str, ...], **_kwargs: object) -> object:
