@@ -321,6 +321,34 @@ def compare_recall_rankings(source: Sequence[tuple[str, float]], target: Sequenc
     return {"compared": len(source), "failures": failures}
 
 
+def compare_ann_recall_rankings(source: Sequence[tuple[str, float]], target: Sequence[tuple[str, float]], rule: Mapping[str, object]) -> dict[str, int | float]:
+    """Strict cross-engine ANN equivalence without disclosing result identities."""
+    tolerance = rule.get("max_distance_delta")
+    if not isinstance(tolerance, (int, float)) or tolerance < 0:
+        raise ParityFailure("distance rule is invalid")
+    floor = 8 * 2 ** -23
+    failures = int(len(source) != len(target))
+    if not source:
+        return {"compared": 0, "failures": failures, "common_results": 0, "common_pair_concordant": 0, "max_common_distance_delta": 0.0}
+    source_ids = [item[0] for item in source]
+    target_ids = [item[0] for item in target]
+    if len(set(source_ids)) != len(source_ids) or len(set(target_ids)) != len(target_ids) or source_ids[0] != target_ids[0]:
+        failures += 1
+    common = set(source_ids) & set(target_ids)
+    if len(common) * 5 < len(source_ids) * 4:
+        failures += 1
+    source_common = [item for item in source_ids if item in common]
+    target_common = [item for item in target_ids if item in common]
+    concordant = int(source_common == target_common)
+    if not concordant:
+        failures += 1
+    target_distances = dict(target)
+    max_delta = max((abs(distance - float(target_distances[source_id])) for source_id, distance in source if source_id in common), default=0.0)
+    if max_delta > max(float(tolerance), floor):
+        failures += 1
+    return {"compared": len(source), "failures": failures, "common_results": len(common), "common_pair_concordant": concordant, "max_common_distance_delta": max_delta}
+
+
 def _scroll_points(base_url: str, collection: str, expected_count: int) -> Iterable[dict[str, object]]:
     if not 0 < expected_count <= MAX_RECORDS:
         raise ParityFailure("target count is invalid")
@@ -396,12 +424,12 @@ def _validate_result_summary(value: object, *, recall: bool = False) -> None:
         raise ParityFailure("report schema is invalid")
     allowed = {"compared", "failures"}
     if recall:
-        allowed |= {"excluded_fixtures", "source_repeat_runs", "rule", "worst_safe_delta"}
+        allowed |= {"excluded_fixtures", "source_repeat_runs", "rule", "worst_safe_delta", "ann_nonempty_fixtures", "ann_common_results", "ann_common_pair_concordant", "ann_overlap_minimum_numerator", "ann_overlap_minimum_denominator", "ann_distance_floor"}
     if set(value) - allowed or not {"compared", "failures"} <= set(value):
         raise ParityFailure("report schema is invalid")
     if any(isinstance(value.get(key), bool) or not isinstance(value.get(key), (int, float)) or value.get(key) < 0 for key in ("compared", "failures")):
         raise ParityFailure("report schema is invalid")
-    if recall and (not isinstance(value.get("excluded_fixtures"), int) or value["excluded_fixtures"] < 0 or value.get("rule") != "source-repeatability-plus-serialization-floor" or not isinstance(value.get("source_repeat_runs"), int) or value["source_repeat_runs"] < 3 or not isinstance(value.get("worst_safe_delta"), (int, float)) or value["worst_safe_delta"] < 0):
+    if recall and (not isinstance(value.get("excluded_fixtures"), int) or value["excluded_fixtures"] < 0 or value.get("rule") != "source-repeatability-plus-serialization-floor-plus-ann-equivalence" or not isinstance(value.get("source_repeat_runs"), int) or value["source_repeat_runs"] < 3 or not isinstance(value.get("worst_safe_delta"), (int, float)) or value["worst_safe_delta"] < 0 or any(not isinstance(value.get(key), int) or value[key] < 0 for key in ("ann_nonempty_fixtures", "ann_common_results", "ann_common_pair_concordant")) or value.get("ann_overlap_minimum_numerator") != 4 or value.get("ann_overlap_minimum_denominator") != 5 or value.get("ann_distance_floor") != 8 * 2 ** -23):
         raise ParityFailure("report schema is invalid")
 
 
@@ -655,7 +683,7 @@ def _verify_recall(*, base_url: str, collection: str, fixtures: Sequence[Mapping
     runs = [_run_source_queries(snapshot_dir=snapshot_dir, fixtures_path=fixtures_path, oracle_python=oracle_python, oracle_source_dir=oracle_source_dir, eligible_wings=eligible_wings, excluded_indices=excluded_indices) for _ in range(repeats)]
     if any(len(run) != len(fixtures) for run in runs):
         raise ParityFailure("source oracle fixture count is invalid")
-    compared = failures = 0
+    compared = failures = common_results = common_pair_concordant = nonempty_fixtures = 0
     worst_delta = 0.0
     for index, fixture in enumerate(fixtures):
         if classifications[index] == "excluded":
@@ -684,13 +712,16 @@ def _verify_recall(*, base_url: str, collection: str, fixtures: Sequence[Mapping
         expected = source_runs[0]
         target = _target_query(base_url, collection, query_vector, map_fixture_filters(fixture.get("filters", {}), contract), int(fixture["top_k"]))
         normalized = [(str(uuid.uuid5(UUID_NAMESPACE, source_id)), distance) for source_id, distance in expected]
-        result = compare_recall_rankings(normalized, target, rule)
+        result = compare_ann_recall_rankings(normalized, target, rule)
         compared += result["compared"]
         failures += result["failures"]
+        common_results += int(result["common_results"])
+        common_pair_concordant += int(result["common_pair_concordant"])
+        nonempty_fixtures += int(bool(normalized))
         worst_delta = max(worst_delta, float(rule["max_distance_delta"]))
     if compared == 0:
         raise ParityFailure("recall evidence is non-vacuous")
-    return {"compared": compared, "failures": failures, "excluded_fixtures": len(excluded_indices), "source_repeat_runs": repeats, "rule": "source-repeatability-plus-serialization-floor", "worst_safe_delta": worst_delta}
+    return {"compared": compared, "failures": failures, "excluded_fixtures": len(excluded_indices), "source_repeat_runs": repeats, "rule": "source-repeatability-plus-serialization-floor-plus-ann-equivalence", "worst_safe_delta": worst_delta, "ann_nonempty_fixtures": nonempty_fixtures, "ann_common_results": common_results, "ann_common_pair_concordant": common_pair_concordant, "ann_overlap_minimum_numerator": 4, "ann_overlap_minimum_denominator": 5, "ann_distance_floor": 8 * 2 ** -23}
 
 
 def _stream_field_parity(*, bundle_dir: Path, base_url: str, collection: str, expected_count: int, contract: Mapping[str, object], work_root: Path) -> dict[str, dict[str, int]]:
@@ -769,8 +800,10 @@ def make_parity_report(*, provenance: Mapping[str, object], transform: Mapping[s
     recall = dict(results["recall_parity"])
     recall.setdefault("excluded_fixtures", 0)
     recall.setdefault("source_repeat_runs", 3)
-    recall.setdefault("rule", "source-repeatability-plus-serialization-floor")
+    recall.setdefault("rule", "source-repeatability-plus-serialization-floor-plus-ann-equivalence")
     recall.setdefault("worst_safe_delta", 0.0)
+    for key, value in {"ann_nonempty_fixtures": 1, "ann_common_results": recall.get("compared", 0), "ann_common_pair_concordant": 1, "ann_overlap_minimum_numerator": 4, "ann_overlap_minimum_denominator": 5, "ann_distance_floor": 8 * 2 ** -23}.items():
+        recall.setdefault(key, value)
     return {
         "parity_schema": "solidstats-memory-parity/v1", "verdict": verdict,
         "source_inventory_sha256": _safe_digest(provenance.get("source_inventory_sha256")), "mapping_contract_sha256": _safe_digest(provenance.get("mapping_contract_sha256")), "transform_manifest_sha256": _safe_digest(provenance.get("transform_manifest_sha256")),
