@@ -909,10 +909,17 @@ class MemoryCutoverContractTests(unittest.TestCase):
             run_id=self.run_id,
             private_environment={
                 "BACKUP_RUN_ID": self.run_id,
+                "BACKUP_PREPARE_IMAGE": "example.invalid/mempalace@sha256:" + "1" * 64,
+                "BACKUP_S3_URI": f"s3://private-bucket/backups/solidstats-memory/{self.run_id}/",
+                "AWS_ACCESS_KEY_ID": "synthetic-access",
+                "AWS_EC2_METADATA_DISABLED": "true",
+                "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
                 "PHASE20_BINDINGS_JSON": json.dumps(
                     {"binding_sha256": "1" * 64}, separators=(",", ":")
                 ),
+                "QDRANT_API_KEY": "synthetic-qdrant-key",
                 "QDRANT_COLLECTION": "private-collection",
+                "QDRANT_URL": "http://qdrant:6333",
             },
         )
         output = self.root / "private" / "job.json"
@@ -924,15 +931,19 @@ class MemoryCutoverContractTests(unittest.TestCase):
         public = RESTORE.backup_job_evidence(job)
         self.assertNotIn("private-collection", json.dumps(public))
         self.assertTrue(public["generated"])
-        command = job["spec"]["template"]["spec"]["containers"][0]["args"][0]
-        self.assertIn('"schema":"solidstats-memory-backup-package/v1"', command)
-        self.assertIn('"phase20_bindings":%s', command)
-        self.assertIn(
-            'sha256sum "${work_dir}/manifest.json" "${work_dir}/mempalace-metadata.tar"',
-            command,
-        )
-        self.assertIn("python3 -c 'import sys, tarfile", command)
-        self.assertNotIn("tar --create", command)
+        pod_spec = job["spec"]["template"]["spec"]
+        self.assertEqual(1, len(pod_spec["initContainers"]))
+        self.assertEqual(1, len(pod_spec["containers"]))
+        prepare = pod_spec["initContainers"][0]
+        uploader = pod_spec["containers"][0]
+        self.assertEqual(["python3", "-c"], prepare["command"])
+        self.assertIn("solidstats-memory-backup-package/v1", prepare["args"][0])
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", json.dumps(prepare["env"]))
+        self.assertEqual(["aws"], uploader["command"])
+        self.assertIn("s3", uploader["args"])
+        self.assertIn("cp", uploader["args"])
+        self.assertNotIn("hmac", prepare["args"][0])
+        self.assertNotIn("Authorization", prepare["args"][0])
         dry_runs: list[tuple[str, ...]] = []
 
         def runner(command: tuple[str, ...], **_kwargs: object) -> object:
@@ -1128,11 +1139,19 @@ class MemoryCutoverContractTests(unittest.TestCase):
                         },
                     },
                     {
+                        "AWS_ACCESS_KEY_ID": "synthetic-access",
+                        "AWS_EC2_METADATA_DISABLED": "true",
+                        "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
+                        "BACKUP_PREPARE_IMAGE": "example.invalid/mempalace@sha256:" + "1" * 64,
                         "BACKUP_RUN_ID": self_run_id,
+                        "BACKUP_S3_URI": f"s3://private-bucket/backups/solidstats-memory/{self_run_id}/",
                         "PHASE20_BINDINGS_JSON": json.dumps(
                             current_bindings, separators=(",", ":"), sort_keys=True
                         ),
                         "PRIVATE_BINDING": "synthetic-value",
+                        "QDRANT_API_KEY": "synthetic-qdrant-key",
+                        "QDRANT_COLLECTION": "private-collection",
+                        "QDRANT_URL": "http://qdrant:6333",
                     },
                 )
 

@@ -1393,8 +1393,20 @@ def generate_backup_job(
     existing_names = {
         item.get("name") for item in existing_env if isinstance(item, Mapping)
     }
+    private_values = dict(private_environment)
+    prepare_image = private_values.pop("BACKUP_PREPARE_IMAGE", None)
+    upload_uri = private_values.pop("BACKUP_S3_URI", None)
+    if (
+        not isinstance(prepare_image, str)
+        or not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", prepare_image)
+        or not isinstance(upload_uri, str)
+        or not upload_uri.startswith("s3://")
+        or not upload_uri.endswith(f"/{run_id}/")
+        or any(character.isspace() for character in upload_uri)
+    ):
+        raise RestoreControlError("private Job image or object binding is invalid")
     injected: list[dict[str, str]] = []
-    for name, value in sorted(private_environment.items()):
+    for name, value in sorted(private_values.items()):
         if (
             not isinstance(name, str)
             or not ENV_NAME.fullmatch(name)
@@ -1406,7 +1418,7 @@ def generate_backup_job(
         injected.append({"name": name, "value": value})
     container["env"] = [*existing_env, *injected]
     required_runtime = {"BACKUP_RUN_ID", "PHASE20_BINDINGS_JSON"}
-    if not required_runtime.issubset(private_environment):
+    if not required_runtime.issubset(private_values):
         raise RestoreControlError("private Job environment is incomplete")
     container["command"] = ["/bin/sh", "-ec"]
     container["args"] = [
@@ -1442,6 +1454,116 @@ aws --endpoint-url "${S3_ENDPOINT}" s3 cp --recursive \\
   "${work_dir}" "s3://${S3_BUCKET}/${S3_PREFIX}${BACKUP_RUN_ID}/"
 """
     ]
+    by_name = {
+        item.get("name"): item
+        for item in container["env"]
+        if isinstance(item, Mapping) and isinstance(item.get("name"), str)
+    }
+    prepare_names = {
+        "BACKUP_RUN_ID",
+        "PHASE20_BINDINGS_JSON",
+        "QDRANT_API_KEY",
+        "QDRANT_COLLECTION",
+        "QDRANT_URL",
+    }
+    upload_names = {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_EC2_METADATA_DISABLED",
+        "AWS_SECRET_ACCESS_KEY",
+    }
+    if not prepare_names.issubset(by_name) or not upload_names.issubset(by_name):
+        raise RestoreControlError("private Job environment is incomplete")
+    prepare = deepcopy(container)
+    prepare["name"] = "prepare-package"
+    prepare["image"] = prepare_image
+    prepare["env"] = [by_name[name] for name in sorted(prepare_names)]
+    prepare["command"] = ["python3", "-c"]
+    prepare["args"] = [
+        """\
+import hashlib
+import json
+import os
+from pathlib import Path
+import tarfile
+from urllib import parse, request
+
+run_id = os.environ["BACKUP_RUN_ID"]
+work_dir = Path("/tmp") / run_id
+work_dir.mkdir(mode=0o700)
+collection = parse.quote(os.environ["QDRANT_COLLECTION"], safe="")
+headers = {"api-key": os.environ["QDRANT_API_KEY"]}
+base = os.environ["QDRANT_URL"]
+create = request.Request(
+    f"{base}/collections/{collection}/snapshots", headers=headers, method="POST"
+)
+with request.urlopen(create, timeout=300) as response:
+    created = json.load(response)
+snapshot_name = created.get("result", {}).get("name")
+if not isinstance(snapshot_name, str) or not snapshot_name:
+    raise RuntimeError("snapshot creation did not return a name")
+download = request.Request(
+    f"{base}/collections/{collection}/snapshots/{parse.quote(snapshot_name, safe='')}",
+    headers=headers,
+)
+with request.urlopen(download, timeout=900) as response:
+    (work_dir / "qdrant.snapshot").write_bytes(response.read())
+
+def archive(path):
+    with tarfile.open(path, "w") as output:
+        output.add("/metadata/palace", arcname="palace")
+
+before = work_dir / "metadata-before.tar"
+metadata = work_dir / "mempalace-metadata.tar"
+after = work_dir / "metadata-after.tar"
+archive(before)
+archive(metadata)
+archive(after)
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+if sha256(before) != sha256(after):
+    raise RuntimeError("metadata changed during archive")
+before.unlink()
+after.unlink()
+manifest = {
+    "schema": "solidstats-memory-backup-package/v1",
+    "run_id": run_id,
+    "phase20_bindings": json.loads(os.environ["PHASE20_BINDINGS_JSON"]),
+    "members": {
+        "mempalace_metadata_tar_sha256": sha256(metadata),
+        "qdrant_snapshot_sha256": sha256(work_dir / "qdrant.snapshot"),
+    },
+}
+(work_dir / "manifest.json").write_text(
+    json.dumps(manifest, allow_nan=False, separators=(",", ":"), sort_keys=True) + "\\n",
+    encoding="utf-8",
+)
+checksum_names = ("manifest.json", "mempalace-metadata.tar", "qdrant.snapshot")
+(work_dir / "SHA256SUMS").write_text(
+    "".join(f"{sha256(work_dir / name)}  {name}\\n" for name in checksum_names),
+    encoding="ascii",
+)
+"""
+    ]
+    container["name"] = "upload-package"
+    container["env"] = [by_name[name] for name in sorted(upload_names)]
+    container["command"] = ["aws"]
+    container["args"] = [
+        "--endpoint-url",
+        "https://s3.twcstorage.ru",
+        "s3",
+        "cp",
+        "--recursive",
+        f"/tmp/{run_id}",
+        upload_uri,
+        "--only-show-errors",
+    ]
+    pod_spec["initContainers"] = [prepare]
     labels = {}
     template_metadata = template.get("metadata")
     if isinstance(template_metadata, Mapping) and isinstance(
@@ -1493,17 +1615,22 @@ def backup_job_evidence(job: Mapping[str, object]) -> dict[str, object]:
     template = spec.get("template") if isinstance(spec, Mapping) else None
     pod_spec = template.get("spec") if isinstance(template, Mapping) else None
     containers = pod_spec.get("containers") if isinstance(pod_spec, Mapping) else None
+    init_containers = (
+        pod_spec.get("initContainers") if isinstance(pod_spec, Mapping) else None
+    )
     if job.get("kind") != "Job" or not isinstance(containers, list) or not containers:
         raise RestoreControlError("generated backup Job is invalid")
+    if not isinstance(init_containers, list) or len(init_containers) != 1:
+        raise RestoreControlError("generated backup Job is invalid")
     env_count = 0
-    for container in containers:
+    for container in [*init_containers, *containers]:
         if not isinstance(container, Mapping) or not isinstance(container.get("env", []), list):
             raise RestoreControlError("generated backup Job is invalid")
         env_count += len(container.get("env", []))
     return {
         "generated": True,
         "job_sha256": _digest(job),
-        "container_count": len(containers),
+        "container_count": len(init_containers) + len(containers),
         "environment_binding_count": env_count,
         "recurring_schedule_changed": False,
     }

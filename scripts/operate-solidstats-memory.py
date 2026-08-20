@@ -80,6 +80,10 @@ OFFICIAL_MEMPALACE_IMAGE = (
 OFFICIAL_MEMPALACE_CONFIG = (
     "sha256:19453ae121bc14f4e9515fed1840179add7a8ad638cce1c0dc90a92df777d9e8"
 )
+OFFICIAL_AWS_CLI_IMAGE = (
+    "public.ecr.aws/aws-cli/aws-cli@"
+    "sha256:f611429c1fcd094bf04f748f0be1e5d604aa28214ea0f54c0bf8242ec2ef7cd3"
+)
 RESTORE_RESERVE_BYTES = 1024 * 1024 * 1024
 
 
@@ -130,6 +134,36 @@ def storage_bytes(value: object) -> int:
         "Ti": 1024**4,
     }
     return int(match.group(1)) * factors[match.group(2)]
+
+
+def mempalace_collection_name(
+    *, palace_id: str, namespace: str, collection_name: str
+) -> str:
+    """Derive the v3.5.0 Qdrant name used by the exact runtime image."""
+
+    def slug(value: str, fallback: str) -> str:
+        safe = re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_") or fallback
+        if len(safe) <= 64:
+            return safe
+        suffix = hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()[:12]
+        return f"{safe[:51]}_{suffix}"
+
+    if not all(
+        isinstance(value, str) and value
+        for value in (palace_id, namespace, collection_name)
+    ):
+        raise OperatorError("MemPalace collection derivation input is invalid")
+    palace_hash = hashlib.sha256(
+        palace_id.encode("utf-8", errors="surrogatepass")
+    ).hexdigest()[:16]
+    return "_".join(
+        (
+            "mempalace",
+            slug(namespace, "namespace"),
+            palace_hash,
+            slug(collection_name, "collection"),
+        )
+    )
 
 
 def regular_file(path: Path, *, max_bytes: int = 512 * 1024 * 1024) -> os.stat_result:
@@ -345,7 +379,6 @@ class Runtime:
             "source_secret_name",
             "mempalace_image",
             "uploader_image",
-            "observer_image",
             "qdrant_storage",
             "mempalace_storage",
             "host_nginx_cidr",
@@ -376,7 +409,7 @@ class Runtime:
             config["source_secret_name"], "source Secret binding is invalid"
         )
         self.config = config
-        for key in ("mempalace_image", "uploader_image", "observer_image"):
+        for key in ("mempalace_image", "uploader_image"):
             if not isinstance(config[key], str) or not IMAGE.fullmatch(config[key]):
                 raise OperatorError("operator image binding is invalid")
         for key in (
@@ -396,6 +429,13 @@ class Runtime:
             }
         ):
             raise OperatorError("operator collection binding is invalid")
+        expected_probe_alias = mempalace_collection_name(
+            palace_id="/data/palace",
+            namespace="SolidStats",
+            collection_name="mempalace_drawers",
+        )
+        if config["probe_alias"] != expected_probe_alias:
+            raise OperatorError("operator compatibility alias binding is invalid")
         if (
             isinstance(config["expected_count"], bool)
             or not isinstance(config["expected_count"], int)
@@ -431,6 +471,7 @@ class Runtime:
         timeout: float,
         input_bytes: bytes | None = None,
         stdout_file: Path | None = None,
+        environment: Mapping[str, str] | None = None,
     ) -> bytes:
         if timeout <= 0 or timeout > 3600:
             raise OperatorError("operator command timeout is invalid")
@@ -445,6 +486,7 @@ class Runtime:
                 input=input_bytes,
                 stdout=output_handle or subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                env=None if environment is None else {**os.environ, **environment},
                 timeout=timeout,
                 check=False,
             )
@@ -582,6 +624,26 @@ class Runtime:
             "Cmd"
         ) != ["mcp"]:
             raise OperatorError("immutable image runtime contract changed")
+
+    def _verify_uploader_registry_image(self) -> None:
+        image = self.config["uploader_image"]
+        if image != OFFICIAL_AWS_CLI_IMAGE:
+            raise OperatorError("backup uploader is not the approved registry artifact")
+        raw = self._run(["docker", "manifest", "inspect", str(image)], timeout=60)
+        try:
+            manifest = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise OperatorError("immutable uploader registry probe failed") from error
+        config = manifest.get("config") if isinstance(manifest, Mapping) else None
+        layers = manifest.get("layers") if isinstance(manifest, Mapping) else None
+        if (
+            manifest.get("schemaVersion") != 2
+            or not isinstance(config, Mapping)
+            or not SHA256.fullmatch(str(config.get("digest", "")).removeprefix("sha256:"))
+            or not isinstance(layers, list)
+            or not layers
+        ):
+            raise OperatorError("immutable uploader registry probe failed")
 
     @staticmethod
     def _sigv4_key(secret: str, date: str, region: str) -> bytes:
@@ -944,6 +1006,7 @@ class Runtime:
             raise OperatorError("isolated namespace pre-state changed")
         self._kubectl(["version", "--request-timeout=20s"], timeout=30)
         self._verify_mempalace_registry_image()
+        self._verify_uploader_registry_image()
         self._probe_s3()
         prestate, quiescence = self._measure_prestate()
         if quiescence != {"stable": True, "writer_count": 0}:
@@ -1008,9 +1071,6 @@ class Runtime:
             marker: str(self.config[key])
             for marker, key in MARKERS.items()
         }
-        replacements["MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST"] = str(
-            self.config["observer_image"]
-        )
         for relative in TARGETS:
             source = self.repo_root / relative
             regular_file(source, max_bytes=4 * 1024 * 1024)
@@ -1271,6 +1331,11 @@ class Runtime:
             "cronjob": cronjob,
             "private_environment": {
                 "BACKUP_RUN_ID": self.state_root.parent.name,
+                "BACKUP_PREPARE_IMAGE": self.config["mempalace_image"],
+                "BACKUP_S3_URI": (
+                    f"s3://{self._source_s3_values()['S3_BUCKET']}/"
+                    f"backups/solidstats-memory/{self.state_root.parent.name}/"
+                ),
                 "PHASE20_BINDINGS_JSON": canonical(bindings).decode("utf-8"),
             },
         }
@@ -1319,17 +1384,45 @@ class Runtime:
 
     def remote_package_inventory(self, payload: dict[str, object]) -> object:
         exact_mapping(payload, set(), "remote inventory request is invalid")
-        pod = self._backup_pod()
-        prefix = f"s3://${{S3_BUCKET}}/${{S3_PREFIX}}{self.state_root.parent.name}/"
-        program = (
-            "aws --endpoint-url \"${S3_ENDPOINT}\" s3 ls \""
-            + prefix
-            + "\" | awk '{print $4}' | sort"
+        values = self._source_s3_values()
+        prefix = (
+            f"s3://{values['S3_BUCKET']}/backups/solidstats-memory/"
+            f"{self.state_root.parent.name}/"
         )
-        output = self._kubectl(
-            ["-n", NAMESPACE, "exec", pod, "--", "/bin/sh", "-ec", program], timeout=300
+        output = self._run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "host",
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
+                "-e",
+                "AWS_ACCESS_KEY_ID",
+                "-e",
+                "AWS_SECRET_ACCESS_KEY",
+                "-e",
+                "AWS_EC2_METADATA_DISABLED",
+                str(self.config["uploader_image"]),
+                "--endpoint-url",
+                S3_ENDPOINT,
+                "s3",
+                "ls",
+                prefix,
+            ],
+            timeout=300,
+            environment={
+                "AWS_ACCESS_KEY_ID": values["S3_ACCESS_KEY_ID"],
+                "AWS_SECRET_ACCESS_KEY": values["S3_SECRET_ACCESS_KEY"],
+                "AWS_EC2_METADATA_DISABLED": "true",
+            },
         )
-        names = output.decode("utf-8").splitlines()
+        names = sorted(
+            line.rsplit(maxsplit=1)[-1]
+            for line in output.decode("utf-8").splitlines()
+            if line.strip()
+        )
         if names != list(PACKAGE_MEMBERS):
             raise OperatorError("remote package inventory is invalid")
         return names
@@ -1340,24 +1433,49 @@ class Runtime:
             request["package_dir"], root=self.state_root.parent, message="package path is invalid"
         )
         private_directory(package_dir, create=True)
-        pod = self._backup_pod()
+        values = self._source_s3_values()
+        prefix = (
+            f"s3://{values['S3_BUCKET']}/backups/solidstats-memory/"
+            f"{self.state_root.parent.name}/"
+        )
+        self._run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "host",
+                "-e",
+                "AWS_ACCESS_KEY_ID",
+                "-e",
+                "AWS_SECRET_ACCESS_KEY",
+                "-e",
+                "AWS_EC2_METADATA_DISABLED",
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
+                "-v",
+                f"{package_dir}:/package",
+                str(self.config["uploader_image"]),
+                "--endpoint-url",
+                S3_ENDPOINT,
+                "s3",
+                "cp",
+                "--recursive",
+                prefix,
+                "/package",
+                "--only-show-errors",
+            ],
+            timeout=1800,
+            environment={
+                "AWS_ACCESS_KEY_ID": values["S3_ACCESS_KEY_ID"],
+                "AWS_SECRET_ACCESS_KEY": values["S3_SECRET_ACCESS_KEY"],
+                "AWS_EC2_METADATA_DISABLED": "true",
+            },
+        )
         for name in PACKAGE_MEMBERS:
             target = package_dir / name
-            command = [
-                "kubectl",
-                "--context",
-                self.context,
-                "-n",
-                NAMESPACE,
-                "exec",
-                pod,
-                "--",
-                "/bin/sh",
-                "-ec",
-                f'aws --endpoint-url "${{S3_ENDPOINT}}" s3 cp "s3://${{S3_BUCKET}}/${{S3_PREFIX}}{self.state_root.parent.name}/{name}" - --only-show-errors',
-            ]
-            self._run(command, timeout=900, stdout_file=target)
             regular_file(target)
+            os.chmod(target, 0o600)
         return {"downloaded": True}
 
     def recover_uploaded_snapshot(self, payload: dict[str, object]) -> object:
@@ -1457,13 +1575,27 @@ class Runtime:
     def run_phase20_parity(self, payload: dict[str, object]) -> object:
         exact_mapping(payload, set(), "parity request is invalid")
         target = str(self.config["target_collection"])
+        protected = str(self.config["protected_collection"])
         expected: dict[str, str] = {}
+        ann_vectors: list[list[float]] = []
         with (self.bundle_dir / "points.jsonl").open(encoding="utf-8") as source:
             for line in source:
                 point = json.loads(line)
                 if not isinstance(point, dict) or not isinstance(point.get("id"), str):
                     raise OperatorError("private bundle parity input is invalid")
                 expected[point["id"]] = digest(point)
+                vector = point.get("vector")
+                if len(ann_vectors) < 24:
+                    if (
+                        not isinstance(vector, list)
+                        or len(vector) != self.config["expected_vector_config"].get("size")
+                        or any(
+                            isinstance(value, bool) or not isinstance(value, (int, float))
+                            for value in vector
+                        )
+                    ):
+                        raise OperatorError("private bundle parity input is invalid")
+                    ann_vectors.append(vector)
         observed = 0
         offset = None
         while True:
@@ -1488,6 +1620,43 @@ class Runtime:
                 break
         if expected or observed != self.config["expected_count"]:
             raise OperatorError("restored exact parity failed")
+        if len(ann_vectors) != 24:
+            raise OperatorError("restored ANN parity input is incomplete")
+        for vector in ann_vectors:
+            body = {
+                "query": vector,
+                "limit": 10,
+                "with_payload": False,
+                "with_vector": False,
+            }
+            baseline = self._qdrant(
+                "POST",
+                f"/collections/{urllib_parse.quote(protected, safe='')}/points/query",
+                body,
+            )
+            restored = self._qdrant(
+                "POST",
+                f"/collections/{urllib_parse.quote(target, safe='')}/points/query",
+                body,
+            )
+            baseline_result = baseline.get("result") if isinstance(baseline, Mapping) else None
+            restored_result = restored.get("result") if isinstance(restored, Mapping) else None
+            baseline_points = (
+                baseline_result.get("points")
+                if isinstance(baseline_result, Mapping)
+                else None
+            )
+            restored_points = (
+                restored_result.get("points")
+                if isinstance(restored_result, Mapping)
+                else None
+            )
+            if (
+                not isinstance(baseline_points, list)
+                or not baseline_points
+                or baseline_points != restored_points
+            ):
+                raise OperatorError("restored ANN parity failed")
         return {
             "verdict": "pass",
             "record_count": observed,

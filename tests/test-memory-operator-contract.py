@@ -79,6 +79,21 @@ class MemoryOperatorContractTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_probe_alias_derivation_matches_pinned_v350_contract(self) -> None:
+        expected = (
+            "mempalace_SolidStats_"
+            + hashlib.sha256(b"/data/palace").hexdigest()[:16]
+            + "_mempalace_drawers"
+        )
+        self.assertEqual(
+            expected,
+            OPERATOR.mempalace_collection_name(
+                palace_id="/data/palace",
+                namespace="SolidStats",
+                collection_name="mempalace_drawers",
+            ),
+        )
+
     def test_every_adapter_operation_has_one_exact_accepted_shape(self) -> None:
         self.assertEqual(OPERATOR.OPERATIONS, set(self.valid))
         for operation, payload in self.valid.items():
@@ -196,6 +211,7 @@ class MemoryOperatorContractTests(unittest.TestCase):
             mock.patch.object(runtime, "_namespace_exists", return_value=False),
             mock.patch.object(runtime, "_kubectl"),
             mock.patch.object(runtime, "_verify_mempalace_registry_image") as registry,
+            mock.patch.object(runtime, "_verify_uploader_registry_image") as uploader,
             mock.patch.object(runtime, "_probe_s3") as s3,
             mock.patch.object(
                 runtime,
@@ -207,6 +223,7 @@ class MemoryOperatorContractTests(unittest.TestCase):
             result = runtime.inspect_preflight(self.valid["inspect-preflight"])
         self.assertEqual(capacity, result["capacity"])
         registry.assert_called_once_with()
+        uploader.assert_called_once_with()
         s3.assert_called_once_with()
         state.assert_called_once_with()
         measured.assert_called_once_with()
@@ -415,6 +432,115 @@ class MemoryOperatorContractTests(unittest.TestCase):
         ):
             runtime._verify_mempalace_registry_image()
         request.assert_not_called()
+
+    def test_uploader_probe_rejects_unapproved_image_before_network(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.config = {
+            "uploader_image": "example.invalid/uploader@sha256:" + "3" * 64
+        }
+        with (
+            mock.patch.object(runtime, "_run") as run,
+            self.assertRaisesRegex(OPERATOR.OperatorError, "approved registry"),
+        ):
+            runtime._verify_uploader_registry_image()
+        run.assert_not_called()
+
+    def test_remote_inventory_uses_only_pinned_aws_cli_without_secret_argv(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.state_root = self.root / "run-id" / "operator"
+        runtime.config = {"uploader_image": OPERATOR.OFFICIAL_AWS_CLI_IMAGE}
+        values = {
+            "S3_BUCKET": "synthetic-bucket",
+            "S3_ACCESS_KEY_ID": "synthetic-access",
+            "S3_SECRET_ACCESS_KEY": "synthetic-secret",
+        }
+        listing = "".join(
+            f"2026-08-21 00:00:00 1 {name}\n" for name in OPERATOR.PACKAGE_MEMBERS
+        ).encode()
+        with (
+            mock.patch.object(runtime, "_source_s3_values", return_value=values),
+            mock.patch.object(runtime, "_run", return_value=listing) as run,
+        ):
+            self.assertEqual(
+                list(OPERATOR.PACKAGE_MEMBERS), runtime.remote_package_inventory({})
+            )
+        command = run.call_args.args[0]
+        self.assertEqual("docker", command[0])
+        self.assertIn(OPERATOR.OFFICIAL_AWS_CLI_IMAGE, command)
+        self.assertNotIn("synthetic-access", command)
+        self.assertNotIn("synthetic-secret", command)
+        self.assertNotIn("hmac", " ".join(command))
+
+    def test_remote_download_uses_pinned_aws_cli_and_modes_files_0600(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.state_root = self.root / "run-id" / "operator"
+        runtime.state_root.mkdir(parents=True, mode=0o700)
+        runtime.config = {"uploader_image": OPERATOR.OFFICIAL_AWS_CLI_IMAGE}
+        values = {
+            "S3_BUCKET": "synthetic-bucket",
+            "S3_ACCESS_KEY_ID": "synthetic-access",
+            "S3_SECRET_ACCESS_KEY": "synthetic-secret",
+        }
+        package = runtime.state_root.parent / "downloaded"
+
+        def download(_command, **_kwargs):
+            for name in OPERATOR.PACKAGE_MEMBERS:
+                (package / name).write_bytes(b"x")
+            return b""
+
+        with (
+            mock.patch.object(runtime, "_source_s3_values", return_value=values),
+            mock.patch.object(runtime, "_run", side_effect=download) as run,
+        ):
+            self.assertEqual(
+                {"downloaded": True},
+                runtime.download_backup_package({"package_dir": str(package)}),
+            )
+        command = run.call_args.args[0]
+        self.assertIn(OPERATOR.OFFICIAL_AWS_CLI_IMAGE, command)
+        self.assertNotIn("synthetic-access", command)
+        self.assertNotIn("synthetic-secret", command)
+        for name in OPERATOR.PACKAGE_MEMBERS:
+            self.assertEqual(0o600, stat.S_IMODE((package / name).stat().st_mode))
+
+    def test_live_parity_compares_protected_and_restored_ann_results(self) -> None:
+        bundle = self.root / "bundle"
+        bundle.mkdir(mode=0o700)
+        points = [
+            {"id": f"point-{index}", "payload": {"index": index}, "vector": [0.1, 0.2]}
+            for index in range(24)
+        ]
+        (bundle / "points.jsonl").write_text(
+            "".join(json.dumps(point, separators=(",", ":")) + "\n" for point in points),
+            encoding="utf-8",
+        )
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.bundle_dir = bundle
+        runtime.config = {
+            "target_collection": "restored",
+            "protected_collection": "protected",
+            "expected_count": 24,
+            "expected_vector_config": {"size": 2, "distance": "Cosine"},
+        }
+        ann = {"result": {"points": [{"id": "point-0", "score": 1.0}]}}
+
+        def qdrant(_method, path, _body=None):
+            if path.endswith("/points/scroll"):
+                return {"result": {"points": points, "next_page_offset": None}}
+            if path.endswith("/points/query"):
+                return ann
+            raise AssertionError(path)
+
+        with mock.patch.object(runtime, "_qdrant", side_effect=qdrant) as request:
+            result = runtime.run_phase20_parity({})
+        self.assertTrue(result["ann_exact"])
+        query_paths = [
+            call.args[1]
+            for call in request.call_args_list
+            if call.args[1].endswith("/points/query")
+        ]
+        self.assertEqual(24, sum("/protected/" in path for path in query_paths))
+        self.assertEqual(24, sum("/restored/" in path for path in query_paths))
 
 
 if __name__ == "__main__":
