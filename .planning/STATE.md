@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: SolidStats Memory Isolation
 current_phase: 21
-current_phase_name: Restore, Cutover & Recovery
-status: paused
-stopped_at: Phase 20 completed and verified; paused before Phase 21 per user request
-last_updated: "2026-08-20T11:02:40.973Z"
+current_phase_name: restore-cutover-recovery
+status: executing
+stopped_at: Completed 21-01-PLAN.md
+last_updated: "2026-08-20T12:47:08.745Z"
 last_activity: 2026-08-20
 last_activity_desc: Phase 20 completed and verified; Phase 21 intentionally paused
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 15
-  completed_plans: 15
+  total_plans: 19
+  completed_plans: 16
   percent: 50
 ---
 
@@ -26,14 +26,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** v4.0 milestone — local SolidStats corpus migration
+**Current focus:** Phase 21 — restore-cutover-recovery
 
 ## Current Position
 
-Phase: 21 — Restore, Cutover & Recovery
-Plan: Not started
-Status: Paused before Phase 21 per user request
-Last activity: 2026-08-20 — Phase 20 completed and verified
+Phase: 21 (restore-cutover-recovery) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-08-20 — Plan 21-01 offline contract completed
 
 **Plan 20-07 completion evidence:**
 
@@ -150,6 +150,7 @@ Last activity: 2026-08-20 — Phase 20 completed and verified
 | Phase 20 P04 | evidence | 2 tasks | 1 file  |
 | Phase 20 P08 | 20m      | 1 task  | 4 files |
 | Phase 20 P05 | cont.    | 2 tasks | 3 files |
+| Phase 21 P01 | 13min    | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -304,8 +305,8 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-20T08:39:32.040Z
-Stopped at: Phase 20 completed and verified; paused before Phase 21 per user request
+Last session: 2026-08-20T12:46:53.159Z
+Stopped at: Completed 21-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

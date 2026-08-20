@@ -409,7 +409,12 @@ operator-gated cutover to `/solidstats/mcp` and `solidstats_memory` with restart
 and reboot recovery evidence.
 **Depends on:** Phase 20
 **Requirements:** ISO-01, ISO-03, OPS-02, OPS-03, OPS-05
-**Plans:** TBD after Phase 20 parity evidence
+**Plans:** 1/4 plans executed
+
+- [x] 21-01-PLAN.md
+- [ ] 21-02-PLAN.md
+- [ ] 21-03-PLAN.md
+- [ ] 21-04-PLAN.md
 
 #### Phase 22: Archive Distillation
 
@@ -448,5 +453,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 18. App-side Error SDK | v3.0 | 1/1 | Complete | 2026-06-14 |
 | 19. SolidStats Memory Foundation | v4.0 | 6/6 | Complete | 2026-08-20 |
 | 20. Local Corpus Migration | v4.0 | 9/9 | Complete | 2026-08-20 |
-| 21. Restore, Cutover & Recovery | v4.0 | 0/TBD | Not started; paused before Phase 21 | |
+| 21. Restore, Cutover & Recovery | v4.0 | 1/4 | In Progress | |
 | 22. Archive Distillation | v4.0 | 0/TBD | Blocked on Phase 21 | |
