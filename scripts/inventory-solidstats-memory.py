@@ -171,9 +171,20 @@ def _reject_secret_shape(value: object) -> bool:
     return False
 
 
+def _reject_secret_key_shape(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            SECRET_KEY_PATTERN.search(str(key)) or _reject_secret_key_shape(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_reject_secret_key_shape(item) for item in value)
+    return False
+
+
 def lossless_metadata(metadata: object, limits: InventoryLimits) -> dict[str, object]:
     """Validate metadata without normalizing values or discarding fields."""
-    if not isinstance(metadata, dict) or _reject_secret_shape(metadata):
+    if not isinstance(metadata, dict) or _reject_secret_key_shape(metadata):
         raise ValueError("metadata is invalid")
     if _metadata_depth(metadata) > limits.max_metadata_depth:
         raise ValueError("metadata exceeds depth limit")
