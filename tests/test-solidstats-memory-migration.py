@@ -9,6 +9,8 @@ from pathlib import Path
 import subprocess
 import stat
 import tempfile
+import threading
+import time
 import unittest
 import uuid
 from unittest import mock
@@ -412,6 +414,38 @@ class InventoryContractTests(unittest.TestCase):
         self.oracle_python = oracle_python
         return snapshot, oracle, output
 
+    def write_side_effecting_oracle(self, *, ready_file: Path | None = None) -> None:
+        ready_write = ""
+        if ready_file is not None:
+            ready_write = (
+                f"Path({str(ready_file)!r}).write_text('ready', encoding='utf-8')\n"
+                "time.sleep(0.5)\n"
+            )
+        self.oracle_python.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, sys, time, uuid\n"
+            "from pathlib import Path\n"
+            "check_only = '--check-only' in sys.argv\n"
+            "palace_path = Path(sys.argv[sys.argv.index('--palace-path') + 1])\n"
+            "(palace_path / 'oracle-marker').write_text('synthetic marker', encoding='utf-8')\n"
+            + ready_write
+            + "collection = {'name':'synthetic-records','namespace':'solidstats',"
+            "'palace_id':'synthetic-palace','target_name':'mempalace_solidstats_"
+            "0000000000000000_synthetic-records','embedder':{'model_name':'synthetic-v1',"
+            "'dimension':3},'source_metric':'cosine'}\n"
+            "print(json.dumps({'type':'header','record_count':1,'collection':collection}), flush=True)\n"
+            "if not check_only:\n"
+            "  doc_id = 'source-1'\n"
+            "  print(json.dumps({'type':'record','index':1,'id':doc_id,'mempalace_id':doc_id,"
+            "'point_id':str(uuid.uuid5(uuid.UUID('c06c3fc7-5c14-4dc4-84c2-24a5f72d8dc1'), doc_id)),"
+            "'document':'synthetic alpha','metadata':{'archive_state':'active','room':'decisions',"
+            "'source_timestamp':'2026-08-20T00:00:00Z','wing':'SolidStats'},"
+            "'embedding':[0.0,1.0,0.0]}), flush=True)\n"
+            "print(json.dumps({'type':'done','record_count':1}), flush=True)\n",
+            encoding="utf-8",
+        )
+        self.oracle_python.chmod(self.oracle_python.stat().st_mode | stat.S_IXUSR)
+
     def test_inventory_preserves_synthetic_records_without_values_in_summary(self) -> None:
         inventory = load_inventory_module()
         with tempfile.TemporaryDirectory() as temporary:
@@ -568,6 +602,59 @@ class InventoryContractTests(unittest.TestCase):
                     oracle_python=self.oracle_python,
                     output_dir=output,
                 )
+            self.assertFalse(output.exists())
+
+    def test_inventory_isolates_side_effecting_oracle_from_snapshot(self) -> None:
+        inventory = load_inventory_module()
+        for check_only in (False, True):
+            with self.subTest(check_only=check_only), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                snapshot, oracle, output = self.write_snapshot(root)
+                self.write_side_effecting_oracle()
+                scratch_before = set(Path(tempfile.gettempdir()).glob("solidstats-memory-oracle-*"))
+                result = inventory.build_source_inventory(
+                    snapshot_dir=snapshot,
+                    freeze_attestation=snapshot / "freeze-attestation.json",
+                    oracle_source_dir=oracle,
+                    oracle_python=self.oracle_python,
+                    output_dir=output,
+                    check_only=check_only,
+                )
+                self.assertFalse((snapshot / "palace" / "oracle-marker").exists())
+                self.assertEqual(
+                    scratch_before,
+                    set(Path(tempfile.gettempdir()).glob("solidstats-memory-oracle-*")),
+                )
+                self.assertEqual(check_only, result.get("check_only", False))
+
+    def test_inventory_detects_external_snapshot_drift_after_oracle_isolation(self) -> None:
+        inventory = load_inventory_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, oracle, output = self.write_snapshot(root)
+            ready_file = root / "oracle-ready"
+            self.write_side_effecting_oracle(ready_file=ready_file)
+
+            def mutate_authoritative_snapshot() -> None:
+                deadline = time.monotonic() + 2
+                while not ready_file.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                if ready_file.exists():
+                    (snapshot / "external-drift").write_text("synthetic change", encoding="utf-8")
+
+            writer = threading.Thread(target=mutate_authoritative_snapshot)
+            writer.start()
+            with self.assertRaisesRegex(ValueError, "snapshot digest changed"):
+                inventory.build_source_inventory(
+                    snapshot_dir=snapshot,
+                    freeze_attestation=snapshot / "freeze-attestation.json",
+                    oracle_source_dir=oracle,
+                    oracle_python=self.oracle_python,
+                    output_dir=output,
+                )
+            writer.join(timeout=2)
+            self.assertFalse(writer.is_alive())
+            self.assertTrue((snapshot / "external-drift").exists())
             self.assertFalse(output.exists())
 
     def test_inventory_rejects_duplicate_ids_and_symlinked_input(self) -> None:
