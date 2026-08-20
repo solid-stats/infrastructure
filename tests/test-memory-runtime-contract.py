@@ -216,6 +216,62 @@ class MemoryValidatorContractTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("endpoint", result.stderr)
 
+    def test_validator_rejects_broad_or_drifting_mempalace_egress(self) -> None:
+        mutations = (
+            (
+                "source selector",
+                "  podSelector:\n    matchLabels:\n      app.kubernetes.io/name: mempalace",
+                "  podSelector: {}",
+            ),
+            (
+                "namespace selector",
+                "        - podSelector:\n            matchLabels:\n              app.kubernetes.io/name: qdrant",
+                "        - namespaceSelector: {}",
+            ),
+            (
+                "CIDR destination",
+                "        - podSelector:\n            matchLabels:\n              app.kubernetes.io/name: qdrant",
+                "        - ipBlock:\n            cidr: 10.0.0.0/8",
+            ),
+            (
+                "wrong destination label",
+                "              app.kubernetes.io/name: qdrant",
+                "              app.kubernetes.io/name: other",
+            ),
+            (
+                "extra port",
+                "        - protocol: TCP\n          port: 6333",
+                "        - protocol: TCP\n          port: 6333\n        - protocol: TCP\n          port: 9999",
+            ),
+            (
+                "wrong direction",
+                "  policyTypes: [Egress]",
+                "  policyTypes: [Ingress]",
+            ),
+            (
+                "extra destination",
+                "      ports:\n        - protocol: TCP",
+                "        - podSelector:\n            matchLabels:\n              app: extra\n      ports:\n        - protocol: TCP",
+            ),
+        )
+        for name, original, replacement in mutations:
+            with self.subTest(name=name):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                policy_path = manifest_dir / "30-network-policy.yaml"
+                documents = policy_path.read_text().split("\n---\n")
+                index = next(
+                    index
+                    for index, document in enumerate(documents)
+                    if "name: allow-mempalace-qdrant-egress" in document
+                )
+                self.assertIn(original, documents[index])
+                documents[index] = documents[index].replace(original, replacement, 1)
+                policy_path.write_text("\n---\n".join(documents))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("MemPalace egress", result.stderr)
+
     def test_strict_mode_rejects_markers_and_malformed_resolved_values(self) -> None:
         source_result = self.validate(ROOT / "k8s" / "memory")
         self.assertNotEqual(source_result.returncode, 0)
@@ -391,6 +447,86 @@ class MemoryObserverContractTests(unittest.TestCase):
         }
         assert policy["spec"] == expected_spec
 
+    @staticmethod
+    def assert_mempalace_qdrant_egress(policy: dict[str, object]) -> None:
+        expected_spec = {
+            "podSelector": {
+                "matchLabels": {"app.kubernetes.io/name": "mempalace"},
+            },
+            "policyTypes": ["Egress"],
+            "egress": [{
+                "to": [{
+                    "podSelector": {
+                        "matchLabels": {"app.kubernetes.io/name": "qdrant"},
+                    },
+                }],
+                "ports": [{"protocol": "TCP", "port": 6333}],
+            }],
+        }
+        assert policy["spec"] == expected_spec
+
+    def test_mempalace_qdrant_policy_is_exact_and_reciprocal(self) -> None:
+        policies = self.memory_network_policies()
+        egress = policies.get("allow-mempalace-qdrant-egress")
+        if egress is None:
+            self.fail("MemPalace-to-Qdrant egress policy is absent")
+        self.assert_mempalace_qdrant_egress(egress)
+
+        qdrant_ingress = policies["allow-mempalace-to-qdrant"]["spec"]["ingress"]
+        self.assertEqual(
+            [{"protocol": "TCP", "port": 6333}],
+            qdrant_ingress[0]["ports"],
+        )
+        expected_source = {
+            "podSelector": {
+                "matchLabels": {"app.kubernetes.io/name": "mempalace"},
+            },
+        }
+        self.assertIn(expected_source, qdrant_ingress[0]["from"])
+
+    def test_mempalace_qdrant_policy_rejects_broad_or_drifting_shapes(self) -> None:
+        policy = {
+            "spec": {
+                "podSelector": {
+                    "matchLabels": {"app.kubernetes.io/name": "mempalace"},
+                },
+                "policyTypes": ["Egress"],
+                "egress": [{
+                    "to": [{
+                        "podSelector": {
+                            "matchLabels": {"app.kubernetes.io/name": "qdrant"},
+                        },
+                    }],
+                    "ports": [{"protocol": "TCP", "port": 6333}],
+                }],
+            },
+        }
+        mutations = (
+            lambda candidate: candidate["spec"].update({"podSelector": {}}),
+            lambda candidate: candidate["spec"]["egress"][0]["to"][0].update(
+                {"namespaceSelector": {}}
+            ),
+            lambda candidate: candidate["spec"]["egress"][0]["to"][0].update(
+                {"ipBlock": {"cidr": "10.0.0.0/8"}}
+            ),
+            lambda candidate: candidate["spec"]["egress"][0]["to"][0][
+                "podSelector"
+            ]["matchLabels"].update({"app.kubernetes.io/name": "other"}),
+            lambda candidate: candidate["spec"]["egress"][0]["ports"].append(
+                {"protocol": "TCP", "port": 9999}
+            ),
+            lambda candidate: candidate["spec"].update({"policyTypes": ["Ingress"]}),
+            lambda candidate: candidate["spec"]["egress"][0]["to"].append(
+                {"podSelector": {"matchLabels": {"app": "extra"}}}
+            ),
+        )
+        for mutate in mutations:
+            candidate = deepcopy(policy)
+            mutate(candidate)
+            with self.subTest(mutate=mutate):
+                with self.assertRaises(AssertionError):
+                    self.assert_mempalace_qdrant_egress(candidate)
+
     def test_observer_mempalace_policy_is_exact_and_reciprocal(self) -> None:
         policies = self.memory_network_policies()
         ingress = policies["allow-memory-observer-to-mempalace"]
@@ -462,8 +598,9 @@ class MemoryObserverContractTests(unittest.TestCase):
         ]
         with patch.dict(os.environ, {"QDRANT_COLLECTION": "private/name", "QDRANT_API_KEY": "secret-value"}):
             observer["urlopen"] = self.fake_urlopen(responses, requests)
-            observer["time"].monotonic = iter((1.0, 1.2, 2.0, 2.1, 3.0, 3.1, 4.0, 4.1)).__next__
-            metrics = observer["collect_metrics"]()
+            monotonic = iter((1.0, 1.2, 2.0, 2.1, 3.0, 3.1, 4.0, 4.1))
+            with patch.object(observer["time"], "monotonic", monotonic.__next__):
+                metrics = observer["collect_metrics"]()
         for name in (
             "solidstats_memory_mcp_ready 1", "solidstats_memory_qdrant_ready 1",
             "solidstats_memory_qdrant_collection_healthy 1",
@@ -486,8 +623,9 @@ class MemoryObserverContractTests(unittest.TestCase):
         ]
         with patch.dict(os.environ, {"QDRANT_COLLECTION": "collection", "QDRANT_API_KEY": "secret-value"}):
             observer["urlopen"] = self.fake_urlopen(responses, requests)
-            observer["time"].monotonic = iter(range(20)).__next__
-            metrics = observer["collect_metrics"]()
+            monotonic = iter(range(20))
+            with patch.object(observer["time"], "monotonic", monotonic.__next__):
+                metrics = observer["collect_metrics"]()
         for name in (
             "solidstats_memory_mcp_ready 0", "solidstats_memory_mcp_probe_errors_total 1",
             "solidstats_memory_qdrant_ready 0", "solidstats_memory_qdrant_collection_healthy 0",

@@ -113,6 +113,7 @@ def require_network_contract(docs: dict[str, str], source_has_placeholders: bool
         "NetworkPolicy/default-deny-all",
         "NetworkPolicy/allow-dns-egress",
         "NetworkPolicy/allow-mempalace-to-qdrant",
+        "NetworkPolicy/allow-mempalace-qdrant-egress",
         "NetworkPolicy/allow-backup-to-qdrant",
         "NetworkPolicy/allow-backup-upload-egress",
         "NetworkPolicy/allow-prometheus-to-memory-observer",
@@ -139,6 +140,25 @@ def require_network_contract(docs: dict[str, str], source_has_placeholders: bool
     require(
         observer_ingress.split("spec:\n", 1)[-1].strip() == expected_observer_ingress.split("spec:\n", 1)[-1].strip(),
         "observer-to-MemPalace ingress must be one exact same-namespace TCP 8765 policy",
+    )
+
+    mempalace_egress = docs["NetworkPolicy/allow-mempalace-qdrant-egress"]
+    expected_mempalace_egress = """spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mempalace
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333"""
+    require(
+        mempalace_egress.split("spec:\n", 1)[-1].strip() == expected_mempalace_egress.split("spec:\n", 1)[-1].strip(),
+        "MemPalace egress must be one exact same-namespace Qdrant TCP 6333 path",
     )
 
     observer_egress = docs["NetworkPolicy/allow-memory-observer-egress"]
