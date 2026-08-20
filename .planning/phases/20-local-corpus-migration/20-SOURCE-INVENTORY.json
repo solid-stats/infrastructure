@@ -1,0 +1,124 @@
+{
+  "counts": {
+    "recall_fixtures": 30,
+    "source_records": 19555,
+    "source_vectors": 19555,
+    "unique_source_ids": 19555
+  },
+  "freeze_attestation_sha256": "77059953a47e311ae40f0c2c5692120b373813f374d07e3b780e6b4b356e62dc",
+  "inventory_schema": "solidstats-memory-source-inventory/v1",
+  "limits": {
+    "max_document_bytes": 262144,
+    "max_metadata_bytes": 65536,
+    "max_recall_fixture_count": 10000,
+    "max_record_count": 1000000,
+    "max_vector_dimension": 65536
+  },
+  "oracle_artifact_sha256": "7c91e60bf7b6bb8a9915e01deff5ccfddc6801dc577a32de4940ce4523916666",
+  "oracle_revision": "v3.5.0",
+  "oracle_version": "3.5.0",
+  "recall_fixtures_sha256": "de8a6ac2722c55b56db99a5bfc6ecc1b528581dda2f04e1c7f4db29b93564890",
+  "records_sha256": "37cbb71e5b261e28c33853cf7ae0cdc72941d62ba48e97a59ec97c42fe1e86cd",
+  "snapshot_manifest_sha256": "b9f2b4595f589e4f9d520a9ce130a510464de8160085a6f6605de613661596bd",
+  "source_collection_identity_sha256": "444b8fd0a97c52b2c5ddbe5e589ca0c988206b7129239c6306b1336557d8d406",
+  "source_inventory_sha256": "786cb0459eb36eb3fb87b2d7473a5dae52001b3b51fe1dcdfd776c703648fcac",
+  "source_label_observation_counts": {
+    "room": {
+      "invalid_type": 0,
+      "missing": 0,
+      "other_string": 0,
+      "slug_string": 19555
+    },
+    "wing": {
+      "canonical_repository_unsuffixed": 19469,
+      "invalid_type": 0,
+      "missing": 0,
+      "other_string": 86,
+      "suffix_marked": 0
+    }
+  },
+  "source_timestamp_observation_counts": {
+    "content_date": {
+      "formats": {
+        "date": 19364,
+        "finite_number": 0,
+        "not_applicable": 0,
+        "other_string": 0,
+        "utc_timestamp": 0
+      },
+      "missing": 191,
+      "present": 19364,
+      "types": {
+        "array": 0,
+        "boolean": 0,
+        "integer": 0,
+        "null": 0,
+        "number": 0,
+        "object": 0,
+        "string": 19364
+      }
+    },
+    "filed_at": {
+      "formats": {
+        "date": 0,
+        "finite_number": 0,
+        "not_applicable": 0,
+        "other_string": 19555,
+        "utc_timestamp": 0
+      },
+      "missing": 0,
+      "present": 19555,
+      "types": {
+        "array": 0,
+        "boolean": 0,
+        "integer": 0,
+        "null": 0,
+        "number": 0,
+        "object": 0,
+        "string": 19555
+      }
+    },
+    "source_mtime": {
+      "formats": {
+        "date": 0,
+        "finite_number": 19364,
+        "not_applicable": 0,
+        "other_string": 0,
+        "utc_timestamp": 0
+      },
+      "missing": 191,
+      "present": 19364,
+      "types": {
+        "array": 0,
+        "boolean": 0,
+        "integer": 0,
+        "null": 0,
+        "number": 19364,
+        "object": 0,
+        "string": 0
+      }
+    },
+    "source_timestamp": {
+      "formats": {
+        "date": 0,
+        "finite_number": 0,
+        "not_applicable": 0,
+        "other_string": 0,
+        "utc_timestamp": 0
+      },
+      "missing": 19555,
+      "present": 0,
+      "types": {
+        "array": 0,
+        "boolean": 0,
+        "integer": 0,
+        "null": 0,
+        "number": 0,
+        "object": 0,
+        "string": 0
+      }
+    }
+  },
+  "target_mapping_status": "unresolved",
+  "vectors_sha256": "dd5731d430af957e7c93db6e34b26a037a0c5d21bea37f100b3b27b0960a4d43"
+}
