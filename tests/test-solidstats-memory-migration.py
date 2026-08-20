@@ -1462,6 +1462,17 @@ class ParityContractTests(unittest.TestCase):
         self.assertEqual({"compared": 0, "failures": 0, "excluded_fixtures": 1, "source_repeat_runs": 3, "rule": "source-repeatability-plus-serialization-floor", "worst_safe_delta": 0.0}, result)
         target.assert_not_called()
 
+    def test_source_oracle_protocol_has_exclusive_eligible_and_excluded_rows(self) -> None:
+        parity = load_parity_module()
+        parsed = parity.parse_source_oracle_rows(
+            '{"index":0,"excluded":true}\n{"index":1,"vector":[1.0],"ranked":[["id",0.1]]}\n'
+        )
+        self.assertEqual({"index": 0, "excluded": True}, parsed[0])
+        self.assertEqual({"index": 1, "vector": [1.0], "ranked": [["id", 0.1]]}, parsed[1])
+        for malformed in ('{"index":0,"excluded":true,"vector":[]}\n', '{"index":0,"excluded":false}\n', '{"index":0,"ranked":[]}\n'):
+            with self.subTest(malformed=malformed), self.assertRaisesRegex(ValueError, "protocol"):
+                parity.parse_source_oracle_rows(malformed)
+
     def test_exclusion_reconciliation_requires_exact_source_bundle_accounting(self) -> None:
         parity = load_parity_module()
         proof = {"counts": {"source_records": 5}}
