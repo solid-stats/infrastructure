@@ -585,14 +585,14 @@ def require_absent_target(
 def require_restore_capacity(
     *,
     snapshot_bytes: int,
-    pvc_free_bytes: int,
+    pvc_requested_bytes: int,
     node_free_bytes: int,
     reserve_bytes: int,
 ) -> dict[str, object]:
-    """Require two snapshot sizes plus a fixed reserve on PVC and node."""
+    """Require two snapshot sizes plus a fixed reserve in requested PVC and node."""
     snapshot = _require_positive_int(snapshot_bytes, "snapshot size is invalid")
     reserve = _require_positive_int(reserve_bytes, "restore reserve is invalid")
-    pvc = _require_positive_int(pvc_free_bytes, "PVC free space is invalid")
+    pvc = _require_positive_int(pvc_requested_bytes, "PVC request is invalid")
     node = _require_positive_int(node_free_bytes, "node free space is invalid")
     required = snapshot * 2 + reserve
     if pvc < required or node < required:
@@ -602,7 +602,7 @@ def require_restore_capacity(
         "snapshot_bytes": snapshot,
         "reserve_bytes": reserve,
         "required_bytes": required,
-        "pvc_free_bytes": pvc,
+        "pvc_requested_bytes": pvc,
         "node_free_bytes": node,
     }
 
@@ -1718,14 +1718,14 @@ def _run_preflight(
     capacity_source = observed.get("capacity")
     if not isinstance(capacity_source, Mapping) or set(capacity_source) != {
         "snapshot_bytes",
-        "pvc_free_bytes",
+        "pvc_requested_bytes",
         "node_free_bytes",
         "reserve_bytes",
     }:
         raise RestoreControlError("measured restore capacity is incomplete")
     capacity = require_restore_capacity(
         snapshot_bytes=capacity_source["snapshot_bytes"],
-        pvc_free_bytes=capacity_source["pvc_free_bytes"],
+        pvc_requested_bytes=capacity_source["pvc_requested_bytes"],
         node_free_bytes=capacity_source["node_free_bytes"],
         reserve_bytes=capacity_source["reserve_bytes"],
     )
@@ -1753,11 +1753,30 @@ def _run_preflight(
     runtime = adapter.inspect_runtime()
     if (
         not isinstance(runtime, Mapping)
-        or set(runtime) != {"qdrant_reachable", "workloads_ready"}
+        or set(runtime)
+        != {
+            "qdrant_reachable",
+            "workloads_ready",
+            "pvc_capacity_bytes",
+            "pvc_free_bytes",
+        }
         or runtime.get("qdrant_reachable") is not True
         or runtime.get("workloads_ready") is not True
     ):
         raise RestoreControlError("isolated runtime is not ready")
+    pvc_capacity = _require_positive_int(
+        runtime.get("pvc_capacity_bytes"), "PVC capacity proof is invalid"
+    )
+    pvc_free = _require_positive_int(
+        runtime.get("pvc_free_bytes"), "PVC free-space proof is invalid"
+    )
+    if (
+        pvc_capacity < capacity["pvc_requested_bytes"]
+        or pvc_free < capacity["required_bytes"]
+    ):
+        raise RestoreControlError("restore capacity changed after apply")
+    capacity["pvc_capacity_bytes"] = pvc_capacity
+    capacity["pvc_free_bytes"] = pvc_free
     reachability["qdrant"] = True
     return {
         "bindings": bindings,

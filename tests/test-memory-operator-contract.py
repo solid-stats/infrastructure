@@ -10,6 +10,7 @@ from pathlib import Path
 import stat
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -162,6 +163,125 @@ class MemoryOperatorContractTests(unittest.TestCase):
             64,
             OPERATOR.main(["inspect-runtime", "request.json", "response.json"]),
         )
+
+    def test_preflight_uses_live_probes_when_target_namespace_is_absent(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.state_root = self.root
+        runtime.config = {
+            "expected_count": 3,
+            "qdrant_storage": "4Gi",
+            "mempalace_storage": "2Gi",
+            "mempalace_image": OPERATOR.OFFICIAL_MEMPALACE_IMAGE,
+            "backup_cidr": "192.0.2.1/32",
+            "uploader_image": "example.invalid/uploader@sha256:" + "2" * 64,
+            "private_collection": "candidate",
+        }
+        prestate = {
+            "active_alias_sha256": "1" * 64,
+            "nginx_sha256": "2" * 64,
+            "mcp_registration_sha256": "3" * 64,
+            "legacy_runtime_sha256": "4" * 64,
+            "schedule_sha256": "5" * 64,
+        }
+        capacity = {
+            "snapshot_bytes": 10,
+            "pvc_requested_bytes": 4 * 1024**3,
+            "node_free_bytes": 8 * 1024**3,
+            "reserve_bytes": 1024**3,
+        }
+        with (
+            mock.patch.object(runtime, "_namespace_exists", return_value=False),
+            mock.patch.object(runtime, "_kubectl"),
+            mock.patch.object(runtime, "_verify_mempalace_registry_image") as registry,
+            mock.patch.object(runtime, "_probe_s3") as s3,
+            mock.patch.object(
+                runtime,
+                "_measure_prestate",
+                return_value=(prestate, {"stable": True, "writer_count": 0}),
+            ) as state,
+            mock.patch.object(runtime, "_measure_capacity", return_value=capacity) as measured,
+        ):
+            result = runtime.inspect_preflight(self.valid["inspect-preflight"])
+        self.assertEqual(capacity, result["capacity"])
+        registry.assert_called_once_with()
+        s3.assert_called_once_with()
+        state.assert_called_once_with()
+        measured.assert_called_once_with()
+
+    def test_capacity_uses_retained_snapshot_and_live_node_not_bundle_total(self) -> None:
+        bundle = self.root / "bundle"
+        bundle.mkdir(mode=0o700)
+        (bundle / "qdrant.snapshot").write_bytes(b"snapshot")
+        (bundle / "points.jsonl").write_bytes(b"x" * 4096)
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.bundle_dir = bundle
+        runtime.config = {"qdrant_storage": "4Gi"}
+        storage_classes = {
+            "items": [
+                {
+                    "metadata": {
+                        "annotations": {
+                            "storageclass.kubernetes.io/is-default-class": "true"
+                        }
+                    },
+                    "provisioner": "rancher.io/local-path",
+                    "volumeBindingMode": "WaitForFirstConsumer",
+                }
+            ]
+        }
+        node_result = {"items": [{"metadata": {"name": "node-1"}}]}
+        summary = {"node": {"fs": {"availableBytes": 7 * 1024**3}}}
+        with (
+            mock.patch.object(
+                runtime,
+                "_kubectl_json",
+                side_effect=[storage_classes, node_result],
+            ),
+            mock.patch.object(runtime, "_raw_kubernetes_json", return_value=summary),
+        ):
+            capacity = runtime._measure_capacity()
+        self.assertEqual(len(b"snapshot"), capacity["snapshot_bytes"])
+        self.assertEqual(4 * 1024**3, capacity["pvc_requested_bytes"])
+        self.assertEqual(7 * 1024**3, capacity["node_free_bytes"])
+
+    def test_capacity_rejects_missing_retained_snapshot(self) -> None:
+        bundle = self.root / "missing-snapshot"
+        bundle.mkdir(mode=0o700)
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.bundle_dir = bundle
+        runtime.config = {"qdrant_storage": "4Gi"}
+        with self.assertRaisesRegex(OPERATOR.OperatorError, "private file"):
+            runtime._measure_capacity()
+
+    def test_runtime_capacity_uses_bound_pvc_and_in_volume_df(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        pvc = {"status": {"capacity": {"storage": "4Gi"}}}
+        with (
+            mock.patch.object(runtime, "_kubectl_json", return_value=pvc),
+            mock.patch.object(
+                runtime,
+                "_kubectl",
+                return_value=(
+                    b"Filesystem 1024-blocks Used Available Capacity Mounted on\n"
+                    b"/dev/sda 4194304 1024 4193280 1% /qdrant/storage\n"
+                ),
+            ),
+        ):
+            capacity = runtime._inspect_live_pvc_capacity()
+        self.assertEqual(4 * 1024**3, capacity["pvc_capacity_bytes"])
+        self.assertEqual(4193280 * 1024, capacity["pvc_free_bytes"])
+
+    def test_registry_probe_rejects_local_or_unapproved_image_before_network(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.config = {
+            "mempalace_image": "local.invalid/mempalace@sha256:" + "3" * 64
+        }
+        with (
+            mock.patch.object(runtime, "_registry_request") as request,
+            self.assertRaisesRegex(OPERATOR.OperatorError, "approved registry"),
+        ):
+            runtime._verify_mempalace_registry_image()
+        request.assert_not_called()
 
 
 if __name__ == "__main__":

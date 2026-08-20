@@ -76,6 +76,8 @@ BACKUP_RESTORE_SECTION_FIELDS = {
         "snapshot_bytes",
         "reserve_bytes",
         "required_bytes",
+        "pvc_requested_bytes",
+        "pvc_capacity_bytes",
         "pvc_free_bytes",
         "node_free_bytes",
     },
@@ -480,6 +482,8 @@ def validate_backup_restore_evidence(payload: object) -> dict[str, object]:
     if (
         capacity.get("required_bytes")
         != capacity.get("snapshot_bytes", 0) * 2 + capacity.get("reserve_bytes", 0)
+        or capacity.get("pvc_capacity_bytes", 0)
+        < capacity.get("pvc_requested_bytes", 0)
         or capacity.get("pvc_free_bytes", 0) < capacity.get("required_bytes", 0)
         or capacity.get("node_free_bytes", 0) < capacity.get("required_bytes", 0)
     ):

@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import hashlib
+import hmac
 import http.client
 import ipaddress
 import json
@@ -19,6 +21,7 @@ import sys
 import time
 from typing import Iterator, Mapping
 from urllib import parse as urllib_parse
+from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 
@@ -66,6 +69,16 @@ PACKAGE_MEMBERS = (
     "mempalace-metadata.tar",
     "qdrant.snapshot",
 )
+MEMORY_PUBLIC_URL = "https://solid-stats.ru/solidstats/mcp"
+S3_ENDPOINT = "https://s3.twcstorage.ru"
+OFFICIAL_MEMPALACE_IMAGE = (
+    "ghcr.io/mempalace/mempalace@"
+    "sha256:d9d75fab4138a22d013a244bb4153fa1938830be3726cf826ffd02aeba73fe8e"
+)
+OFFICIAL_MEMPALACE_CONFIG = (
+    "sha256:19453ae121bc14f4e9515fed1840179add7a8ad638cce1c0dc90a92df777d9e8"
+)
+RESTORE_RESERVE_BYTES = 1024 * 1024 * 1024
 
 
 class OperatorError(ValueError):
@@ -87,6 +100,21 @@ def canonical(value: object) -> bytes:
 
 def digest(value: object) -> str:
     return hashlib.sha256(canonical(value)).hexdigest()
+
+
+def storage_bytes(value: object) -> int:
+    if not isinstance(value, str):
+        raise OperatorError("Kubernetes storage quantity is invalid")
+    match = re.fullmatch(r"([1-9][0-9]*)(Ki|Mi|Gi|Ti)", value)
+    if not match:
+        raise OperatorError("Kubernetes storage quantity is invalid")
+    factors = {
+        "Ki": 1024,
+        "Mi": 1024**2,
+        "Gi": 1024**3,
+        "Ti": 1024**4,
+    }
+    return int(match.group(1)) * factors[match.group(2)]
 
 
 def regular_file(path: Path, *, max_bytes: int = 512 * 1024 * 1024) -> os.stat_result:
@@ -440,6 +468,331 @@ class Runtime:
         )
         return result.returncode == 0
 
+    def _raw_kubernetes_json(self, path: str) -> object:
+        if not path.startswith("/api/") or ".." in path:
+            raise OperatorError("Kubernetes raw path is invalid")
+        try:
+            return json.loads(self._kubectl(["get", "--raw", path], timeout=60))
+        except json.JSONDecodeError as error:
+            raise OperatorError("Kubernetes response is invalid") from error
+
+    @staticmethod
+    def _registry_request(url: str, *, accept: str, token: str = "") -> bytes:
+        headers = {"Accept": accept}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        request = urllib_request.Request(url, headers=headers)
+        try:
+            with urllib_request.urlopen(request, timeout=30) as response:
+                body = response.read(16 * 1024 * 1024 + 1)
+        except urllib_error.HTTPError as error:
+            if error.code != 401 or token:
+                raise OperatorError("immutable image registry probe failed") from error
+            challenge = error.headers.get("WWW-Authenticate", "")
+            fields = dict(re.findall(r'(realm|service|scope)="([^"]+)"', challenge))
+            if not challenge.startswith("Bearer ") or set(fields) != {
+                "realm",
+                "service",
+                "scope",
+            }:
+                raise OperatorError("immutable image registry probe failed") from error
+            query = urllib_parse.urlencode(
+                {"service": fields["service"], "scope": fields["scope"]}
+            )
+            try:
+                with urllib_request.urlopen(
+                    f"{fields['realm']}?{query}", timeout=30
+                ) as auth:
+                    value = json.loads(auth.read(1024 * 1024 + 1))
+            except Exception as auth_error:
+                raise OperatorError("immutable image registry probe failed") from auth_error
+            registry_token = value.get("token") if isinstance(value, Mapping) else None
+            if not isinstance(registry_token, str) or not registry_token:
+                raise OperatorError("immutable image registry probe failed")
+            return Runtime._registry_request(url, accept=accept, token=registry_token)
+        except OSError as error:
+            raise OperatorError("immutable image registry probe failed") from error
+        if not body or len(body) > 16 * 1024 * 1024:
+            raise OperatorError("immutable image registry probe failed")
+        return body
+
+    def _verify_mempalace_registry_image(self) -> None:
+        image = self.config["mempalace_image"]
+        if image != OFFICIAL_MEMPALACE_IMAGE:
+            raise OperatorError("MemPalace image is not the approved registry artifact")
+        repository, manifest_digest = str(image).split("@", 1)
+        registry, name = repository.split("/", 1)
+        manifest_url = f"https://{registry}/v2/{name}/manifests/{manifest_digest}"
+        manifest_raw = self._registry_request(
+            manifest_url,
+            accept=(
+                "application/vnd.oci.image.manifest.v1+json,"
+                "application/vnd.docker.distribution.manifest.v2+json"
+            ),
+        )
+        if f"sha256:{hashlib.sha256(manifest_raw).hexdigest()}" != manifest_digest:
+            raise OperatorError("immutable image registry probe failed")
+        try:
+            manifest = json.loads(manifest_raw)
+        except json.JSONDecodeError as error:
+            raise OperatorError("immutable image registry probe failed") from error
+        config = manifest.get("config") if isinstance(manifest, Mapping) else None
+        if not isinstance(config, Mapping) or config.get("digest") != OFFICIAL_MEMPALACE_CONFIG:
+            raise OperatorError("immutable image config binding changed")
+        config_raw = self._registry_request(
+            f"https://{registry}/v2/{name}/blobs/{OFFICIAL_MEMPALACE_CONFIG}",
+            accept="application/vnd.oci.image.config.v1+json",
+        )
+        if f"sha256:{hashlib.sha256(config_raw).hexdigest()}" != OFFICIAL_MEMPALACE_CONFIG:
+            raise OperatorError("immutable image config binding changed")
+        try:
+            image_config = json.loads(config_raw)
+        except json.JSONDecodeError as error:
+            raise OperatorError("immutable image config binding changed") from error
+        runtime = image_config.get("config") if isinstance(image_config, Mapping) else None
+        if (
+            image_config.get("architecture") != "amd64"
+            or image_config.get("os") != "linux"
+            or not isinstance(runtime, Mapping)
+        ):
+            raise OperatorError("immutable image runtime contract changed")
+        if runtime.get("Entrypoint") != ["docker-entrypoint.sh"] or runtime.get(
+            "Cmd"
+        ) != ["mcp"]:
+            raise OperatorError("immutable image runtime contract changed")
+
+    @staticmethod
+    def _sigv4_key(secret: str, date: str, region: str) -> bytes:
+        date_key = hmac.new(("AWS4" + secret).encode(), date.encode(), hashlib.sha256).digest()
+        region_key = hmac.new(date_key, region.encode(), hashlib.sha256).digest()
+        service_key = hmac.new(region_key, b"s3", hashlib.sha256).digest()
+        return hmac.new(service_key, b"aws4_request", hashlib.sha256).digest()
+
+    def _probe_s3(self) -> None:
+        values = self._source_s3_values()
+        bucket = values["S3_BUCKET"]
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket):
+            raise OperatorError("source S3 binding is incomplete")
+        path = "/" + urllib_parse.quote(bucket, safe="")
+        region = ""
+        try:
+            response = urllib_request.urlopen(
+                urllib_request.Request(S3_ENDPOINT + path, method="HEAD"), timeout=20
+            )
+            region = response.headers.get("x-amz-bucket-region", "")
+            response.close()
+        except urllib_error.HTTPError as error:
+            region = error.headers.get("x-amz-bucket-region", "")
+        except OSError as error:
+            raise OperatorError("source S3 endpoint is unreachable") from error
+        if not re.fullmatch(r"[a-z0-9-]{2,32}", region):
+            raise OperatorError("source S3 region could not be proven")
+        now = datetime.now(timezone.utc)
+        timestamp = now.strftime("%Y%m%dT%H%M%SZ")
+        short_date = now.strftime("%Y%m%d")
+        query = "list-type=2&max-keys=1"
+        host = urllib_parse.urlparse(S3_ENDPOINT).netloc
+        payload_hash = hashlib.sha256(b"").hexdigest()
+        canonical_headers = (
+            f"host:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{timestamp}\n"
+        )
+        signed_headers = "host;x-amz-content-sha256;x-amz-date"
+        canonical_request = "\n".join(
+            ["GET", path, query, canonical_headers, signed_headers, payload_hash]
+        )
+        scope = f"{short_date}/{region}/s3/aws4_request"
+        string_to_sign = "\n".join(
+            [
+                "AWS4-HMAC-SHA256",
+                timestamp,
+                scope,
+                hashlib.sha256(canonical_request.encode()).hexdigest(),
+            ]
+        )
+        signature = hmac.new(
+            self._sigv4_key(values["S3_SECRET_ACCESS_KEY"], short_date, region),
+            string_to_sign.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        authorization = (
+            "AWS4-HMAC-SHA256 "
+            f"Credential={values['S3_ACCESS_KEY_ID']}/{scope},"
+            f"SignedHeaders={signed_headers},Signature={signature}"
+        )
+        signed = urllib_request.Request(
+            f"{S3_ENDPOINT}{path}?{query}",
+            headers={
+                "Authorization": authorization,
+                "x-amz-content-sha256": payload_hash,
+                "x-amz-date": timestamp,
+            },
+        )
+        try:
+            with urllib_request.urlopen(signed, timeout=30) as response:
+                body = response.read(1024 * 1024 + 1)
+        except Exception as error:
+            raise OperatorError("source S3 authenticated probe failed") from error
+        if len(body) > 1024 * 1024:
+            raise OperatorError("source S3 authenticated probe failed")
+
+    def _public_route_state(self) -> dict[str, object]:
+        request = urllib_request.Request(MEMORY_PUBLIC_URL, method="GET")
+        try:
+            with urllib_request.urlopen(request, timeout=20) as response:
+                status = response.status
+        except urllib_error.HTTPError as error:
+            status = error.code
+        except OSError as error:
+            raise OperatorError("public nginx pre-state probe failed") from error
+        return {"url_binding": digest(MEMORY_PUBLIC_URL), "status": status}
+
+    def _mcp_client_state(self) -> tuple[dict[str, object], int]:
+        raw = self._run(["codex", "mcp", "list", "--json"], timeout=30)
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise OperatorError("MCP client pre-state probe failed") from error
+        entries = (
+            value
+            if isinstance(value, list)
+            else value.get("servers")
+            if isinstance(value, Mapping)
+            else None
+        )
+        if not isinstance(entries, list):
+            raise OperatorError("MCP client pre-state probe failed")
+        writers = 0
+        legacy = []
+        for entry in entries:
+            encoded = canonical(entry).lower()
+            relevant = b"mempalace" in encoded or b"solidstats" in encoded
+            if relevant and isinstance(entry, Mapping):
+                if entry.get("name") != "solidstats_memory":
+                    legacy.append(entry)
+                if entry.get("enabled") is True:
+                    writers += 1
+        return {"all": value, "legacy": legacy}, writers
+
+    def _measure_prestate(self) -> tuple[dict[str, str], dict[str, object]]:
+        namespace_exists = self._namespace_exists()
+        if namespace_exists:
+            aliases = self._qdrant("GET", "/aliases")
+            alias_result = aliases.get("result") if isinstance(aliases, Mapping) else None
+            alias_items = (
+                alias_result.get("aliases") if isinstance(alias_result, Mapping) else None
+            )
+            if not isinstance(alias_items, list):
+                raise OperatorError("active alias pre-state probe failed")
+            alias_state = {"aliases": alias_items}
+            schedule = self._kubectl_json(
+                ["-n", NAMESPACE, "get", "cronjob", "solidstats-memory-backup"]
+            )
+            schedule_spec = schedule.get("spec") if isinstance(schedule, Mapping) else None
+            if not isinstance(schedule_spec, Mapping):
+                raise OperatorError("schedule pre-state probe failed")
+            schedule_state = {"enabled": schedule_spec.get("suspend") is not True}
+        else:
+            alias_state = {"aliases": []}
+            schedule_state = {"enabled": False}
+        client_state, writer_count = self._mcp_client_state()
+        nginx_state = self._public_route_state()
+        prestate = {
+            "active_alias_sha256": digest(alias_state),
+            "nginx_sha256": digest(nginx_state),
+            "mcp_registration_sha256": digest(client_state["all"]),
+            "legacy_runtime_sha256": digest(client_state["legacy"]),
+            "schedule_sha256": digest(schedule_state),
+        }
+        return prestate, {"stable": writer_count == 0, "writer_count": writer_count}
+
+    def _measure_capacity(self) -> dict[str, int]:
+        snapshot_bytes = regular_file(self.bundle_dir / "qdrant.snapshot").st_size
+        requested = storage_bytes(self.config["qdrant_storage"])
+        classes = self._kubectl_json(["get", "storageclass"])
+        class_items = classes.get("items") if isinstance(classes, Mapping) else None
+        defaults = []
+        for item in class_items or []:
+            metadata = item.get("metadata") if isinstance(item, Mapping) else None
+            annotations = (
+                metadata.get("annotations") if isinstance(metadata, Mapping) else None
+            )
+            if isinstance(annotations, Mapping) and annotations.get(
+                "storageclass.kubernetes.io/is-default-class"
+            ) == "true":
+                defaults.append(item)
+        if len(defaults) != 1 or (
+            defaults[0].get("provisioner") != "rancher.io/local-path"
+            or defaults[0].get("volumeBindingMode") != "WaitForFirstConsumer"
+        ):
+            raise OperatorError("local-path storage binding is not measurable")
+        nodes = self._kubectl_json(["get", "nodes"])
+        node_items = nodes.get("items") if isinstance(nodes, Mapping) else None
+        if not isinstance(node_items, list) or not node_items:
+            raise OperatorError("live node capacity is unavailable")
+        node_free = []
+        for node in node_items:
+            metadata = node.get("metadata") if isinstance(node, Mapping) else None
+            name = metadata.get("name") if isinstance(metadata, Mapping) else None
+            if not isinstance(name, str):
+                continue
+            summary = self._raw_kubernetes_json(
+                f"/api/v1/nodes/{urllib_parse.quote(name, safe='')}/proxy/stats/summary"
+            )
+            node_state = summary.get("node") if isinstance(summary, Mapping) else None
+            filesystem = node_state.get("fs") if isinstance(node_state, Mapping) else None
+            available = (
+                filesystem.get("availableBytes")
+                if isinstance(filesystem, Mapping)
+                else None
+            )
+            if (
+                isinstance(available, int)
+                and not isinstance(available, bool)
+                and available > 0
+            ):
+                node_free.append(available)
+        if not node_free:
+            raise OperatorError("live node capacity is unavailable")
+        return {
+            "snapshot_bytes": snapshot_bytes,
+            "pvc_requested_bytes": requested,
+            "node_free_bytes": min(node_free),
+            "reserve_bytes": RESTORE_RESERVE_BYTES,
+        }
+
+    def _inspect_live_pvc_capacity(self) -> dict[str, int]:
+        pvc = self._kubectl_json(
+            ["-n", NAMESPACE, "get", "pvc", "qdrant-data-qdrant-0"]
+        )
+        status = pvc.get("status") if isinstance(pvc, Mapping) else None
+        capacity = status.get("capacity") if isinstance(status, Mapping) else None
+        actual = storage_bytes(
+            capacity.get("storage") if isinstance(capacity, Mapping) else None
+        )
+        raw = self._kubectl(
+            [
+                "-n",
+                NAMESPACE,
+                "exec",
+                "statefulset/qdrant",
+                "--",
+                "df",
+                "-Pk",
+                "/qdrant/storage",
+            ],
+            timeout=30,
+        )
+        lines = raw.decode("ascii", errors="strict").splitlines()
+        if len(lines) != 2:
+            raise OperatorError("live PVC filesystem capacity is unavailable")
+        fields = lines[1].split()
+        if len(fields) < 4 or not fields[3].isdigit():
+            raise OperatorError("live PVC filesystem capacity is unavailable")
+        free = int(fields[3]) * 1024
+        if free <= 0:
+            raise OperatorError("live PVC filesystem capacity is unavailable")
+        return {"pvc_capacity_bytes": actual, "pvc_free_bytes": free}
+
     @contextmanager
     def _port_forward(self, resource: str, remote_port: int) -> Iterator[int]:
         listener = socket.socket()
@@ -538,41 +891,18 @@ class Runtime:
         if self._namespace_exists():
             raise OperatorError("isolated namespace pre-state changed")
         self._kubectl(["version", "--request-timeout=20s"], timeout=30)
-        secret = self._kubectl_json(
-            [
-                "-n",
-                self.source_secret_namespace,
-                "get",
-                "secret",
-                self.source_secret_name,
-            ]
-        )
-        if not isinstance(secret, Mapping) or not {
-            "S3_BUCKET",
-            "S3_ACCESS_KEY_ID",
-            "S3_SECRET_ACCESS_KEY",
-        }.issubset(secret.get("data", {})):
-            raise OperatorError("source S3 binding is incomplete")
-        bundle_bytes = sum(regular_file(path).st_size for path in self.bundle_dir.iterdir())
-        capacity = max(bundle_bytes * 3, 1024 * 1024 * 1024)
-        prestate = {
-            "active_alias_sha256": digest({"aliases": []}),
-            "nginx_sha256": digest({"mutation_capability": False}),
-            "mcp_registration_sha256": digest({"mutation_capability": False}),
-            "legacy_runtime_sha256": digest({"mutation_capability": False}),
-            "schedule_sha256": digest({"namespace_present": False}),
-        }
+        self._verify_mempalace_registry_image()
+        self._probe_s3()
+        prestate, quiescence = self._measure_prestate()
+        if quiescence != {"stable": True, "writer_count": 0}:
+            raise OperatorError("write quiescence is not proven")
+        capacity = self._measure_capacity()
         write_private(self.state_root / "prestate.json", prestate)
         return {
             "reachability": {"kubernetes": True, "s3": True},
             "prestate": prestate,
-            "quiescence": {"stable": True, "writer_count": 0},
-            "capacity": {
-                "snapshot_bytes": bundle_bytes,
-                "pvc_free_bytes": capacity,
-                "node_free_bytes": capacity,
-                "reserve_bytes": bundle_bytes,
-            },
+            "quiescence": quiescence,
+            "capacity": capacity,
             "operator_markers": {
                 "qdrant_storage": self.config["qdrant_storage"],
                 "mempalace_storage": self.config["mempalace_storage"],
@@ -845,7 +1175,12 @@ class Runtime:
         health = self._qdrant("GET", "/healthz")
         if not isinstance(health, Mapping):
             raise OperatorError("isolated runtime is not ready")
-        return {"qdrant_reachable": True, "workloads_ready": True}
+        capacity = self._inspect_live_pvc_capacity()
+        return {
+            "qdrant_reachable": True,
+            "workloads_ready": True,
+            **capacity,
+        }
 
     def load_backup_inputs(self, payload: dict[str, object]) -> object:
         exact_mapping(payload, set(), "backup input request is invalid")
@@ -1196,17 +1531,9 @@ class Runtime:
         stored = load_json(self.state_root / "prestate.json", private=True)
         if request["prestate"] != stored:
             raise OperatorError("active pre-state binding changed")
-        aliases = self._qdrant("GET", "/aliases")
-        result = aliases.get("result") if isinstance(aliases, Mapping) else None
-        items = result.get("aliases") if isinstance(result, Mapping) else None
-        if not isinstance(items, list) or items:
-            raise OperatorError("temporary alias cleanup failed")
-        cronjob = self._kubectl_json(
-            ["-n", NAMESPACE, "get", "cronjob", "solidstats-memory-backup"]
-        )
-        spec = cronjob.get("spec") if isinstance(cronjob, Mapping) else None
-        if not isinstance(spec, Mapping) or spec.get("suspend") is not True:
-            raise OperatorError("recurring schedule changed")
+        observed, _quiescence = self._measure_prestate()
+        if observed != stored:
+            raise OperatorError("active pre-state changed")
         return {
             "active_state_unchanged": True,
             "active_alias_unchanged": True,

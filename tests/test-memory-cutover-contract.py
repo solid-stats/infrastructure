@@ -296,6 +296,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "snapshot_bytes": 10,
                 "reserve_bytes": 10,
                 "required_bytes": 30,
+                "pvc_requested_bytes": 40,
+                "pvc_capacity_bytes": 40,
                 "pvc_free_bytes": 40,
                 "node_free_bytes": 50,
             },
@@ -676,11 +678,18 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertTrue(absence["confirmed"])
         capacity = RESTORE.require_restore_capacity(
             snapshot_bytes=10,
-            pvc_free_bytes=30,
+            pvc_requested_bytes=30,
             node_free_bytes=31,
             reserve_bytes=5,
         )
         self.assertEqual(25, capacity["required_bytes"])
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "insufficient"):
+            RESTORE.require_restore_capacity(
+                snapshot_bytes=10,
+                pvc_requested_bytes=24,
+                node_free_bytes=31,
+                reserve_bytes=5,
+            )
         with self.assertRaisesRegex(RESTORE.RestoreControlError, "priority"):
             RESTORE.recover_snapshot(
                 lambda **_kwargs: {"status": "ok", "result": True},
@@ -1001,7 +1010,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     "quiescence": {"stable": True, "writer_count": 0},
                     "capacity": {
                         "snapshot_bytes": 10,
-                        "pvc_free_bytes": 30,
+                        "pvc_requested_bytes": 30,
                         "node_free_bytes": 31,
                         "reserve_bytes": 5,
                     },
@@ -1058,7 +1067,12 @@ class MemoryCutoverContractTests(unittest.TestCase):
 
             def inspect_runtime(self) -> dict[str, object]:
                 events.append("inspect-runtime")
-                return {"qdrant_reachable": True, "workloads_ready": True}
+                return {
+                    "qdrant_reachable": True,
+                    "workloads_ready": True,
+                    "pvc_capacity_bytes": 30,
+                    "pvc_free_bytes": 30,
+                }
 
             def load_backup_inputs(self) -> tuple[dict[str, object], dict[str, str]]:
                 events.append("load-backup-inputs")
@@ -1340,7 +1354,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     "quiescence": {"stable": True, "writer_count": 0},
                     "capacity": {
                         "snapshot_bytes": 10,
-                        "pvc_free_bytes": 30,
+                        "pvc_requested_bytes": 30,
                         "node_free_bytes": 31,
                         "reserve_bytes": 5,
                     },
