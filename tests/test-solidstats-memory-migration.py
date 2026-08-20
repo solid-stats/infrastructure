@@ -1323,7 +1323,7 @@ class ParityContractTests(unittest.TestCase):
         self.assertEqual({"compared": 2, "failures": 0}, parity.compare_recall_rankings(stable[0], [("a", 0.10), ("b", 0.20)], rule))
         self.assertEqual(1, parity.compare_recall_rankings(stable[0], [("a", 0.10001), ("b", 0.20)], rule)["failures"])
         with self.assertRaisesRegex(ValueError, "unstable"):
-            parity.derive_source_distance_rule([stable[0], [("b", 0.20), ("a", 0.10)]], serialization_floor=1e-6)
+            parity.derive_source_distance_rule([stable[0], [("b", 0.20), ("a", 0.10)], stable[0]], serialization_floor=1e-6)
 
     def test_cleanup_requires_passing_handoff_and_disjoint_run_bound_paths(self) -> None:
         parity = load_parity_module()
