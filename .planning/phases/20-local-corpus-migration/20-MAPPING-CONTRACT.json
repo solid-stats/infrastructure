@@ -1,0 +1,58 @@
+{
+  "contract_schema": "solidstats-memory-mapping-contract/v1",
+  "status": "approved",
+  "source_inventory_sha256": "4dee25e8b4b44193e6b138214f0161d75f77771811ad12cab9ea5a07b358b9c1",
+  "approved_at": "2026-08-20T07:42:36Z",
+  "approval_digest": "a1e4c6ada44f4ec24c05f12093a8f13a2bd34ce92d5e6faa029c573ca7cbf956",
+  "timestamp_semantics": {
+    "preserved_fields": [
+      "content_date",
+      "filed_at",
+      "source_mtime"
+    ],
+    "rule": "Preserve each observed source timestamp field exactly as found; apply no precedence, normalization, or synthesized source_timestamp or effective_source_date.",
+    "missing_or_invalid": "A missing or invalid timestamp candidate neither rejects nor drops a record; it remains absent or invalid exactly as found in source metadata.",
+    "target_updated_at": "Target ingestion updated_at is target metadata only and neither replaces nor participates in source equality."
+  },
+  "source_wing_to_target_wing": {
+    "routing_authority": "config/repositories.tsv",
+    "canonical_repository_rules": {
+      "server-2": "server-2-archive",
+      "replays-fetcher": "replays-fetcher-archive",
+      "replay-parser-2": "replay-parser-2-archive",
+      "web": "web-archive",
+      "infrastructure": "infrastructure-archive"
+    },
+    "shared_source_rule": {
+      "SolidStats": "SolidStats-archive"
+    },
+    "excluded_source_rule": "Agent and other-wing records are excluded from target Qdrant import and retained without deletion in the immutable source snapshot and private evidence for separate audit."
+  },
+  "legacy_room_label_treatment": {
+    "rule": "Preserve every legacy room value unchanged for imported archive records.",
+    "active_semantic_room_effect": "Import does not make a legacy archive room an active semantic room."
+  },
+  "legacy_archive_label_treatment": {
+    "source_observation": "The inventory reports no suffix-marked *-archive source wings.",
+    "unexpected_or_unbound": "Fail closed rather than remapping an unexpected or unbound label.",
+    "target_label_rule": "Archive target labels are assigned only by the approved public wing-routing rules."
+  },
+  "excluded_source_disposition": {
+    "rule": "Do not import agent or other-wing records into target Qdrant.",
+    "retention": "Retain excluded records in the immutable source snapshot and private evidence for separate audit; do not delete them."
+  },
+  "preservation_representation": {
+    "standard_fields": "Keep the source identifier, document bytes, and reused vector exact in the standard MemPalace/Qdrant fields.",
+    "operational_metadata": "Use a copy of source metadata with only operational wing changed for archive routing; retain original room and every other field unchanged.",
+    "source_metadata_copy": {
+      "reserved_key": "_solidstats_migration",
+      "value_shape": {
+        "schema_version": 1,
+        "source_metadata": "exact original metadata dictionary"
+      },
+      "collision_rule": "Fail closed when source metadata already contains _solidstats_migration."
+    },
+    "parity_rule": "Compare nested source_metadata exactly for every imported record.",
+    "independent_safety_copy": "Retain the immutable source snapshot and private bundle as independent safety copies."
+  }
+}
