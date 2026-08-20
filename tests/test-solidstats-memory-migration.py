@@ -1341,6 +1341,7 @@ class ParityContractTests(unittest.TestCase):
         with mock.patch.object(parity, "_run_source_queries", side_effect=[fresh, fresh, fresh]) as source_runs, mock.patch.object(parity, "_target_query", return_value=[(str(uuid.uuid5(UUID_NAMESPACE, "oracle-only")), 0.2)]) as target:
             result = parity._verify_recall(
                 base_url="http://127.0.0.1:6333", collection="collection", fixtures=[fixture], contract=contract,
+                source_proof={"source_label_observation_counts": {"wing": {"other_string": 0, "suffix_marked": 0}}},
                 snapshot_dir=Path("/snapshot"), fixtures_path=Path("/fixtures"), oracle_python=Path("/python"), oracle_source_dir=Path("/oracle"), repeats=3,
             )
         self.assertEqual(0, result["failures"])
@@ -1349,14 +1350,15 @@ class ParityContractTests(unittest.TestCase):
 
     def test_fresh_oracle_instability_blocks_target_before_tolerance(self) -> None:
         parity = load_parity_module()
-        fixture = {"filters": {}, "query_record_digest": "a" * 64, "source_distances": [0.0], "source_metric": "cosine-distance", "source_ordered_ids": ["stored"], "source_runs": 2, "top_k": 1}
+        fixture = {"filters": {"wing": "web"}, "query_record_digest": "a" * 64, "source_distances": [0.0], "source_metric": "cosine-distance", "source_ordered_ids": ["stored"], "source_runs": 2, "top_k": 1}
         stable = [{"index": 0, "vector": [1.0], "ranked": [["oracle", 0.2]]}]
         unstable = [{"index": 0, "vector": [1.0], "ranked": [["other", 0.2]]}]
-        contract = {"source_wing_to_target_wing": {"canonical_repository_rules": {}, "shared_source_rule": {}}}
+        contract = {"source_wing_to_target_wing": {"canonical_repository_rules": {"web": "web-archive"}, "shared_source_rule": {}}}
         with mock.patch.object(parity, "_run_source_queries", side_effect=[stable, unstable, stable]), mock.patch.object(parity, "_target_query") as target:
             with self.assertRaisesRegex(ValueError, "unstable"):
                 parity._verify_recall(
                     base_url="http://127.0.0.1:6333", collection="collection", fixtures=[fixture], contract=contract,
+                    source_proof={"source_label_observation_counts": {"wing": {"other_string": 0, "suffix_marked": 0}}},
                     snapshot_dir=Path("/snapshot"), fixtures_path=Path("/fixtures"), oracle_python=Path("/python"), oracle_source_dir=Path("/oracle"), repeats=3,
                 )
         target.assert_not_called()
@@ -1448,6 +1450,17 @@ class ParityContractTests(unittest.TestCase):
         self.assertEqual("excluded", parity.classify_fixture({"filters": {"wing": "other-source"}}, contract, proof))
         with self.assertRaisesRegex(ValueError, "unbound"):
             parity.classify_fixture({"filters": {"wing": "web-archive"}}, contract, proof)
+
+    def test_excluded_fixture_never_calls_target_query(self) -> None:
+        parity = load_parity_module()
+        fixture = {"filters": {"wing": "Agent"}, "query_record_digest": "a" * 64, "source_distances": [0.0], "source_metric": "cosine-distance", "source_ordered_ids": ["stored"], "source_runs": 2, "top_k": 1}
+        contract = {"source_wing_to_target_wing": {"canonical_repository_rules": {"web": "web-archive"}, "shared_source_rule": {"SolidStats": "SolidStats-archive"}, "excluded_source_rule": "Agent and other-wing records are excluded from target Qdrant import and retained without deletion in the immutable source snapshot and private evidence for separate audit."}}
+        proof = {"source_label_observation_counts": {"wing": {"other_string": 1, "suffix_marked": 0}}}
+        excluded = [{"index": 0, "excluded": True}]
+        with mock.patch.object(parity, "_run_source_queries", side_effect=[excluded, excluded, excluded]), mock.patch.object(parity, "_target_query") as target:
+            result = parity._verify_recall(base_url="http://127.0.0.1:6333", collection="collection", fixtures=[fixture], contract=contract, source_proof=proof, snapshot_dir=Path("/snapshot"), fixtures_path=Path("/fixtures"), oracle_python=Path("/python"), oracle_source_dir=Path("/oracle"), repeats=3)
+        self.assertEqual({"compared": 0, "failures": 0, "excluded_fixtures": 1, "source_repeat_runs": 3, "rule": "source-repeatability-plus-serialization-floor", "worst_safe_delta": 0.0}, result)
+        target.assert_not_called()
 
     def test_exclusion_reconciliation_requires_exact_source_bundle_accounting(self) -> None:
         parity = load_parity_module()

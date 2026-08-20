@@ -41,6 +41,8 @@ parser.add_argument('--oracle-root', required=True)
 parser.add_argument('--palace-path', required=True)
 parser.add_argument('--collection-name', required=True)
 parser.add_argument('--fixtures', required=True)
+parser.add_argument('--eligible-wings', required=True)
+parser.add_argument('--excluded-indices', required=True)
 args = parser.parse_args()
 root = Path(args.oracle_root).resolve()
 sys.path.insert(0, str(root))
@@ -48,6 +50,10 @@ import mempalace, chromadb
 if importlib.metadata.version('mempalace') != '3.5.0' or root not in Path(mempalace.__file__).resolve().parents:
     raise RuntimeError('unapproved oracle')
 fixtures = json.loads(Path(args.fixtures).read_text(encoding='utf-8'))
+eligible_wings = json.loads(args.eligible_wings)
+excluded_indices = set(json.loads(args.excluded_indices))
+if not isinstance(eligible_wings, list) or not eligible_wings or not all(isinstance(wing, str) and wing for wing in eligible_wings) or not all(isinstance(index, int) for index in excluded_indices):
+    raise RuntimeError('invalid eligible source scope')
 from mempalace.backends.chroma import ChromaCollection
 client = chromadb.PersistentClient(path=args.palace_path)
 raw = client.get_collection(args.collection_name)
@@ -59,10 +65,16 @@ for offset in range(0, count, 1000):
     for source_id, vector in zip(page.ids, page.embeddings or [], strict=True):
         by_digest[hashlib.sha256(source_id.encode('utf-8')).hexdigest()] = vector
 for index, fixture in enumerate(fixtures):
+    if index in excluded_indices:
+        print(json.dumps({'index': index, 'excluded': True}, separators=(',', ':'), sort_keys=True), flush=True)
+        continue
     vector = by_digest.get(fixture['query_record_digest'])
     if vector is None:
         raise RuntimeError('query digest did not resolve')
-    result = collection.query(query_embeddings=[vector], n_results=fixture['top_k'], where=fixture['filters'] or None, include=['distances'])
+    filters = fixture['filters']
+    eligible_filter = {'wing': {'$in': eligible_wings}}
+    where = eligible_filter if not filters else {'$and': [eligible_filter, filters]}
+    result = collection.query(query_embeddings=[vector], n_results=fixture['top_k'], where=where, include=['distances'])
     ranked = sorted(zip(result.ids[0], result.distances[0], strict=True), key=lambda item: (item[1], item[0]))
     print(json.dumps({'index': index, 'vector': vector, 'ranked': ranked}, separators=(',', ':'), sort_keys=True), flush=True)
 """
@@ -384,17 +396,17 @@ def _validate_result_summary(value: object, *, recall: bool = False) -> None:
         raise ParityFailure("report schema is invalid")
     allowed = {"compared", "failures"}
     if recall:
-        allowed |= {"source_repeat_runs", "rule", "worst_safe_delta"}
+        allowed |= {"excluded_fixtures", "source_repeat_runs", "rule", "worst_safe_delta"}
     if set(value) - allowed or not {"compared", "failures"} <= set(value):
         raise ParityFailure("report schema is invalid")
     if any(isinstance(value.get(key), bool) or not isinstance(value.get(key), (int, float)) or value.get(key) < 0 for key in ("compared", "failures")):
         raise ParityFailure("report schema is invalid")
-    if recall and (value.get("rule") != "source-repeatability-plus-serialization-floor" or not isinstance(value.get("source_repeat_runs"), int) or value["source_repeat_runs"] < 3 or not isinstance(value.get("worst_safe_delta"), (int, float)) or value["worst_safe_delta"] < 0):
+    if recall and (not isinstance(value.get("excluded_fixtures"), int) or value["excluded_fixtures"] < 0 or value.get("rule") != "source-repeatability-plus-serialization-floor" or not isinstance(value.get("source_repeat_runs"), int) or value["source_repeat_runs"] < 3 or not isinstance(value.get("worst_safe_delta"), (int, float)) or value["worst_safe_delta"] < 0):
         raise ParityFailure("report schema is invalid")
 
 
 def write_parity_report(path: Path, payload: Mapping[str, object]) -> None:
-    allowed = {"parity_schema", "verdict", "source_inventory_sha256", "mapping_contract_sha256", "transform_manifest_sha256", "bundle_sha256", "oracle_version", "oracle_revision", "qdrant_image", "qdrant_run_id", "target_collection_derivation_sha256", "vector_strategy", "field_parity", "id_parity", "vector_parity", "recall_parity", "bounds", "created_at"}
+    allowed = {"parity_schema", "verdict", "source_inventory_sha256", "mapping_contract_sha256", "transform_manifest_sha256", "bundle_sha256", "oracle_version", "oracle_revision", "qdrant_image", "qdrant_run_id", "target_collection_derivation_sha256", "vector_strategy", "field_parity", "id_parity", "vector_parity", "recall_parity", "exclusion_parity", "bounds", "created_at"}
     required = allowed - {"created_at"}
     if set(payload) - allowed or not required <= set(payload) or payload.get("parity_schema") != "solidstats-memory-parity/v1" or payload.get("verdict") not in {"pass", "fail"}:
         raise ParityFailure("report schema is invalid")
@@ -406,6 +418,9 @@ def write_parity_report(path: Path, payload: Mapping[str, object]) -> None:
     for key in ("field_parity", "id_parity", "vector_parity"):
         _validate_result_summary(payload.get(key))
     _validate_result_summary(payload.get("recall_parity"), recall=True)
+    exclusion = payload.get("exclusion_parity")
+    if not isinstance(exclusion, Mapping) or set(exclusion) != {"excluded_records", "failures"} or not isinstance(exclusion.get("excluded_records"), int) or exclusion["excluded_records"] < 0 or exclusion.get("failures") != 0:
+        raise ParityFailure("report schema is invalid")
     if payload.get("bounds") != {"max_records": MAX_RECORDS, "max_response_bytes": MAX_RESPONSE_BYTES, "max_top_k": MAX_TOP_K} or not isinstance(payload.get("created_at"), str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", str(payload["created_at"])):
         raise ParityFailure("report schema is invalid")
     _atomic_json(path, payload)
@@ -450,6 +465,50 @@ def map_fixture_filters(filters: Mapping[str, object], contract: Mapping[str, ob
             raise ParityFailure("fixture wing is unbound")
         mapped["wing"] = target
     return mapped
+
+
+def _approved_source_wings(contract: Mapping[str, object]) -> tuple[str, ...]:
+    routing = contract.get("source_wing_to_target_wing")
+    routes = routing.get("canonical_repository_rules") if isinstance(routing, Mapping) else None
+    shared = routing.get("shared_source_rule") if isinstance(routing, Mapping) else None
+    if not isinstance(routes, Mapping) or not isinstance(shared, Mapping):
+        raise ParityFailure("mapping contract routing is invalid")
+    wings = sorted({*routes.keys(), *shared.keys()})
+    if not wings or any(not isinstance(wing, str) or not wing for wing in wings):
+        raise ParityFailure("mapping contract routing is invalid")
+    return tuple(wings)
+
+
+def classify_fixture(fixture: Mapping[str, object], contract: Mapping[str, object], source_proof: Mapping[str, object]) -> str:
+    """Accept only evidence-bound Agent/other-wing exclusions from the approved contract."""
+    filters = fixture.get("filters")
+    if not isinstance(filters, Mapping):
+        raise ParityFailure("recall fixtures are invalid")
+    wing = filters.get("wing")
+    if wing is None or wing in _approved_source_wings(contract):
+        return "eligible"
+    if not isinstance(wing, str) or not wing or wing.endswith("-archive"):
+        raise ParityFailure("fixture wing is unbound")
+    routing = contract.get("source_wing_to_target_wing")
+    excluded_rule = routing.get("excluded_source_rule") if isinstance(routing, Mapping) else None
+    labels = source_proof.get("source_label_observation_counts")
+    wing_observation = labels.get("wing") if isinstance(labels, Mapping) else None
+    other_count = wing_observation.get("other_string") if isinstance(wing_observation, Mapping) else None
+    suffix_count = wing_observation.get("suffix_marked") if isinstance(wing_observation, Mapping) else None
+    if not isinstance(excluded_rule, str) or "Agent and other-wing" not in excluded_rule or not isinstance(other_count, int) or other_count < 1 or suffix_count != 0:
+        raise ParityFailure("fixture wing is unbound")
+    return "excluded"
+
+
+def validate_exclusion_reconciliation(source_proof: Mapping[str, object], private_inventory: Mapping[str, object], bundle_manifest: Mapping[str, object], transform: Mapping[str, object]) -> int:
+    counts = source_proof.get("counts")
+    source_total = counts.get("source_records") if isinstance(counts, Mapping) else None
+    private_total = private_inventory.get("record_count")
+    bundle_total = bundle_manifest.get("point_count")
+    excluded = bundle_manifest.get("excluded_count")
+    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in (source_total, private_total, bundle_total, excluded)) or private_total != source_total or bundle_total != transform.get("point_count") or source_total != bundle_total + excluded:
+        raise ParityFailure("source bundle exclusion reconciliation is invalid")
+    return excluded
 
 
 def validate_container_attestation(container: str, transform: Mapping[str, object]) -> None:
@@ -524,7 +583,7 @@ def _derive_collection(snapshot_dir: Path, oracle_python: Path, oracle_source_di
         raise ParityFailure("target collection derivation failed") from error
 
 
-def _run_source_queries(*, snapshot_dir: Path, fixtures_path: Path, oracle_python: Path, oracle_source_dir: Path) -> list[dict[str, object]]:
+def _run_source_queries(*, snapshot_dir: Path, fixtures_path: Path, oracle_python: Path, oracle_source_dir: Path, eligible_wings: Sequence[str], excluded_indices: Sequence[int]) -> list[dict[str, object]]:
     inventory = _load_inventory_contract()
     try:
         _policy, limits = inventory.load_policy(inventory.DEFAULT_POLICY)
@@ -544,7 +603,7 @@ def _run_source_queries(*, snapshot_dir: Path, fixtures_path: Path, oracle_pytho
             shutil.copytree(palace_root, scratch, symlinks=True)
             inventory._normalize_oracle_scratch_modes(scratch)
             inventory._assert_safe_tree(scratch, label="oracle scratch")
-            result = subprocess.run([str(python), "-I", "-c", SOURCE_QUERY_PROGRAM, "--oracle-root", str(oracle_root), "--palace-path", str(scratch), "--collection-name", str(contract["collection_name"]), "--fixtures", str(fixtures_path)], capture_output=True, text=True, timeout=300, check=False, env={"HOME": "/nonexistent", "PATH": os.defpath, "PYTHONNOUSERSITE": "1"})
+            result = subprocess.run([str(python), "-I", "-c", SOURCE_QUERY_PROGRAM, "--oracle-root", str(oracle_root), "--palace-path", str(scratch), "--collection-name", str(contract["collection_name"]), "--fixtures", str(fixtures_path), "--eligible-wings", json.dumps(list(eligible_wings)), "--excluded-indices", json.dumps(list(excluded_indices))], capture_output=True, text=True, timeout=300, check=False, env={"HOME": "/nonexistent", "PATH": os.defpath, "PYTHONNOUSERSITE": "1"})
         except (OSError, subprocess.TimeoutExpired, shutil.Error) as error:
             raise ParityFailure("source oracle failed") from error
     if result.returncode != 0:
@@ -575,13 +634,20 @@ def _target_query(base_url: str, collection: str, vector: object, filters: Mappi
     return ranked
 
 
-def _verify_recall(*, base_url: str, collection: str, fixtures: Sequence[Mapping[str, object]], contract: Mapping[str, object], snapshot_dir: Path, fixtures_path: Path, oracle_python: Path, oracle_source_dir: Path, repeats: int) -> dict[str, object]:
-    runs = [_run_source_queries(snapshot_dir=snapshot_dir, fixtures_path=fixtures_path, oracle_python=oracle_python, oracle_source_dir=oracle_source_dir) for _ in range(repeats)]
+def _verify_recall(*, base_url: str, collection: str, fixtures: Sequence[Mapping[str, object]], contract: Mapping[str, object], source_proof: Mapping[str, object], snapshot_dir: Path, fixtures_path: Path, oracle_python: Path, oracle_source_dir: Path, repeats: int) -> dict[str, object]:
+    classifications = [classify_fixture(fixture, contract, source_proof) for fixture in fixtures]
+    excluded_indices = [index for index, classification in enumerate(classifications) if classification == "excluded"]
+    eligible_wings = _approved_source_wings(contract)
+    runs = [_run_source_queries(snapshot_dir=snapshot_dir, fixtures_path=fixtures_path, oracle_python=oracle_python, oracle_source_dir=oracle_source_dir, eligible_wings=eligible_wings, excluded_indices=excluded_indices) for _ in range(repeats)]
     if any(len(run) != len(fixtures) for run in runs):
         raise ParityFailure("source oracle fixture count is invalid")
     compared = failures = 0
     worst_delta = 0.0
     for index, fixture in enumerate(fixtures):
+        if classifications[index] == "excluded":
+            if any(run[index] != {"index": index, "excluded": True} for run in runs):
+                raise ParityFailure("source oracle exclusion protocol is invalid")
+            continue
         source_runs: list[list[tuple[str, float]]] = []
         source_vectors: list[bytes] = []
         query_vector: object | None = None
@@ -608,7 +674,7 @@ def _verify_recall(*, base_url: str, collection: str, fixtures: Sequence[Mapping
         compared += result["compared"]
         failures += result["failures"]
         worst_delta = max(worst_delta, float(rule["max_distance_delta"]))
-    return {"compared": compared, "failures": failures, "source_repeat_runs": repeats, "rule": "source-repeatability-plus-serialization-floor", "worst_safe_delta": worst_delta}
+    return {"compared": compared, "failures": failures, "excluded_fixtures": len(excluded_indices), "source_repeat_runs": repeats, "rule": "source-repeatability-plus-serialization-floor", "worst_safe_delta": worst_delta}
 
 
 def _stream_field_parity(*, bundle_dir: Path, base_url: str, collection: str, expected_count: int, contract: Mapping[str, object], work_root: Path) -> dict[str, dict[str, int]]:
@@ -616,6 +682,7 @@ def _stream_field_parity(*, bundle_dir: Path, base_url: str, collection: str, ex
     if points_path.stat().st_size > 512 * 1024 * 1024:
         raise ParityFailure("bundle points exceed bounds")
     with tempfile.TemporaryDirectory(prefix="solidstats-memory-parity-index-", dir=work_root) as temporary:
+        approved_wings = _approved_source_wings(contract)
         database = sqlite3.connect(Path(temporary) / "expected.sqlite3")
         database.execute("CREATE TABLE expected (point_id TEXT PRIMARY KEY, source_id TEXT UNIQUE, field_sha TEXT NOT NULL, vector_sha TEXT NOT NULL, seen INTEGER NOT NULL DEFAULT 0)")
         count = 0
@@ -634,7 +701,10 @@ def _stream_field_parity(*, bundle_dir: Path, base_url: str, collection: str, ex
                     raise ParityFailure("bundle field evidence is invalid") from error
                 if not isinstance(point_id, str) or point_id != str(uuid.uuid5(UUID_NAMESPACE, source_id)) or not isinstance(target_metadata, dict):
                     raise ParityFailure("bundle identity evidence is invalid")
-                field_sha = hashlib.sha256(canonical_json_bytes({"source_id": source_id, "document": document.decode("utf-8"), "source_metadata": json.loads(metadata), "target_metadata": target_metadata})).hexdigest()
+                source_metadata = json.loads(metadata)
+                if source_metadata.get("wing") not in approved_wings:
+                    raise ParityFailure("bundle contains excluded source evidence")
+                field_sha = hashlib.sha256(canonical_json_bytes({"source_id": source_id, "document": document.decode("utf-8"), "source_metadata": source_metadata, "target_metadata": target_metadata})).hexdigest()
                 vector_sha = hashlib.sha256(_vector_bytes(vector)).hexdigest()
                 try:
                     database.execute("INSERT INTO expected(point_id, source_id, field_sha, vector_sha) VALUES (?, ?, ?, ?)", (point_id, source_id, field_sha, vector_sha))
@@ -681,6 +751,7 @@ def make_parity_report(*, provenance: Mapping[str, object], transform: Mapping[s
         raise ParityFailure("parity results are invalid")
     verdict = "pass" if all(int(results[key].get("failures", 1)) == 0 for key in required) else "fail"
     recall = dict(results["recall_parity"])
+    recall.setdefault("excluded_fixtures", 0)
     recall.setdefault("source_repeat_runs", 3)
     recall.setdefault("rule", "source-repeatability-plus-serialization-floor")
     recall.setdefault("worst_safe_delta", 0.0)
@@ -688,7 +759,7 @@ def make_parity_report(*, provenance: Mapping[str, object], transform: Mapping[s
         "parity_schema": "solidstats-memory-parity/v1", "verdict": verdict,
         "source_inventory_sha256": _safe_digest(provenance.get("source_inventory_sha256")), "mapping_contract_sha256": _safe_digest(provenance.get("mapping_contract_sha256")), "transform_manifest_sha256": _safe_digest(provenance.get("transform_manifest_sha256")),
         "bundle_sha256": _safe_digest(transform.get("bundle_sha256")), "oracle_version": "3.5.0", "oracle_revision": "v3.5.0", "qdrant_image": transform.get("qdrant_image"), "qdrant_run_id": transform.get("qdrant_run_id"), "target_collection_derivation_sha256": _safe_digest(transform.get("collection_derivation_sha256")), "vector_strategy": transform.get("vector_strategy"),
-        "field_parity": dict(results["field_parity"]), "id_parity": dict(results["id_parity"]), "vector_parity": dict(results["vector_parity"]), "recall_parity": recall,
+        "field_parity": dict(results["field_parity"]), "id_parity": dict(results["id_parity"]), "vector_parity": dict(results["vector_parity"]), "recall_parity": recall, "exclusion_parity": {"excluded_records": int(results.get("exclusion_parity", {}).get("excluded_records", 0)) if isinstance(results.get("exclusion_parity"), Mapping) else 0, "failures": 0},
         "bounds": {"max_records": MAX_RECORDS, "max_response_bytes": MAX_RESPONSE_BYTES, "max_top_k": MAX_TOP_K}, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
@@ -747,7 +818,8 @@ def main(argv: list[str] | None = None) -> int:
         if not 1 <= args.top_k <= MAX_TOP_K or args.source_repeat_runs < 3:
             raise ParityFailure("parity bounds are invalid")
         provenance = validate_provenance(Path(args.source_inventory_proof), Path(args.mapping_contract), Path(args.transform_manifest))
-        _regular_file(Path(args.inventory), "private inventory")
+        source_proof = _load_json(Path(args.source_inventory_proof), "source inventory proof")
+        private_inventory = _load_json(Path(args.inventory), "private inventory")
         bundle_dir = Path(args.bundle_dir).resolve(strict=True)
         bundle_manifest_path = _contained_file(bundle_dir, "bundle-manifest.json", "bundle manifest")
         manifest = _load_json(bundle_manifest_path, "bundle manifest")
@@ -757,6 +829,7 @@ def main(argv: list[str] | None = None) -> int:
         for name, digest_key in (("points.jsonl", "points_sha256"), ("id-map.jsonl", "id_map_sha256")):
             if sha256_file(_contained_file(bundle_dir, name, "bundle artifact", max_bytes=512 * 1024 * 1024)) != manifest.get(digest_key):
                 raise ParityFailure("private bundle provenance is invalid")
+        excluded_records = validate_exclusion_reconciliation(source_proof, private_inventory, manifest, transform)
         derivation = _derive_collection(Path(args.snapshot_dir), Path(args.oracle_python), Path(args.oracle_source_dir))
         if hashlib.sha256(canonical_json_bytes(derivation)).hexdigest() != transform.get("collection_derivation_sha256"):
             raise ParityFailure("target collection derivation mismatch")
@@ -773,6 +846,8 @@ def main(argv: list[str] | None = None) -> int:
         expected_count = transform.get("point_count")
         if not isinstance(expected_count, int) or not 0 < expected_count <= MAX_RECORDS:
             raise ParityFailure("target count is invalid")
+        contract = _load_bundle_contract().load_approved_mapping_contract(Path(args.source_inventory_proof), Path(args.mapping_contract))
+        recall_result = _verify_recall(base_url=base_url, collection=collection, fixtures=fixtures, contract=contract, source_proof=source_proof, snapshot_dir=Path(args.snapshot_dir), fixtures_path=Path(args.recall_fixtures), oracle_python=Path(args.oracle_python), oracle_source_dir=Path(args.oracle_source_dir), repeats=args.source_repeat_runs)
         schema = _qdrant_request(base_url, "GET", f"/collections/{quote(collection, safe='')}").get("result")
         vectors = schema.get("config", {}).get("params", {}).get("vectors") if isinstance(schema, dict) and isinstance(schema.get("config"), dict) else None
         if not isinstance(vectors, dict) or vectors.get("distance") != "Cosine" or not isinstance(vectors.get("size"), int):
@@ -781,9 +856,9 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(target_count, dict) or target_count.get("count") != expected_count:
             raise ParityFailure("target count mismatch")
         work_root = Path(args.qdrant_data_dir).resolve(strict=True).parent
-        results = _stream_field_parity(bundle_dir=bundle_dir, base_url=base_url, collection=collection, expected_count=expected_count, contract=provenance["transform"], work_root=work_root)
-        contract = _load_bundle_contract().load_approved_mapping_contract(Path(args.source_inventory_proof), Path(args.mapping_contract))
-        results["recall_parity"] = _verify_recall(base_url=base_url, collection=collection, fixtures=fixtures, contract=contract, snapshot_dir=Path(args.snapshot_dir), fixtures_path=Path(args.recall_fixtures), oracle_python=Path(args.oracle_python), oracle_source_dir=Path(args.oracle_source_dir), repeats=args.source_repeat_runs)
+        results = _stream_field_parity(bundle_dir=bundle_dir, base_url=base_url, collection=collection, expected_count=expected_count, contract=contract, work_root=work_root)
+        results["recall_parity"] = recall_result
+        results["exclusion_parity"] = {"excluded_records": excluded_records}
         report = make_parity_report(provenance=provenance, transform=transform, results=results)
         if report["verdict"] != "pass":
             raise ParityFailure("parity comparison failed")
