@@ -93,6 +93,13 @@ verbatim: `policyTypes: [Ingress, Egress]`, `name:
 allow-mempalace-to-qdrant`, `policyTypes: [Ingress]`, `port: 6333`] [CITED:
 https://kubernetes.io/docs/concepts/services-networking/network-policies/]
 
+Recovery planning exposed a second blocker in the recurring write-quiesce path:
+the backup pod has `automountServiceAccountToken: false`, no projected token,
+and egress only to Qdrant TCP/6333 and S3 TCP/443. Granting scale RBAC without
+an authenticated and NetworkPolicy-permitted API path cannot quiesce or restore
+MemPalace. [VERIFIED: k8s/memory/40-backup.yaml:1-40] [VERIFIED:
+k8s/memory/30-network-policy.yaml:48-75,135-152]
+
 **Primary recommendation:** implement one tested Phase 21 control plane with
 explicit `preflight -> stage -> snapshot -> isolated-restore -> verify ->
 alias-cutover -> public-probe -> client-register -> restart-probe ->
@@ -105,6 +112,7 @@ mutating state.
 | --- | --- | --- | --- |
 | Provenance and private-artifact validation | Operator workstation | Object storage | Private retained inputs remain local until their digests pass. |
 | Snapshot creation and isolated recovery | Database / Storage | Kubernetes operator job | Qdrant owns snapshot and collection state; Kubernetes owns bounded execution and credentials. |
+| Recurring writer quiescence | Kubernetes operator bootstrap | Backup CronJob | Operator-applied exact RBAC/API egress makes the in-cluster backup identity viable without allowing CI to mutate that boundary. |
 | Logical collection switch | Database / Storage | API / Backend | Qdrant alias is the reversible data-plane lever; MemPalace consumes the logical name. |
 | Public `/solidstats/mcp` switch | Host nginx | MemPalace Service | nginx owns the only public route; MemPalace remains a private ClusterIP. |
 | MCP behavior verification | API / Backend | Client | A real MCP initialize/tools/call flow is required, not only HTTP health. |
@@ -170,6 +178,93 @@ Do not unsuspend the recurring schedule until the first object-store backup has
 been downloaded, checksum-verified, restored, and validated. The recurring
 CronJob should remain the steady-state mechanism only after the drill passes.
 
+### Steady-state MemPalace metadata consistency decision
+
+Research found no repository or exact-image evidence for a product-supported
+consistent export of `/data/palace`; Phase 21 must not claim that such an export
+exists. The safe default is therefore a tested write-quiesce protocol. A later
+exact-image/source check may select a product export only if it proves the same
+before/after consistency, failure recovery, and write-resumption invariants.
+
+The recurring backup implementation must execute this protocol:
+
+1. Acquire the backup/run lock and record the MemPalace Deployment generation,
+   intended replica count, active pod identities, and aggregate write-path
+   readiness before disruption.
+2. Through a narrowly scoped backup ServiceAccount permission, scale MemPalace
+   to zero and wait until no selected pod remains able to write. Refuse the run
+   if another writer or PVC consumer is discovered.
+3. Compute a canonical metadata-tree digest immediately before the archive,
+   create the Qdrant snapshot and metadata archive, then recompute the source
+   digest and an extracted-archive digest. All three digests must match; only
+   the digests and aggregate file/byte counts may enter evidence.
+4. Complete deterministic checksums, object upload, remote inventory, download,
+   and checksum revalidation while the write path remains quiesced.
+5. In a guaranteed cleanup path, restore the exact recorded replica count,
+   wait for MemPalace availability, and rerun the full auth/MCP matrix including
+   capture and read-after-write to prove writes resumed. A failed backup must
+   still attempt this rollback and report whether service restoration passed.
+6. Keep both checked-in and live CronJobs suspended after any mismatch,
+   incomplete cleanup, failed service restart, or failed write-resumption
+   probe. Preserve diagnostics and leave Phase 21 unsealed.
+7. Permit `spec.suspend: false` only after one operator-authorized one-shot Job
+   derived from the exact recurring template proves the complete protocol and
+   the resulting package passes restore/download validation.
+
+This resolves the former steady-state ambiguity: pre-client quiescence from
+Plan 21-02 is not reused as steady-state evidence. Plan 21-04 must prove the
+live writer quiescence and resumption path before recurring schedule activation.
+
+### Kubernetes API control path for recurring quiescence
+
+Keep the scale control in-cluster, but make all three authorization layers
+explicit and independently testable:
+
+1. Add operator-bootstrap `k8s/memory/05-rbac.yaml`. Its namespace Role may
+   get only Deployment `mempalace`, get/patch only its `deployments/scale`
+   subresource, and list namespace pods for the selected-writer/PVC-consumer
+   proof. Bind it only to ServiceAccount `solidstats-memory-backup`; use no
+   wildcard, cluster-scoped role, Secret read, or unrelated workload access.
+2. Keep automatic ServiceAccount mounting disabled and explicitly project a
+   rotating token plus `kube-root-ca.crt` into the backup pod. Kubernetes 1.22+
+   uses short-lived TokenRequest-backed projected tokens for Pod identities;
+   an explicit projection preserves that property while limiting the mount to
+   the one workload that needs API access. [CITED:
+   https://kubernetes.io/docs/concepts/security/service-accounts/]
+3. Put `allow-backup-to-kubernetes-api` in the same operator-bootstrap file.
+   Select only `app.kubernetes.io/name: solidstats-memory-backup`; the source
+   contains operator markers for exactly one host-prefix CIDR and one numeric
+   TCP port, never an environment IP, node/Service CIDR, or all-destination
+   rule.
+4. Before rendering the live policy, discover the `kubernetes.default`
+   ClusterIP/service port and the ready EndpointSlice addresses/ports. Trial
+   the Service `/32`/port and endpoint `/32`/port candidates one at a time,
+   using a fresh exact-template pod for every attempt. Kubernetes explicitly
+   leaves pre/post-DNAT `ipBlock` behavior undefined across network plugins and
+   Service implementations, while k3s uses kube-router for NetworkPolicy;
+   therefore neither ClusterIP/443 nor endpoint/6443 is accepted from theory.
+   [CITED:
+   https://kubernetes.io/docs/concepts/services-networking/network-policies/]
+   [CITED:
+   https://github.com/cloudnativelabs/kube-router/blob/master/docs/user-guide.md]
+5. Prefer the stable Service candidate when it passes. Use a direct endpoint
+   candidate only when Service matching fails and exactly one ready endpoint
+   passes. If no candidate passes or direct matching would require multiple
+   endpoints, stop with the CronJob suspended instead of widening the policy.
+6. After applying the selected exact policy, rerun three fresh-pod controls:
+   the exact backup label plus backup ServiceAccount completes an authenticated
+   read-only scale GET; the same ServiceAccount under a nonmatching label fails
+   at the network boundary; and the exact label with an unprivileged identity
+   reaches the API but is denied by RBAC. Only their modes, digests, and
+   booleans enter evidence.
+
+`05-rbac.yaml` remains operator bootstrap alongside `00-namespace.yaml` and
+`01-ci-rbac.yaml`. The renderer and validator track its source shape, but the
+memory deploy workflow excludes it from the CI workload list because the CI
+identity is intentionally unable to create Role or RoleBinding resources. A
+later deployment cannot widen or replace the live API path through ordinary
+CI apply.
+
 ### Public edge
 
 The nginx template maps the exact public location verbatim `location =
@@ -204,25 +299,32 @@ reboot require an operator batch outside CI.
    validator and tests to require the reciprocal pair. [VERIFIED:
    k8s/memory/30-network-policy.yaml:36-61] [CITED:
    https://kubernetes.io/docs/concepts/services-networking/network-policies/]
-2. **No Phase 21 state machine exists.** Current scripts validate manifests and
+2. **Backup scale control is unreachable.** The backup identity lacks a token,
+   scale RBAC, and Kubernetes API egress. Plan 21-04 must add the projected
+   identity, operator-bootstrap exact Role/RoleBinding/policy, kube-router
+   Service-versus-endpoint measurement, and positive/network-negative/
+   RBAC-negative proof before the first scale or schedule activation.
+   [VERIFIED: k8s/memory/40-backup.yaml:1-40] [VERIFIED:
+   k8s/memory/30-network-policy.yaml:48-75,135-152]
+3. **No Phase 21 state machine exists.** Current scripts validate manifests and
    Phase 20 parity, but none owns absent-target proof, snapshot restore, alias
    state, MCP schema/calls, client registration, restart, reboot, or rollback.
    [VERIFIED: `ast-index explore`, 2026-08-20]
-3. **The restore target cannot be a name-only convention.** Before recovery,
+4. **The restore target cannot be a name-only convention.** Before recovery,
    query both collections and aliases and require the physical restore name to
    be absent. The Qdrant recovery API can overwrite data; the project guard is
    what enforces the stronger no-existing-target decision. [CITED:
    https://api.qdrant.tech/master/api-reference/snapshots/recover-from-snapshot]
-4. **Alias compatibility with the pinned MemPalace image needs a live preflight.**
+5. **Alias compatibility with the pinned MemPalace image needs a live preflight.**
    Qdrant aliases are query-compatible and atomically switchable, but Phase 21
    must prove the exact MemPalace build opens and uses the expected alias before
    accepting this design. [CITED:
    https://qdrant.tech/documentation/manage-data/collections/]
-5. **Snapshot capacity must be measured.** Qdrant states restore can require
+6. **Snapshot capacity must be measured.** Qdrant states restore can require
    approximately twice the collection disk while the snapshot and restored
    collection coexist. Measure free PVC/node disk before upload or recovery.
    [CITED: https://qdrant.tech/documentation/migration-recovery-options/]
-6. **The full Phase 20 test command is not currently green on local Python
+7. **The full Phase 20 test command is not currently green on local Python
    3.14.4.** On 2026-08-20 it produced 9 errors and 1 failure in inventory tests,
    while the 25 runtime-contract tests and 7 policy tests passed. Wave 0 must
    either repair the brittle mocked-clock tests or define and prove a supported
@@ -348,7 +450,8 @@ plane can keep transitions and rollback in one place.
 | Capacity | PVC capacity/usage, node allocatable/free disk, snapshot size, projected 2x restore headroom | Stop before upload/recovery |
 | Restore | Recovery returns success with `priority=snapshot`; collection reaches green; point count and vector config match | Do not create/switch alias; preserve failed collection for diagnosis |
 | Exact parity | Field, ID, metadata, timestamp, vector zero failures; exclusion count matches; ANN rule remains the approved Phase 20 rule | No cutover |
-| Backup | Snapshot object, metadata archive, manifest, checksum file exist under one run prefix; downloaded hashes match | Keep recurring CronJob suspended |
+| Backup API control | Service and ready-endpoint candidates are discovered live; exactly one measured `/32`/port policy is rendered; authenticated positive, wrong-label network-negative, and unprivileged-identity RBAC-negative checks pass | Do not scale; keep the recurring CronJob suspended; retain only value-free diagnostics |
+| Backup | API-control predecessor passes; live writes are quiesced; metadata source-before/source-after/extracted-archive digests match; snapshot, metadata archive, manifest, and checksum file exist under one run prefix; downloaded hashes match; exact replicas and capture/read-after-write recover | Restore the recorded writer state and keep the recurring CronJob suspended |
 | Private boundary | Qdrant is not NodePort/LoadBalancer/public; outside-namespace and public probes cannot reach 6333/6334 | No nginx installation |
 | Auth | Missing token and invalid token are rejected; valid token succeeds; response bodies do not echo credentials | No client registration |
 | MCP schema | Real initialize, tools/list, required tool schema snapshot, and one non-mutating call pass | Roll back public edge if already switched |
@@ -457,6 +560,36 @@ client registration.
 **Avoidance:** add the new client only after live validation; keep the legacy
 entry until rollback evidence is sealed; remove by exact configured name only.
 
+### Archiving live metadata without a consistency boundary
+
+**What goes wrong:** `/data/palace` changes while `tar` walks the tree, yielding
+a checksum-valid archive whose files never represented one coherent state.
+
+**Avoidance:** use the resolved write-quiesce protocol, compare canonical
+source-before, source-after, and extracted-archive digests, restore the exact
+writer state in a guaranteed cleanup path, and refuse recurring activation
+until capture/read-after-write proves resumption.
+
+### Treating RBAC as a complete Kubernetes API path
+
+**What goes wrong:** the backup ServiceAccount has scale permission, but the
+pod has no token or default-deny blocks its request before authorization.
+
+**Avoidance:** require all three layers—projected rotating identity, exact
+named Role/RoleBinding, and exact API egress—and prove them with positive,
+network-negative, and RBAC-negative fresh-pod controls.
+
+### Assuming Service translation order in NetworkPolicy
+
+**What goes wrong:** a policy allows the Kubernetes Service ClusterIP/443 while
+kube-router evaluates the post-translation endpoint/6443, or the inverse.
+
+**Avoidance:** discover both candidates, trial one exact policy at a time with
+fresh pods, bind the passing runtime path without committing the IP, and stop
+instead of widening when the result is absent or ambiguous. Kubernetes does
+not define the rewrite ordering across implementations. [CITED:
+https://kubernetes.io/docs/concepts/services-networking/network-policies/]
+
 ### Capturing sensitive probe output
 
 **What goes wrong:** token headers, corpus text, IDs, private paths, or payloads
@@ -483,7 +616,7 @@ temporary storage and are deleted after digesting.
 | --- | --- | --- | --- | --- |
 | ISO-01 | Exact new client name and legacy-removal ordering | contract | quick run command | No - Wave 0 |
 | ISO-03 | Only nginx/MemPalace public; reciprocal private Qdrant path | manifest contract | quick run command plus source validators | Partial - extend existing tests |
-| OPS-02 | Backup manifest/checksum/object prefix and one-shot run | unit + live integration | quick run; operator backup stage | Partial - current static contract only |
+| OPS-02 | Backup API-control path, manifest/checksum/object prefix, consistent one-shot run, and delayed recurring activation | unit + live integration | quick run; runtime manifest suite; operator API-access and backup stages | Partial - current static contract only |
 | OPS-03 | Absent target, isolated recovery, no force/overwrite | unit + live integration | quick run; operator restore stage | No - Wave 0 |
 | OPS-05 | Auth/schema/recall/capture/restart/reboot matrix | unit + live acceptance | quick run; operator probe stages | No - Wave 0 |
 
@@ -502,7 +635,8 @@ temporary storage and are deleted after digesting.
 - [ ] Add `tests/test-memory-cutover-contract.py` covering transitions,
   idempotency, privacy, absent-target rejection, alias rollback, and probe schema.
 - [ ] Extend `tests/test-memory-runtime-contract.py` and
-  `scripts/validate-memory-manifests.py` for reciprocal MemPalace egress.
+  `scripts/validate-memory-manifests.py` for reciprocal MemPalace egress and
+  the exact backup API-control RBAC/token/NetworkPolicy contract.
 - [ ] Add synthetic Qdrant HTTP fixtures for create/download/upload/recover,
   alias pre-state/switch/rollback, and failure injection.
 - [ ] Add a no-secret/no-private-path recursive validator for all Phase 21
@@ -534,6 +668,10 @@ temporary storage and are deleted after digesting.
 | Alias changed by concurrent operator | Tampering | Compare-and-switch using recorded alias pre-state and immediate read-back |
 | Partial cutover after SSH loss | Denial of service | Idempotent staged manifests, local evidence journal, rollback from each state |
 | Reboot returns pods but not data path | Denial of service | Full private/public behavior matrix after node Ready and workload Ready |
+| Live metadata changes during archive | Tampering | Scale the sole writer to zero, compare source-before/source-after/extracted-archive digests, restore exact replicas, and prove capture/read-after-write before schedule activation |
+| Backup scale RBAC exists but API transport is blocked | Denial of service | Projected token, exact backup-selected API egress, measured kube-router destination/port, and live positive/negative controls before scale |
+| API egress is widened to a node or Service CIDR | Information disclosure | Operator-only single host-prefix/port policy, exact selector, mutation tests, and no environment IP in source/evidence |
+| A spoofed pod reuses backup control privileges | Elevation of privilege | Network selector and RBAC identity are separate gates; wrong-label same-identity and exact-label unprivileged-identity controls must both pass |
 
 ## Suggested Plan Decomposition
 
@@ -558,27 +696,37 @@ reload, negative-auth and real MCP behavior probes, automatic rollback, and
 
 ### Plan 21-04 - Recovery and final seal
 
-Prove MemPalace restart, Qdrant restart, one complete backup cycle, VPS reboot,
-full post-recovery behavior, and an exercised rollback/forward cycle. Seal only
-aggregate evidence, then remove or disable the legacy client by exact name.
+Prove MemPalace restart and Qdrant restart, then create operator-bootstrap
+backup scale RBAC plus a runtime-rendered exact Kubernetes API policy. Measure
+kube-router Service-versus-endpoint behavior and pass positive/network-negative/
+RBAC-negative controls before one complete steady-state backup cycle with
+writer quiescence and before/after metadata consistency. Prove VPS reboot, full
+post-recovery behavior, and an exercised rollback/forward cycle. Enable the
+recurring schedule only after API-control, consistency, and write-resumption
+predecessors pass. Seal only aggregate evidence, then remove or disable the
+legacy client by exact name.
 
-## Open Questions
+## Execution-Time Bindings and Resolved Decisions
 
-1. **What exact MemPalace-derived collection name should become the logical
-   alias?** The Phase 20 public handoff intentionally exposes only the derivation
-   digest, not the private value. Resolve it inside the operator run after all
-   digests pass; never copy it into RESEARCH/PLAN files.
-2. **Does the pinned MemPalace build treat a Qdrant alias exactly like its
-   derived collection?** Qdrant supports it, but the exact image must be tested
-   before the alias design is locked into live cutover.
-3. **What is the consistency boundary of `/data/palace` metadata backup?** If
-   MemPalace mutates it during capture, the recurring backup must quiesce writes
-   or use a product-supported consistent export. The initial pre-client backup
-   is naturally write-quiescent; do not generalize that to steady state without
-   a live/source check.
-4. **Which legacy client name is present machine-locally?** Discover with a
-   redacted `codex mcp list`; never assume the exact name or remove a broad
-   pattern.
+1. **Execution-time binding — logical alias:** The Phase 20 public handoff
+   intentionally exposes only the collection-name derivation digest. Resolve
+   the private value inside the operator run after all digests pass; never copy
+   it into RESEARCH/PLAN files.
+2. **Execution-time gate — alias compatibility:** Qdrant supports collection
+   aliases, but Plan 21-02 must test the exact pinned MemPalace image against a
+   temporary alias before live cutover.
+3. **Resolved — `/data/palace` consistency:** No product-supported export is
+   evidenced, so the Phase 21 default is the write-quiesce protocol defined in
+   `Steady-state MemPalace metadata consistency decision`. Schedule activation
+   is rejected unless before/after/archive equality, exact replica restoration,
+   and capture/read-after-write resumption all pass.
+4. **Execution-time binding — legacy client:** Discover the exact local name
+   with a redacted `codex mcp list`; never assume a name or remove a pattern.
+5. **Execution-time binding — Kubernetes API egress:** Discover Service and
+   ready-endpoint candidates live, select only a path proven under kube-router,
+   and render the operator-only host-prefix/port policy in restrictive
+   temporary storage. Never persist the destination IP in repository source or
+   public evidence.
 
 ## Environment Availability
 
@@ -606,6 +754,8 @@ availability are intentionally deferred to operator-gated execution.
 ### Official external sources (MEDIUM confidence per research seam)
 
 - [Kubernetes Network Policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+- [Kubernetes Service Accounts](https://kubernetes.io/docs/concepts/security/service-accounts/)
+- [kube-router user guide](https://github.com/cloudnativelabs/kube-router/blob/master/docs/user-guide.md)
 - [Kubernetes StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)
 - [Qdrant snapshots](https://qdrant.tech/documentation/snapshots/)
 - [Qdrant migration and recovery](https://qdrant.tech/documentation/migration-recovery-options/)
@@ -619,7 +769,6 @@ availability are intentionally deferred to operator-gated execution.
 | # | Claim | Section | Risk if wrong |
 | --- | --- | --- | --- |
 | A1 | [ASSUMED] The pinned MemPalace image can use a Qdrant alias as its derived collection. | Architecture | Requires a different reversible data switch if false. |
-| A2 | [ASSUMED] `/data/palace` can be archived consistently while no captures are occurring. | Open Questions | Metadata backup may be inconsistent and OPS-02 would fail. |
 | A3 | [ASSUMED] A one-shot in-cluster restore Job is preferable to workstation port-forward upload. | Suggested plans | Operator tooling and network-policy layout may differ. |
 
 ## Metadata
