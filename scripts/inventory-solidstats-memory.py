@@ -423,8 +423,6 @@ def _validated_record(index: int, record: Mapping[str, object], limits: Inventor
         if not isinstance(document, str) or len(document.encode("utf-8")) > limits.max_document_bytes:
             raise ValueError("invalid document")
         metadata = lossless_metadata(record.get("metadata"), limits)
-        if not isinstance(metadata.get("source_timestamp"), str) or not UTC_TIMESTAMP_PATTERN.fullmatch(metadata["source_timestamp"]):
-            raise ValueError("invalid source timestamp")
         if not isinstance(vector, list) or not 0 < len(vector) <= limits.max_vector_dimension:
             raise ValueError("invalid vector")
         if any(isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(item) for item in vector):
@@ -596,7 +594,7 @@ def _build_source_inventory(
 ) -> dict[str, object]:
     """Validate a frozen snapshot and write only private source evidence."""
     started = time.monotonic()
-    policy, policy_limits = load_policy(policy_path)
+    _policy, policy_limits = load_policy(policy_path)
     limits = InventoryLimits(
         max_records=min(policy_limits.max_records, max_records or policy_limits.max_records),
         max_document_bytes=policy_limits.max_document_bytes,
@@ -661,11 +659,6 @@ def _build_source_inventory(
                 "record_count": record_count,
             }
         raise ValueError("invalid oracle protocol")
-    active_rooms = policy.get("active_rooms")
-    archive_wings = policy.get("archive_wings")
-    common_wing = policy.get("common_wing")
-    if not isinstance(active_rooms, list) or not isinstance(archive_wings, list) or not isinstance(common_wing, str):
-        raise ValueError("invalid migration policy")
     destination = _create_output_dir(output_dir)
     records_path = destination / "source-records.jsonl"
     vectors_path = destination / "source-vectors.jsonl"
@@ -700,9 +693,6 @@ def _build_source_inventory(
             }, limits)
             source["mempalace_id"] = source_id
             source["point_id"] = row["point_id"]
-            metadata = source["metadata"]
-            if metadata.get("room") not in active_rooms or metadata.get("wing") not in [common_wing, *archive_wings]:
-                raise safe_error(observed, {"kind": "scope"})
             record_line = canonical_json_bytes(source) + b"\n"
             vector_line = canonical_json_bytes(vector) + b"\n"
             records_file.write(record_line)
