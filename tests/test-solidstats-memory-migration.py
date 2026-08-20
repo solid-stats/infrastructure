@@ -15,6 +15,7 @@ import threading
 import time
 import unittest
 import uuid
+import sys
 from unittest import mock
 
 
@@ -1096,6 +1097,35 @@ class TransformContractTests(unittest.TestCase):
             bundle.MAX_PRIVATE_SOURCE_ARTIFACT_BYTES,
             bundle.MAX_JSON_BYTES,
         )
+
+    def test_collection_derivation_uses_v350_palace_ref_from_backend_base(self) -> None:
+        bundle = load_bundle_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            oracle = root / "oracle"
+            backends = oracle / "mempalace" / "backends"
+            backends.mkdir(parents=True)
+            (backends / "base.py").write_text(
+                "class PalaceRef:\n"
+                "    def __init__(self, *, id, local_path, namespace):\n"
+                "        self.id = id\n"
+                "        self.local_path = local_path\n"
+                "        self.namespace = namespace\n",
+                encoding="utf-8",
+            )
+            (backends / "qdrant.py").write_text(
+                "class _QdrantConfig:\n"
+                "    def __init__(self, **kwargs):\n"
+                "        self.kwargs = kwargs\n"
+                "class QdrantBackend:\n"
+                "    def _remote_collection_name(self, *, palace, collection_name, config):\n"
+                "        return 'derived-' + palace.namespace + '-' + collection_name\n",
+                encoding="utf-8",
+            )
+            result = bundle.derive_collection_with_oracle(
+                Path(sys.executable), oracle, "synthetic-palace", "solidstats", "records"
+            )
+            self.assertEqual("derived-solidstats-records", result["derived_collection"])
 
     def test_vector_strategy_requires_all_six_reuse_predicates(self) -> None:
         bundle = load_bundle_module()
