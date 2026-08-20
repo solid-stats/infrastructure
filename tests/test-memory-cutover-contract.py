@@ -683,9 +683,9 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual(25, capacity["required_bytes"])
         with self.assertRaisesRegex(RESTORE.RestoreControlError, "priority"):
             RESTORE.recover_snapshot(
-                request,
+                lambda **_kwargs: {"status": "ok", "result": True},
                 target_collection="isolated",
-                snapshot_location="file:///snapshot",
+                snapshot_path=self.root / "missing.snapshot",
                 priority="replica",
             )
 
@@ -749,7 +749,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 return {"status": "ok", "result": {"name": "fixture.snapshot"}}
             if path.endswith("/fixture.snapshot") and method == "GET":
                 return b"snapshot-bytes"
-            if path.endswith("/snapshots/recover?wait=true"):
+            if path.endswith("/snapshots/upload?priority=snapshot"):
                 return {"status": "ok", "result": True}
             if path == "/collections/isolated" and method == "GET":
                 return {
@@ -769,9 +769,13 @@ class MemoryCutoverContractTests(unittest.TestCase):
             request, "source", snapshot_name, destination
         )
         recovery = RESTORE.recover_snapshot(
-            request,
+            lambda **kwargs: request(
+                "POST",
+                f"/collections/{kwargs['target_collection']}/snapshots/upload?priority=snapshot",
+                {"snapshot_path": str(kwargs["snapshot_path"])},
+            ),
             target_collection="isolated",
-            snapshot_location="file:///snapshot",
+            snapshot_path=destination,
             priority="snapshot",
         )
         verification = RESTORE.verify_restored_collection(
@@ -1120,6 +1124,19 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     phase20_bindings=current_bindings,
                 )
 
+            def recover_uploaded_snapshot(
+                self,
+                *,
+                target_collection: str,
+                snapshot_path: Path,
+                priority: str,
+            ) -> dict[str, object]:
+                events.append("recovered")
+                self.assertEqual("isolated", target_collection)
+                self.assertTrue(snapshot_path.is_file())
+                self.assertEqual("snapshot", priority)
+                return {"status": "ok", "result": True}
+
             def qdrant_request(
                 self,
                 method: str,
@@ -1167,9 +1184,6 @@ class MemoryCutoverContractTests(unittest.TestCase):
                             },
                         }
                     }
-                if path.endswith("/snapshots/recover?wait=true"):
-                    events.append("recovered")
-                    return {"status": "ok", "result": True}
                 if path == "/collections/aliases":
                     for action in body["actions"]:
                         if "create_alias" in action:

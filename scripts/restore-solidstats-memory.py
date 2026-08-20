@@ -154,6 +154,14 @@ class StageAdapter(Protocol):
 
     def download_backup_package(self, package_dir: Path) -> None: ...
 
+    def recover_uploaded_snapshot(
+        self,
+        *,
+        target_collection: str,
+        snapshot_path: Path,
+        priority: str,
+    ) -> Mapping[str, object]: ...
+
     def qdrant_request(
         self, method: str, path: str, body: object = None, **kwargs: object
     ) -> object: ...
@@ -1137,25 +1145,23 @@ def checkpoint_run(lock: RunLock, stage: str, evidence_sha256: str) -> None:
 
 
 def recover_snapshot(
-    request: Callable[..., object],
+    upload: Callable[..., Mapping[str, object]],
     *,
     target_collection: str,
-    snapshot_location: str,
+    snapshot_path: Path,
     priority: str,
 ) -> dict[str, object]:
-    """Recover only with Qdrant's snapshot-priority conflict policy."""
+    """Upload and recover with Qdrant's snapshot-priority conflict policy."""
     if priority != "snapshot":
         raise RestoreControlError("recovery priority must be snapshot")
     target = _require_name(target_collection, "restore target is invalid")
-    if not isinstance(snapshot_location, str) or not snapshot_location:
-        raise RestoreControlError("snapshot location is invalid")
-    response = _request(
-        request,
-        "POST",
-        f"/collections/{urllib_parse.quote(target, safe='')}/snapshots/recover?wait=true",
-        {"location": snapshot_location, "priority": "snapshot"},
+    _regular_file(snapshot_path)
+    response = upload(
+        target_collection=target,
+        snapshot_path=snapshot_path,
+        priority="snapshot",
     )
-    if not isinstance(response, Mapping) or response.get("status") not in ("ok", None):
+    if response.get("status") not in ("ok", None):
         raise RestoreControlError("snapshot recovery was not accepted")
     if response.get("result") is not True and response.get("result") is not None:
         raise RestoreControlError("snapshot recovery was not accepted")
@@ -1870,9 +1876,9 @@ def _run_isolated_restore(
     if current != bindings:
         raise RestoreControlError("Phase 20 binding drift detected before mutation")
     recovery = recover_snapshot(
-        adapter.qdrant_request,
+        adapter.recover_uploaded_snapshot,
         target_collection=inputs.target_collection,
-        snapshot_location=(package_dir / "qdrant.snapshot").resolve().as_uri(),
+        snapshot_path=package_dir / "qdrant.snapshot",
         priority="snapshot",
     )
     return {
@@ -2243,6 +2249,25 @@ class JsonOperatorAdapter:
         )
         if result.get("downloaded") is not True:
             raise RestoreControlError("backup package download failed")
+
+    def recover_uploaded_snapshot(
+        self,
+        *,
+        target_collection: str,
+        snapshot_path: Path,
+        priority: str,
+    ) -> Mapping[str, object]:
+        return self._mapping(
+            self._call(
+                "recover-uploaded-snapshot",
+                {
+                    "target_collection": target_collection,
+                    "snapshot_path": str(snapshot_path),
+                    "priority": priority,
+                },
+                timeout=1800,
+            )
+        )
 
     def qdrant_request(
         self, method: str, path: str, body: object = None, **_kwargs: object
