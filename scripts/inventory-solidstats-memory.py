@@ -10,9 +10,11 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Iterator, Mapping, Sequence
 
@@ -721,6 +723,42 @@ def _write_private_json(output_dir: Path, name: str, value: object, *, jsonl: bo
     return sha256_bytes(payload)
 
 
+def _oracle_scratch_rows(
+    *,
+    oracle_python: Path,
+    oracle_root: Path,
+    contract: Mapping[str, object],
+    page_size: int,
+    check_only: bool,
+    limits: InventoryLimits,
+) -> Iterator[dict[str, object]]:
+    """Run the mutable oracle against a disposable copy of validated Chroma data."""
+    palace_root = contract["palace_root"]
+    if not isinstance(palace_root, Path):
+        raise ValueError("invalid snapshot contract")
+    with tempfile.TemporaryDirectory(prefix="solidstats-memory-oracle-") as scratch_dir:
+        scratch_palace = Path(scratch_dir) / "palace"
+        try:
+            shutil.copytree(palace_root, scratch_palace, symlinks=True)
+        except (OSError, shutil.Error) as error:
+            raise ValueError("unable to prepare oracle scratch") from error
+        _assert_safe_tree(scratch_palace, label="oracle scratch")
+        _safe_file(
+            scratch_palace,
+            Path("chroma.sqlite3"),
+            max_bytes=limits.max_record_bytes * limits.max_records,
+        )
+        scratch_contract = dict(contract)
+        scratch_contract["palace_root"] = scratch_palace
+        yield from _oracle_rows(
+            oracle_python=oracle_python,
+            oracle_root=oracle_root,
+            contract=scratch_contract,
+            page_size=page_size,
+            check_only=check_only,
+        )
+
+
 def _build_source_inventory(
     *,
     snapshot_dir: Path,
@@ -756,12 +794,13 @@ def _build_source_inventory(
     snapshot_contract = _load_snapshot_contract(snapshot_root, limits)
     if page_size <= 0:
         raise ValueError("invalid page size")
-    rows = _oracle_rows(
+    rows = _oracle_scratch_rows(
         oracle_python=oracle_python,
         oracle_root=oracle_root,
         contract=snapshot_contract,
         page_size=min(page_size, limits.max_records),
         check_only=check_only,
+        limits=limits,
     )
     try:
         header = next(rows)
