@@ -155,5 +155,6 @@
   "mempalace": {
     "enabled": true,
     "cross_project_tunnels": true
-  }
+  },
+  "runtime": "codex"
 }

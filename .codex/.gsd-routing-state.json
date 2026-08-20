@@ -1,0 +1,214 @@
+{
+  "agents": {
+    "gsd-advisor-researcher": {
+      "effort": "medium",
+      "generated_sha256": "c0e54a4ebc8246631a97f2a344ba85e58b4fd854c51ac934836adad8e7b5bacf",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "8e265f18bcd03e95aae4a123388dfb985c307e1af8b61036e5a6765f07b4f7f8"
+    },
+    "gsd-ai-researcher": {
+      "effort": "medium",
+      "generated_sha256": "5a7f95db8d0b4d25289c8efb1e5aa01793a329b76a208326949714be662fd614",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "8f2484d415b40202a35503b0b3675604d304f9d6303b094957d45ef44a778d68"
+    },
+    "gsd-assumptions-analyzer": {
+      "effort": "xhigh",
+      "generated_sha256": "24c15826aaefd208cfa2fe5a4a2fcbe6961f9045d0306a527291a5ff3130ab4f",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "6d66521aab17e480800b380ea7ba128144faef25b420e2e35a466e51d4ff606f"
+    },
+    "gsd-code-fixer": {
+      "effort": "medium",
+      "generated_sha256": "af7a595b50730540396f890ecae6cee7bec3c95608fc769e80053d65198764c9",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "43dcf6fbc44f5d8ee7a6e877bc96b3911d72c8560b1468d98de3faf8e4f2d622"
+    },
+    "gsd-code-reviewer": {
+      "effort": "medium",
+      "generated_sha256": "5c9260c0873ca147933e30c5d25eba8886e371f5004e06a892681d56eedaa6d3",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "13de800a0e285cb792665fa059702e28deb7b7ec5a3be8bfb42b6eb5c666145a"
+    },
+    "gsd-codebase-mapper": {
+      "effort": "low",
+      "generated_sha256": "5db3326f2e62d3af13f03c154e24243b4edb1393b2b794889be7012bb2b96bc7",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "dbb49cef1850ceb4674b1bbb1044fe77a37759e615f259c7aee5106748420346"
+    },
+    "gsd-debug-session-manager": {
+      "effort": "xhigh",
+      "generated_sha256": "fe6a47a645addddeb39c964bb338c4297e7a3be8b86215d66085dea8447eef8a",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "dea6dce5ed422336b89bfbdb061ae257be09cba26a55e6548d36c11e7248b7ce"
+    },
+    "gsd-debugger": {
+      "effort": "xhigh",
+      "generated_sha256": "91b7874c23ea1251c95b0feb1f3fc5f08c75313275b611f98aa1b9ed88881d7e",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "e6e01cc764bb314be4ed19447e2395f245cb1fbfc6ee21fef716ab05e37c0f65"
+    },
+    "gsd-doc-classifier": {
+      "effort": "low",
+      "generated_sha256": "615042e0c3c5c19d7144a5f7d81d274a1f3325bec8b159cc05679b65f0c84b69",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "7da8f8d381470b110ab1e80ce766c4a54f35fb126b9f001b0bdd7e156463d553"
+    },
+    "gsd-doc-synthesizer": {
+      "effort": "medium",
+      "generated_sha256": "9e0f5325543c9d9f6f91030221025a2d428f95847a924dd0761546767fa4eac1",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "ac6c1969631f5f71abc66b23965732bab858839f6471542e47cce828bb51c7c6"
+    },
+    "gsd-doc-verifier": {
+      "effort": "low",
+      "generated_sha256": "5b646b8e00342fd18a2ab6656962b4edbad7fe6ad27637bbcdcb84040c8c312a",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "5b646b8e00342fd18a2ab6656962b4edbad7fe6ad27637bbcdcb84040c8c312a"
+    },
+    "gsd-doc-writer": {
+      "effort": "medium",
+      "generated_sha256": "2218c92623128be97c59127cee81164b318c5b4436124eb30cf511a2affe3cc7",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "80d8a3d71df30d7f2ac51fc44ea3e86e65fbdb5229c1a51cecb74b8743caf343"
+    },
+    "gsd-domain-researcher": {
+      "effort": "medium",
+      "generated_sha256": "c2dbf5de40c46b36ff71a58591b7c3046203b35361191d9b58076633d898f171",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "0ba955af3a922e63d29de58971f57dc101d13e7bb8f7a72eeec9e7484cf26c57"
+    },
+    "gsd-eval-auditor": {
+      "effort": "medium",
+      "generated_sha256": "9ab3ccf90518882bc9bab0ab0769eaa21dbbef64b372d113aca88d613281b618",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "1e4572a18918afa36d593ca849aebf86ed1d48740da29481aef0b75c02555a01"
+    },
+    "gsd-eval-planner": {
+      "effort": "xhigh",
+      "generated_sha256": "460b6c3b4ec46af34ee74443f17297be8d86bc93ccb5c9be9d638810552ea186",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "460b6c3b4ec46af34ee74443f17297be8d86bc93ccb5c9be9d638810552ea186"
+    },
+    "gsd-executor": {
+      "effort": "medium",
+      "generated_sha256": "cde977fa7287e924fafeff0a8d47d82196e1cf07f0744fdaec622176ae23d0d8",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "8926a61acaab62bac1752e3371ab2f9830e2919fc3a4d6a2b34eae3df15fcadc"
+    },
+    "gsd-framework-selector": {
+      "effort": "xhigh",
+      "generated_sha256": "4272f7022ae6ddac2e04ce52b753f9dc694b83ad2e9ea20dcfa6ea7fb8efc965",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "032ac02c1c3311a295bd9a37c862f5851d0221813bd11d340be31587664f3883"
+    },
+    "gsd-integration-checker": {
+      "effort": "low",
+      "generated_sha256": "bc6d11b26d49b84a321f2ec6ec18c75c6c92938e2d9f3d1ec4ca9aa4e3119b25",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "bc6d11b26d49b84a321f2ec6ec18c75c6c92938e2d9f3d1ec4ca9aa4e3119b25"
+    },
+    "gsd-intel-updater": {
+      "effort": "low",
+      "generated_sha256": "69cfa51706db3c735abb96424bcd6d008d090b4527a9ce35a95df24bff72bed1",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "ac51576c4319ec3cda02cdc06d9b9319c6949eb108ac05b8af83afadfdacadde"
+    },
+    "gsd-mempalace-curator": {
+      "effort": "low",
+      "generated_sha256": "4c35beb555e76446df1b45e9886c5689548bc44fba36db139b337fabc1aaf333",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "4c35beb555e76446df1b45e9886c5689548bc44fba36db139b337fabc1aaf333"
+    },
+    "gsd-nyquist-auditor": {
+      "effort": "low",
+      "generated_sha256": "b6d2b59adbc9f310e4064449553a9acd3635473720a367a78276e7341b566e68",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "b6d2b59adbc9f310e4064449553a9acd3635473720a367a78276e7341b566e68"
+    },
+    "gsd-pattern-mapper": {
+      "effort": "low",
+      "generated_sha256": "1e13ee4c7d6825d0953ffd98c2f833b050459ee9419fcb319139cca991d4cb91",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "1e13ee4c7d6825d0953ffd98c2f833b050459ee9419fcb319139cca991d4cb91"
+    },
+    "gsd-phase-researcher": {
+      "effort": "medium",
+      "generated_sha256": "699149c4688d268774610b9cb079122b2cc68d196a694027bcf2c28783076227",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "13ff601d3c7491038266943d4a4703e12a0adac8758bacfdf31a5338b121e3db"
+    },
+    "gsd-plan-checker": {
+      "effort": "low",
+      "generated_sha256": "67545262c6701daeecb69bd1eb5f5ccf4e60d59211fc3a313fc8f90c8a46862c",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "67545262c6701daeecb69bd1eb5f5ccf4e60d59211fc3a313fc8f90c8a46862c"
+    },
+    "gsd-planner": {
+      "effort": "xhigh",
+      "generated_sha256": "608150b5dbeb01fbfad1fe40f81b59171837a1effd16e2db4eb20950fd9de5ed",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "608150b5dbeb01fbfad1fe40f81b59171837a1effd16e2db4eb20950fd9de5ed"
+    },
+    "gsd-project-researcher": {
+      "effort": "medium",
+      "generated_sha256": "9cbb13fbf764c47946a0f6cb9084faaced14918efea5059062af5390f08f6c8b",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "b923eab7c37b345531be7221904e3b11dc3196338cdb869aa5adbefd0408bc04"
+    },
+    "gsd-research-synthesizer": {
+      "effort": "low",
+      "generated_sha256": "bedcb59e5cf6bd6db3cd5579ac55be7e25bc0664df858992e6477601f560a827",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "bedcb59e5cf6bd6db3cd5579ac55be7e25bc0664df858992e6477601f560a827"
+    },
+    "gsd-roadmapper": {
+      "effort": "xhigh",
+      "generated_sha256": "ef1b2c244af86a808cfdcaf0c7415ef847ee13cc4dfb87c3f68371dfccab03cd",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "20fce78af801a0dced0bee9b006894675fc9d2af54e1cbf5ddcbcad0ccc1a457"
+    },
+    "gsd-security-auditor": {
+      "effort": "xhigh",
+      "generated_sha256": "33099bf832c3c11c33602154063472dc6426cf2789c240fd0057593ed3ea88ac",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "3f0fb57b37de98ca215f056232c7b7acd6f66a040a8c99ac3cb6b9d8cda2a7e7"
+    },
+    "gsd-ui-auditor": {
+      "effort": "low",
+      "generated_sha256": "8e34602afe3feaad6b18fccc899733ccaf7581937f5628da67ca209dd6328384",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "8e34602afe3feaad6b18fccc899733ccaf7581937f5628da67ca209dd6328384"
+    },
+    "gsd-ui-checker": {
+      "effort": "low",
+      "generated_sha256": "2c1af09b6f3242851c5c7806e0a119555946180eefe2713dd6e7fdeadfa80533",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "2c1af09b6f3242851c5c7806e0a119555946180eefe2713dd6e7fdeadfa80533"
+    },
+    "gsd-ui-researcher": {
+      "effort": "medium",
+      "generated_sha256": "2e2a42daa25d48307c65640fba4943bfa04fa19a3d0abcbf41598afdeadf6a97",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "07dd6a743f236678334522ec2016a659d9f724add7fc88d18380d8b8b545889d"
+    },
+    "gsd-user-profiler": {
+      "effort": "xhigh",
+      "generated_sha256": "195ee91f3eca5ac302dba6997515b422472f10dbfde93db34fe2f42a99be163a",
+      "model": "gpt-5.6-sol",
+      "source_sha256": "6df5364416b635b565f80fcbe8407acc7888ea3676f9d39e169e35bea042d5a3"
+    },
+    "gsd-verifier": {
+      "effort": "xhigh",
+      "generated_sha256": "a9998159a0d9ad01a41e4726daed771f9ce2c3dab275dba52f4ea70f69114a4e",
+      "model": "gpt-5.6-terra",
+      "source_sha256": "1533568c3df417389c79bfa1220411aa4cbbf7cedc874d4e4dc61ea29999f6ff"
+    }
+  },
+  "catalog_sha256": "59f3233132969e27edfa86ce2bac98b44cbceebd253feff4de96dbb18c84b63e",
+  "defaults_sha256": "5ca58f5ff7ef0b9203018ccca96f603b7077834e3d7d32a73afe876a7b6c7177",
+  "gsd_version": "1.10.0",
+  "manifest_sha256": "3a3581ea768cbe6a0149fbbff3fbc3080a630e120eec5b14328abd72aac5fb9a",
+  "project_config_sha256": "233423032da8b8c7fe250c5213de570283ed890e8ef36b2af2bef02d8623fd74",
+  "schema": 1
+}
