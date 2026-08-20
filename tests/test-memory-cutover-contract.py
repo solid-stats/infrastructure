@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 
@@ -622,6 +623,148 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertTrue(probe["restored"])
         self.assertNotIn("probe", aliases)
         self.assertEqual("protected", aliases["active"])
+
+    def test_qdrant_adapter_covers_create_download_recover_and_verify(self) -> None:
+        calls: list[tuple[str, str, object, bool]] = []
+
+        def request(
+            method: str,
+            path: str,
+            body: object = None,
+            *,
+            binary: bool = False,
+        ) -> object:
+            calls.append((method, path, body, binary))
+            if path.endswith("/snapshots") and method == "POST":
+                return {"status": "ok", "result": {"name": "fixture.snapshot"}}
+            if path.endswith("/fixture.snapshot") and method == "GET":
+                return b"snapshot-bytes"
+            if path.endswith("/snapshots/recover?wait=true"):
+                return {"status": "ok", "result": True}
+            if path == "/collections/isolated" and method == "GET":
+                return {
+                    "status": "ok",
+                    "result": {
+                        "status": "green",
+                        "optimizer_status": "ok",
+                        "points_count": 3,
+                        "config": {"params": {"vectors": {"size": 3, "distance": "Cosine"}}},
+                    },
+                }
+            raise AssertionError((method, path))
+
+        snapshot_name = RESTORE.create_snapshot(request, "source")
+        destination = self.root / "qdrant.snapshot"
+        download = RESTORE.download_snapshot(
+            request, "source", snapshot_name, destination
+        )
+        recovery = RESTORE.recover_snapshot(
+            request,
+            target_collection="isolated",
+            snapshot_location="file:///snapshot",
+            priority="snapshot",
+        )
+        verification = RESTORE.verify_restored_collection(
+            request,
+            target_collection="isolated",
+            expected_vector_config={"size": 3, "distance": "Cosine"},
+            expected_count=3,
+            parity_check=lambda: {"verdict": "pass", "record_count": 3},
+        )
+
+        self.assertEqual("fixture.snapshot", snapshot_name)
+        self.assertEqual(b"snapshot-bytes", destination.read_bytes())
+        self.assertEqual(len(b"snapshot-bytes"), download["snapshot_bytes"])
+        self.assertTrue(recovery["accepted"])
+        self.assertTrue(verification["green"])
+        self.assertTrue(verification["parity_exact"])
+        self.assertTrue(any(binary for _method, _path, _body, binary in calls))
+
+    def test_qdrant_http_timeout_and_malformed_json_are_value_free(self) -> None:
+        class Response:
+            def __init__(self, payload: bytes) -> None:
+                self.payload = payload
+
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self, _limit: int) -> bytes:
+                return self.payload
+
+        def timeout_opener(*_args: object, **_kwargs: object) -> object:
+            raise TimeoutError("private host detail")
+
+        for opener in (timeout_opener, lambda *_args, **_kwargs: Response(b"not-json")):
+            with self.subTest(opener=opener), self.assertRaises(
+                RESTORE.RestoreControlError
+            ) as caught:
+                RESTORE.qdrant_request(
+                    "http://127.0.0.1:6333",
+                    "GET",
+                    "/collections",
+                    api_key="private-token",
+                    opener=opener,
+                )
+            self.assertNotIn("private", str(caught.exception))
+
+    def test_metadata_archive_is_deterministic_and_rejects_symlinks(self) -> None:
+        metadata = self.root / "metadata"
+        metadata.mkdir()
+        (metadata / "a.json").write_text("{}\n", encoding="utf-8")
+        nested = metadata / "nested"
+        nested.mkdir()
+        (nested / "b.bin").write_bytes(b"fixture")
+        first = self.root / "first.tar"
+        second = self.root / "second.tar"
+
+        result = RESTORE.archive_quiescent_metadata(metadata, first)
+        RESTORE.archive_quiescent_metadata(metadata, second)
+        self.assertTrue(result["stable"])
+        self.assertEqual(first.read_bytes(), second.read_bytes())
+        with tarfile.open(first, "r:") as archive:
+            self.assertEqual(["a.json", "nested", "nested/b.bin"], archive.getnames())
+
+        (metadata / "escape").symlink_to(self.root / "outside")
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "unsafe"):
+            RESTORE.archive_quiescent_metadata(metadata, self.root / "unsafe.tar")
+
+    def test_backup_job_generation_keeps_private_values_out_of_evidence(self) -> None:
+        cronjob = {
+            "apiVersion": "batch/v1",
+            "kind": "CronJob",
+            "metadata": {"name": "backup", "namespace": "memory"},
+            "spec": {
+                "suspend": True,
+                "jobTemplate": {
+                    "spec": {
+                        "template": {
+                            "metadata": {"labels": {"app": "backup"}},
+                            "spec": {
+                                "restartPolicy": "Never",
+                                "containers": [{"name": "backup", "env": []}],
+                            },
+                        }
+                    }
+                },
+            },
+        }
+        job = RESTORE.generate_backup_job(
+            cronjob,
+            run_id=self.run_id,
+            private_environment={"QDRANT_COLLECTION": "private-collection"},
+        )
+        output = self.root / "private" / "job.json"
+        RESTORE.write_private_json(output, job)
+
+        self.assertEqual("Job", job["kind"])
+        self.assertNotIn("schedule", job["spec"])
+        self.assertEqual(0o600, output.stat().st_mode & 0o777)
+        public = RESTORE.backup_job_evidence(job)
+        self.assertNotIn("private-collection", json.dumps(public))
+        self.assertTrue(public["generated"])
 
     def test_alias_probe_restores_prestate_after_probe_failure(self) -> None:
         aliases: dict[str, str] = {}
