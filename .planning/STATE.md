@@ -5,15 +5,15 @@ milestone_name: SolidStats Memory Isolation
 current_phase: 20
 current_phase_name: Local Corpus Migration
 status: in_progress
-stopped_at: Completed 20-08-PLAN.md; Plan 20-05 is next
-last_updated: "2026-08-20T07:47:13.029Z"
+stopped_at: Completed 20-05-PLAN.md; Plan 20-06 is next
+last_updated: "2026-08-20T08:39:32.052Z"
 last_activity: 2026-08-20
-last_activity_desc: Plan 20-08 approved inventory-bound mapping contract
+last_activity_desc: Plan 20-05 completed local transform and isolated import
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 15
-  completed_plans: 13
+  completed_plans: 14
   percent: 25
 ---
 
@@ -31,9 +31,9 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 20 — Local Corpus Migration
-Plan: 20-05 of 9 — approved local transform and isolated target import
-Status: Ready for Plan 20-05 precondition checks
-Last activity: 2026-08-20 — Plan 20-08 approved the mapping contract
+Plan: 20-06 of 9 — exact parity report and Phase 21 handoff
+Status: Ready for Plan 20-06 parity verification
+Last activity: 2026-08-20 — Plan 20-05 completed local transform and isolated import
 
 **Plan 20-07 completion evidence:**
 
@@ -71,7 +71,16 @@ Last activity: 2026-08-20 — Plan 20-08 approved the mapping contract
   `SolidStats` routes to `SolidStats-archive`.
 
 - Agent and other-wing records remain retained outside target import. Plan 20-05
-  is next; MIG-02 transform and parity are still unclaimed.
+  completed the transform/import; Plan 20-06 now owns parity evidence.
+
+**Plan 20-05 transform and isolated import:**
+
+- The exact v3.5.0 transform used the approved contract and current source proof,
+  then imported deterministic bounded batches into a fresh loopback-only target.
+- The retained target passed empty-target, pinned-image, schema, acknowledgement,
+  final-count, run-ID, and target-ID-set-digest evidence without publishing private data.
+- Plan 20-06 is next and consumes the retained private bundle and local target
+  for field, vector, and recall parity only.
 
 ## Performance Metrics
 
@@ -138,6 +147,7 @@ Last activity: 2026-08-20 — Plan 20-08 approved the mapping contract
 | Phase 20 P09 | 0m       | 2 tasks | 2 files |
 | Phase 20 P04 | evidence | 2 tasks | 1 file  |
 | Phase 20 P08 | 20m      | 1 task  | 4 files |
+| Phase 20 P05 | cont.    | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -199,7 +209,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Source recall fixtures are deterministic and retain no query text.
 - [Phase ?]: Frozen source is a private immutable snapshot, not the live palace.
 - [Phase ?]: MemPalace v3.5.0 is the only migration oracle.
-- [Phase ?]: Plan 20-08 approved lossless source metadata preservation and archive-wing routing; Plan 20-05 is next.
+- [Phase ?]: Plan 20-08 approved lossless source metadata preservation and archive-wing routing; Plan 20-05 consumed it.
+- [Phase ?]: Plan 20-05 retains the successful loopback Qdrant target for Plan 20-06 parity.
 
 ### Pending Todos
 
@@ -290,11 +301,11 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-20T07:47:13.022Z
-Stopped at: Completed 20-08-PLAN.md; Plan 20-05 is next
+Last session: 2026-08-20T08:39:32.040Z
+Stopped at: Completed 20-05-PLAN.md; Plan 20-06 is next
 Resume file: None
 
 ## Operator Next Steps
 
 - Keep the authoritative dependency chain `20-03 -> 20-07 -> 20-09 -> 20-04 -> 20-08 -> 20-05 -> 20-06`.
-- Execute Plan 20-05 only from the approved, current inventory-bound mapping contract; do not claim parity until Plan 20-06 passes.
+- Execute Plan 20-06 only from the retained Plan 20-05 target and approved current contract; do not claim Phase 21 readiness until parity passes.
