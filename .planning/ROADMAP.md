@@ -388,7 +388,7 @@ strategy, transform locally, and prove identifier/metadata/vector/recall parity
 in isolated Qdrant.
 **Depends on:** Phase 19
 **Requirements:** MIG-01..02
-**Plans:** 6/9 plans executed; Plan 20-08 blocking human mapping checkpoint is next
+**Plans:** 7/9 plans executed; Plan 20-05 local transform is next
 
 - [x] 20-01-PLAN.md — migration contract and synthetic evidence chain
 - [x] 20-02-PLAN.md — bounded v3.5.0 source inventory and deterministic fixtures
@@ -397,7 +397,7 @@ in isolated Qdrant.
 - [ ] 20-05-PLAN.md — approved local transform and isolated target import
 - [ ] 20-06-PLAN.md — exact parity report and Phase 21 handoff
 - [x] 20-07-PLAN.md — lossless source-boundary repair and value-free shape evidence
-- [ ] 20-08-PLAN.md — blocking human mapping checkpoint after real inventory
+- [x] 20-08-PLAN.md — blocking human mapping checkpoint after real inventory
 - [x] 20-09-PLAN.md — diagnosed metadata source-admission gap closure and exact-image gate
 
 **Authoritative dependency chain:** `20-03 -> 20-07 -> 20-09 -> 20-04 -> 20-08 -> 20-05 -> 20-06`. Filename order does not override these dependencies.
@@ -447,6 +447,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 17. Network Isolation & Stack Validation | v3.0 | 3/3 | Complete | 2026-06-14 |
 | 18. App-side Error SDK | v3.0 | 1/1 | Complete | 2026-06-14 |
 | 19. SolidStats Memory Foundation | v4.0 | 6/6 | Complete | 2026-08-20 |
-| 20. Local Corpus Migration | v4.0 | 6/9 | In Progress | |
+| 20. Local Corpus Migration | v4.0 | 7/9 | In Progress | |
 | 21. Restore, Cutover & Recovery | v4.0 | 0/TBD | Blocked on Phase 20 | |
 | 22. Archive Distillation | v4.0 | 0/TBD | Blocked on Phase 21 | |

@@ -4,16 +4,16 @@ milestone: v4.0
 milestone_name: SolidStats Memory Isolation
 current_phase: 20
 current_phase_name: Local Corpus Migration
-status: awaiting_checkpoint
-stopped_at: Completed 20-04-PLAN.md; Plan 20-08 blocking human mapping checkpoint next
-last_updated: "2026-08-20T10:15:00+07:00"
+status: in_progress
+stopped_at: Completed 20-08-PLAN.md; Plan 20-05 is next
+last_updated: "2026-08-20T07:47:13.029Z"
 last_activity: 2026-08-20
-last_activity_desc: Plan 20-04 complete; sanitized source inventory proof published
+last_activity_desc: Plan 20-08 approved inventory-bound mapping contract
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 15
-  completed_plans: 12
+  completed_plans: 13
   percent: 25
 ---
 
@@ -31,9 +31,9 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 20 — Local Corpus Migration
-Plan: 20-08 of 9 — blocking human mapping checkpoint
-Status: Awaiting human mapping-contract decision
-Last activity: 2026-08-20 — Plan 20-04 complete; sanitized source evidence published
+Plan: 20-05 of 9 — approved local transform and isolated target import
+Status: Ready for Plan 20-05 precondition checks
+Last activity: 2026-08-20 — Plan 20-08 approved the mapping contract
 
 **Plan 20-07 completion evidence:**
 
@@ -58,6 +58,20 @@ Last activity: 2026-08-20 — Plan 20-04 complete; sanitized source evidence pub
 - Two independent post-inventory exact-image check-only runs passed, and private output plus snapshot-manifest hashes match `20-SOURCE-INVENTORY.json`.
 - The recursive privacy validator rejected a secret key, corpus fragment, metadata value, vector, query, and absolute path. The proof contains allowlisted aggregate data only.
 - No mapping contract was created or approved. Plan 20-08 is now the blocking human checkpoint; Plans 20-05 and 20-06 must not run first.
+
+**Plan 20-08 approved mapping contract:**
+
+- The explicit `approve-complete-contract` decision is bound to the exact
+  current source-inventory file digest and a canonical approval digest.
+
+- Source timestamps, legacy rooms, source metadata, identifiers, document
+  bytes, and reused vectors remain lossless under the approved rules.
+
+- Registry-backed platform wings route to their public archive wings; shared
+  `SolidStats` routes to `SolidStats-archive`.
+
+- Agent and other-wing records remain retained outside target import. Plan 20-05
+  is next; MIG-02 transform and parity are still unclaimed.
 
 ## Performance Metrics
 
@@ -123,6 +137,7 @@ Last activity: 2026-08-20 — Plan 20-04 complete; sanitized source evidence pub
 | Phase 20 P07 | 0m       | 2 tasks | 2 files |
 | Phase 20 P09 | 0m       | 2 tasks | 2 files |
 | Phase 20 P04 | evidence | 2 tasks | 1 file  |
+| Phase 20 P08 | 20m      | 1 task  | 4 files |
 
 ## Accumulated Context
 
@@ -184,6 +199,7 @@ Recent decisions affecting current work:
 - [Phase ?]: Source recall fixtures are deterministic and retain no query text.
 - [Phase ?]: Frozen source is a private immutable snapshot, not the live palace.
 - [Phase ?]: MemPalace v3.5.0 is the only migration oracle.
+- [Phase ?]: Plan 20-08 approved lossless source metadata preservation and archive-wing routing; Plan 20-05 is next.
 
 ### Pending Todos
 
@@ -274,11 +290,11 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-20T10:15:00+07:00
-Stopped at: Completed 20-04-PLAN.md; Plan 20-08 blocking human mapping checkpoint next
+Last session: 2026-08-20T07:47:13.022Z
+Stopped at: Completed 20-08-PLAN.md; Plan 20-05 is next
 Resume file: None
 
 ## Operator Next Steps
 
-- Stop at Plan 20-08 for the human mapping-contract checkpoint.
-- Keep the authoritative dependency chain `20-03 -> 20-07 -> 20-09 -> 20-04 -> 20-08 -> 20-05 -> 20-06`; do not execute Plans 20-05 or 20-06 before approval.
+- Keep the authoritative dependency chain `20-03 -> 20-07 -> 20-09 -> 20-04 -> 20-08 -> 20-05 -> 20-06`.
+- Execute Plan 20-05 only from the approved, current inventory-bound mapping contract; do not claim parity until Plan 20-06 passes.
