@@ -1127,6 +1127,28 @@ class TransformContractTests(unittest.TestCase):
             )
             self.assertEqual("derived-solidstats-records", result["derived_collection"])
 
+    def test_public_manifest_allows_only_the_fixed_schema_slash(self) -> None:
+        bundle = load_bundle_module()
+        image = "example.test/qdrant:v1@sha256:" + "a" * 64
+        payload = {
+            "transform_schema": "solidstats-memory-transform/v1",
+            "qdrant_image": image,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / ".planning" / "phases" / "20-local-corpus-migration"
+            target.mkdir(parents=True)
+            with mock.patch.object(bundle, "ROOT", root):
+                bundle._public_manifest(payload)
+                self.assertTrue((target / "20-TRANSFORM-MANIFEST.json").is_file())
+                for invalid in (
+                    {**payload, "transform_schema": "other-schema/v1"},
+                    {**payload, "source_inventory_sha256": "private/path"},
+                ):
+                    with self.subTest(invalid=invalid):
+                        with self.assertRaisesRegex(ValueError, "transform manifest"):
+                            bundle._public_manifest(invalid)
+
     def test_vector_strategy_requires_all_six_reuse_predicates(self) -> None:
         bundle = load_bundle_module()
         source = {
