@@ -1025,6 +1025,71 @@ class TransformContractTests(unittest.TestCase):
                     bundle.load_approved_mapping_contract(proof, contract_path)
                 write_approved_mapping_contract(contract_path, proof)
 
+    def test_committed_contract_accepts_the_approved_fail_closed_sentence(self) -> None:
+        """The approved public contract must pass before private inputs are read."""
+        bundle = load_bundle_module()
+        contract = ROOT / ".planning/phases/20-local-corpus-migration/20-MAPPING-CONTRACT.json"
+        proof = ROOT / ".planning/phases/20-local-corpus-migration/20-SOURCE-INVENTORY.json"
+        self.assertEqual("approved", bundle.load_approved_mapping_contract(proof, contract)["status"])
+
+    def test_snapshot_identity_uses_contained_manifest_sidecars(self) -> None:
+        bundle = load_bundle_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            (snapshot / "sidecars").mkdir()
+            write_json(snapshot / "sidecars" / "identity.json", {"palace_id": "synthetic-palace", "namespace": "solidstats"})
+            write_json(snapshot / "sidecars" / "config.json", {"collection_name": "synthetic-records"})
+            write_json(snapshot / "sidecars" / "embedder.json", {"synthetic-records": {"model_name": "synthetic", "dimension": 3}})
+            write_json(snapshot / "snapshot-manifest.json", {
+                "identity_sidecar": "sidecars/identity.json",
+                "config_sidecar": "sidecars/config.json",
+                "embedder_sidecar": "sidecars/embedder.json",
+            })
+            palace_id, namespace, collection, embedder = bundle._snapshot_identity(snapshot)
+            self.assertEqual(("synthetic-palace", "solidstats", "synthetic-records"), (palace_id, namespace, collection))
+            self.assertEqual("synthetic", embedder["model_name"])
+            (snapshot / "escape.json").write_text("{}", encoding="utf-8")
+            (snapshot / "sidecars" / "identity.json").unlink()
+            (snapshot / "sidecars" / "identity.json").symlink_to(snapshot / "escape.json")
+            with self.assertRaisesRegex(ValueError, "snapshot identity"):
+                bundle._snapshot_identity(snapshot)
+
+    def test_import_requires_operation_ack_schema_schema_and_target_id_digest(self) -> None:
+        bundle = load_bundle_module()
+        points = [
+            {"id": "point-a", "vector": [1.0, 0.0], "payload": {"mempalace_id": "source-a"}},
+            {"id": "point-b", "vector": [0.0, 1.0], "payload": {"mempalace_id": "source-b"}},
+        ]
+        expected_digest = bundle.point_id_set_sha256(points)
+        responses = iter([
+            {"status": "ok", "result": True},
+            {"status": "ok", "result": {"count": 0}},
+            {"status": "ok", "result": {"config": {"params": {"vectors": {"size": 2, "distance": "Cosine"}}}}},
+            {"status": "ok", "result": {"status": "completed", "operation_id": 1}},
+            {"status": "ok", "result": {"count": 2}},
+            {"status": "ok", "result": {"points": [{"id": "point-a"}, {"id": "point-b"}], "next_page_offset": None}},
+        ])
+        with mock.patch.object(bundle, "_qdrant_request", side_effect=lambda *_args, **_kwargs: next(responses)):
+            result = bundle.import_batches(
+                "http://127.0.0.1:6333", "synthetic", points, dimension=2,
+                batch_size=100, expected_point_id_digest=expected_digest,
+            )
+        self.assertEqual(1, result["batch_acknowledgements"])
+        self.assertEqual(expected_digest, result["target_point_id_set_sha256"])
+
+    def test_pinned_qdrant_image_must_match_the_manifest_digest(self) -> None:
+        bundle = load_bundle_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "qdrant.yaml"
+            image = "example.test/qdrant:v1@sha256:" + "a" * 64
+            manifest.write_text("image: " + image + "\n", encoding="utf-8")
+            self.assertEqual(image, bundle.load_pinned_qdrant_image(manifest))
+            manifest.write_text("image: example.test/qdrant:v1\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Qdrant image"):
+                bundle.load_pinned_qdrant_image(manifest)
+
     def test_vector_strategy_requires_all_six_reuse_predicates(self) -> None:
         bundle = load_bundle_module()
         source = {
