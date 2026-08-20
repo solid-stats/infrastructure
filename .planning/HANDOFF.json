@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "timestamp": "2026-08-20T18:52:00Z",
+  "timestamp": "2026-08-20T21:15:00Z",
   "phase": "21",
   "phase_name": "Restore, Cutover & Recovery",
   "phase_dir": ".planning/phases/21-restore-cutover-recovery",
@@ -25,9 +25,9 @@
   ],
   "blockers": [
     {
-      "description": "No accessible retained Phase 20 bundle matches the three public handoff digests.",
+      "description": "The required private SOLIDSTATS_MEMORY_OPERATOR executable is absent, so the single authorized live preflight cannot start.",
       "type": "precondition",
-      "workaround": "Restore or mount the digest-bound bundle, or restore the immutable snapshot and private source artifacts required to reconstruct and re-verify it."
+      "workaround": "Provide or implement the bounded private operator executable for the checked-in JSON adapter contract, then resume the exact run in this worktree."
     }
   ],
   "async_jobs": [],
@@ -60,6 +60,6 @@
     }
   ],
   "uncommitted_files": [],
-  "next_action": "Supply or mount the digest-bound Phase 20 bundle, provide working shell access, or explicitly authorize a minimal short-lived privileged recovery pod with only the relevant host directory mounted read-only; then resume Plan 21-02 Task 2 in the existing worktree.",
-  "context_notes": "The implementation head on worktree-agent-p21-02-wave1 is d27578a after Rule 1 fixes bf61d1a and d27578a; checkpoint state was persisted by c96d604. The full memory suite passes 112/112. Namespace solidstats-memory remains absent and no live mutation occurred. Required bundle members and public SHA-256 digests are: bundle-manifest.json=43f362c0a922d1b8b6dea9825c148891b072c238338657a45caf328a3f285449, id-map.jsonl=afb26d9fc2d2fc8b674ef0de1671f28c6d31d3fd59a7d13aa6650bdc06d6d64b, points.jsonl=6657d582492c430cab5b53a5c0626b20b7c2142b431dc059eb9f74cec5247e8c. Safe recovery checks exhausted the accessible filesystem, retained Docker bind data, current accessible SolidStats S3 objects, GitHub Actions artifacts/releases/cache, local unreachable Git blobs by exact SHA-256, attached external disks by exact filenames and digests, cluster PVC/PV/VolumeSnapshot inventory, and the VPS host filesystem through the existing read-only host-root mount. No retained source matched. The likely nightly backup is in a rootless-Docker owner-private volume that the existing unprivileged pod cannot traverse, and current SSH identities provide no shell. A short-lived privileged recovery pod mounting only the relevant host directory read-only would exceed the existing Plan 21-02 approval and was not created. The existing authorization boundaries remain unchanged; CronJob activation remains excluded and suspend must stay true."
+  "next_action": "Provide or implement the bounded private SOLIDSTATS_MEMORY_OPERATOR executable, then resume Plan 21-02 Task 2 in the existing worktree without starting a partial preflight.",
+  "context_notes": "The implementation head on worktree-agent-p21-02-wave1 is 672867a after live-readiness fixes bf61d1a, d27578a, d097272, and 672867a. The full memory suite passes 113/113. Durable artifact phase20-rebuild-20260821 is retained behind the stable locator /home/afgan0r/.local/share/solidstats-memory/phase20-rebuild-20260821/ARTIFACT-LOCATOR.json; all three file digests exactly match the Phase 20 public handoff and retention modes were verified. Namespace solidstats-memory remains absent and no live mutation occurred. The existing authorization boundaries remain unchanged; CronJob activation remains excluded and suspend must stay true."
 }
