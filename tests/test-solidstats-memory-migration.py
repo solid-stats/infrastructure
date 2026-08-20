@@ -537,7 +537,13 @@ class InventoryContractTests(unittest.TestCase):
                 evidence["fields"]["source_timestamp"]["formats"],
             )
             self.assertEqual(
-                {"canonical_repository_unsuffixed": 1, "suffix_marked": 1},
+                {
+                    "canonical_repository_unsuffixed": 0,
+                    "invalid_type": 0,
+                    "missing": 0,
+                    "other_string": 1,
+                    "suffix_marked": 1,
+                },
                 evidence["source_labels"]["wing"],
             )
             summary = (first_output / "source-inventory.json").read_text(encoding="utf-8")

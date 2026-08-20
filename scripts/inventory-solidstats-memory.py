@@ -24,6 +24,17 @@ SECRET_KEY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 UTC_TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
+SLUG_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+CANONICAL_REPOSITORY_WINGS = frozenset(
+    {
+        "infrastructure",
+        "replay-parser-2",
+        "replays-fetcher",
+        "server-2",
+        "web",
+    }
+)
 MAX_ATTESTATION_BYTES = 64 * 1024
 
 
@@ -175,6 +186,126 @@ def lossless_metadata(metadata: object, limits: InventoryLimits) -> dict[str, ob
     if len(encoded) > limits.max_metadata_bytes:
         raise ValueError("metadata exceeds byte limit")
     return metadata
+
+
+def _metadata_json_type(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    raise ValueError("metadata is not lossless")
+
+
+def _metadata_format(value: object) -> str:
+    if isinstance(value, str):
+        if UTC_TIMESTAMP_PATTERN.fullmatch(value):
+            return "utc_timestamp"
+        if DATE_PATTERN.fullmatch(value):
+            return "date"
+        return "other_string"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return "finite_number"
+    return "not_applicable"
+
+
+def _label_category(value: object, *, field: str) -> str:
+    if value is None:
+        return "missing"
+    if not isinstance(value, str):
+        return "invalid_type"
+    if field == "wing":
+        if value in CANONICAL_REPOSITORY_WINGS:
+            return "canonical_repository_unsuffixed"
+        if value.endswith("-archive"):
+            return "suffix_marked"
+        return "other_string"
+    if SLUG_PATTERN.fullmatch(value):
+        return "slug_string"
+    return "other_string"
+
+
+def _new_source_shape_evidence() -> dict[str, object]:
+    return {
+        "fields": {},
+        "source_labels": {
+            "room": dict.fromkeys(("slug_string", "other_string", "missing", "invalid_type"), 0),
+            "wing": dict.fromkeys(
+                (
+                    "canonical_repository_unsuffixed",
+                    "suffix_marked",
+                    "other_string",
+                    "missing",
+                    "invalid_type",
+                ),
+                0,
+            ),
+        },
+    }
+
+
+def _observe_source_shape(
+    evidence: dict[str, object], metadata: Mapping[str, object], limits: InventoryLimits
+) -> None:
+    fields = evidence["fields"]
+    labels = evidence["source_labels"]
+    if not isinstance(fields, dict) or not isinstance(labels, dict):
+        raise ValueError("invalid source shape evidence")
+    for name, value in metadata.items():
+        field = fields.get(name)
+        if field is None:
+            if len(fields) >= limits.max_metadata_bytes:
+                raise ValueError("metadata shape limit exceeded")
+            field = {"formats": {}, "present": 0, "types": {}}
+            fields[name] = field
+        if not isinstance(field, dict):
+            raise ValueError("invalid source shape evidence")
+        field["present"] = int(field["present"]) + 1
+        for key, category in (("types", _metadata_json_type(value)), ("formats", _metadata_format(value))):
+            counts = field[key]
+            if not isinstance(counts, dict):
+                raise ValueError("invalid source shape evidence")
+            counts[category] = int(counts.get(category, 0)) + 1
+    for name in ("wing", "room"):
+        counts = labels.get(name)
+        if not isinstance(counts, dict):
+            raise ValueError("invalid source shape evidence")
+        category = _label_category(metadata.get(name), field=name)
+        counts[category] = int(counts.get(category, 0)) + 1
+
+
+def _canonical_source_shape_evidence(evidence: dict[str, object]) -> dict[str, object]:
+    fields = evidence["fields"]
+    labels = evidence["source_labels"]
+    if not isinstance(fields, dict) or not isinstance(labels, dict):
+        raise ValueError("invalid source shape evidence")
+    return {
+        "fields": {
+            name: {
+                "formats": dict(sorted(field["formats"].items())),
+                "present": field["present"],
+                "types": dict(sorted(field["types"].items())),
+            }
+            for name, field in sorted(fields.items())
+            if isinstance(field, dict)
+            and isinstance(field.get("formats"), dict)
+            and isinstance(field.get("types"), dict)
+        },
+        "source_labels": {
+            name: dict(sorted(counts.items()))
+            for name, counts in sorted(labels.items())
+            if isinstance(counts, dict)
+        },
+    }
 
 
 def load_policy(path: Path) -> tuple[dict[str, object], InventoryLimits]:
@@ -608,6 +739,7 @@ def _build_source_inventory(
     )
     snapshot_root = _require_directory(snapshot_dir, label="snapshot")
     _assert_safe_tree(snapshot_root, label="snapshot")
+    snapshot_digest_start = _snapshot_digest(snapshot_root)
     freeze = _validate_freeze(snapshot_root, freeze_attestation)
     oracle_root, oracle = _validate_oracle(oracle_source_dir)
     snapshot_contract = _load_snapshot_contract(snapshot_root, limits)
@@ -665,6 +797,7 @@ def _build_source_inventory(
     seen_ids: set[str] = set()
     observed = 0
     records_digest = hashlib.sha256()
+    source_shape_evidence = _new_source_shape_evidence()
     vectors_digest = hashlib.sha256()
     done_seen = False
     with records_path.open("xb") as records_file, vectors_path.open("xb") as vectors_file:
@@ -693,6 +826,7 @@ def _build_source_inventory(
             }, limits)
             source["mempalace_id"] = source_id
             source["point_id"] = row["point_id"]
+            _observe_source_shape(source_shape_evidence, source["metadata"], limits)
             record_line = canonical_json_bytes(source) + b"\n"
             vector_line = canonical_json_bytes(vector) + b"\n"
             records_file.write(record_line)
@@ -710,6 +844,9 @@ def _build_source_inventory(
     records_checksum = records_digest.hexdigest()
     vectors_checksum = vectors_digest.hexdigest()
     fixtures_checksum = _write_private_json(destination, "recall-fixtures.json", fixtures)
+    snapshot_digest_end = _snapshot_digest(snapshot_root)
+    if snapshot_digest_start != snapshot_digest_end:
+        raise ValueError("snapshot digest changed")
     summary = {
         "collection_evidence_digest": sha256_bytes(canonical_json_bytes(collection)),
         "fixture_count": len(fixtures),
@@ -722,7 +859,8 @@ def _build_source_inventory(
         },
         "record_count": observed,
         "schema_version": 1,
-        "source_snapshot_checksum": _snapshot_digest(snapshot_root),
+        "source_shape_evidence": _canonical_source_shape_evidence(source_shape_evidence),
+        "source_snapshot_checksum": snapshot_digest_end,
         "synthetic_or_private_source_evidence": True,
     }
     _write_private_json(destination, "source-inventory.json", summary)
