@@ -431,6 +431,78 @@ class InventoryContractTests(unittest.TestCase):
             self.assertNotIn("synthetic alpha", summary)
             self.assertNotIn("synthetic-v1", summary)
 
+    def test_inventory_preserves_real_shaped_source_metadata_losslessly(self) -> None:
+        inventory = load_inventory_module()
+        records = [
+            (
+                "source-legacy-repository",
+                "synthetic legacy repository document",
+                {
+                    "content_date": "2026-08-19",
+                    "filed_at": "2026-08-20T00:00:00Z",
+                    "room": "legacy-intake",
+                    "source_mtime": 1724112000.0,
+                    "wing": "server-2",
+                },
+                [0.0, 1.0, 0.0],
+            ),
+            (
+                "source-agent-wing",
+                "synthetic agent document",
+                {
+                    "filed_at": "2026-08-20T00:00:01Z",
+                    "room": "agent-notes",
+                    "wing": "agent-scratch",
+                },
+                [1.0, 0.0, 0.0],
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot, oracle, output = self.write_snapshot(root)
+            self.oracle_python.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, uuid\n"
+                "collection={'name':'synthetic-records','namespace':'solidstats','palace_id':'synthetic-palace','target_name':'x','embedder':{'model_name':'synthetic-v1','dimension':3},'source_metric':'cosine'}\n"
+                "print(json.dumps({'type':'header','record_count':2,'collection':collection}))\n"
+                f"rows={records!r}\n"
+                "namespace=uuid.UUID('c06c3fc7-5c14-4dc4-84c2-24a5f72d8dc1')\n"
+                "for index,(source_id,document,metadata,embedding) in enumerate(rows, 1):\n"
+                " print(json.dumps({'type':'record','index':index,'id':source_id,'mempalace_id':source_id,'point_id':str(uuid.uuid5(namespace, source_id)),'document':document,'metadata':metadata,'embedding':embedding}))\n"
+                "print(json.dumps({'type':'done','record_count':2}))\n",
+                encoding="utf-8",
+            )
+            self.oracle_python.chmod(self.oracle_python.stat().st_mode | stat.S_IXUSR)
+            result = inventory.build_source_inventory(
+                snapshot_dir=snapshot,
+                freeze_attestation=snapshot / "freeze-attestation.json",
+                oracle_source_dir=oracle,
+                oracle_python=self.oracle_python,
+                output_dir=output,
+            )
+            emitted = [
+                json.loads(line)
+                for line in (output / "source-records.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(2, result["record_count"])
+            self.assertEqual([record[2] for record in records], [record["metadata"] for record in emitted])
+            self.assertEqual(
+                [
+                    inventory.canonical_json_bytes(record[2])
+                    for record in records
+                ],
+                [inventory.canonical_json_bytes(record["metadata"]) for record in emitted],
+            )
+            self.assertEqual(
+                [inventory.sha256_bytes(inventory.canonical_json_bytes(record[2])) for record in records],
+                [record["metadata_sha256"] for record in emitted],
+            )
+            for expected, actual in zip(records, emitted, strict=True):
+                self.assertEqual(set(expected[2]), set(actual["metadata"]))
+                self.assertNotIn("source_timestamp", actual["metadata"])
+                self.assertNotIn("archive_state", actual["metadata"])
+                self.assertNotIn("routing", actual["metadata"])
+
     def test_inventory_rejects_duplicate_ids_and_symlinked_input(self) -> None:
         inventory = load_inventory_module()
         with tempfile.TemporaryDirectory() as temporary:
