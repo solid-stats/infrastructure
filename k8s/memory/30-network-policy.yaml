@@ -63,6 +63,27 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  name: allow-mempalace-qdrant-egress
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mempalace
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
   name: allow-backup-to-qdrant
   namespace: solidstats-memory
   labels:
