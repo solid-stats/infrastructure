@@ -1440,6 +1440,24 @@ class ParityContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unbound"):
             parity.map_fixture_filters({"wing": "Agent"}, contract)
 
+    def test_approved_excluded_fixture_skips_target_but_archive_label_fails_closed(self) -> None:
+        parity = load_parity_module()
+        contract = {"source_wing_to_target_wing": {"canonical_repository_rules": {"web": "web-archive"}, "shared_source_rule": {"SolidStats": "SolidStats-archive"}, "excluded_source_rule": "Agent and other-wing records are excluded from target Qdrant import and retained without deletion in the immutable source snapshot and private evidence for separate audit."}}
+        proof = {"source_label_observation_counts": {"wing": {"other_string": 1, "suffix_marked": 0}}}
+        self.assertEqual("excluded", parity.classify_fixture({"filters": {"wing": "Agent"}}, contract, proof))
+        self.assertEqual("excluded", parity.classify_fixture({"filters": {"wing": "other-source"}}, contract, proof))
+        with self.assertRaisesRegex(ValueError, "unbound"):
+            parity.classify_fixture({"filters": {"wing": "web-archive"}}, contract, proof)
+
+    def test_exclusion_reconciliation_requires_exact_source_bundle_accounting(self) -> None:
+        parity = load_parity_module()
+        proof = {"counts": {"source_records": 5}}
+        private = {"record_count": 5}
+        bundle = {"point_count": 3, "excluded_count": 2}
+        self.assertEqual(2, parity.validate_exclusion_reconciliation(proof, private, bundle, {"point_count": 3}))
+        with self.assertRaisesRegex(ValueError, "reconciliation"):
+            parity.validate_exclusion_reconciliation(proof, private, {"point_count": 3, "excluded_count": 1}, {"point_count": 3})
+
     def test_real_parity_cli_requires_snapshot_and_exact_run_binding(self) -> None:
         source = PARITY_PATH.read_text(encoding="utf-8")
         self.assertIn('parser.add_argument(f"--{name}", required=True)', source)
