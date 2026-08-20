@@ -496,7 +496,7 @@ def derive_collection_with_oracle(oracle_python: Path, oracle_source_dir: Path, 
 oracle_root,palace_id,namespace,collection=sys.argv[1:]
 sys.path.insert(0, oracle_root)
 from mempalace.backends.qdrant import QdrantBackend, _QdrantConfig
-from mempalace.models import PalaceRef
+from mempalace.backends.base import PalaceRef
 config=_QdrantConfig(url='http://127.0.0.1:9', api_key=None, timeout=1.0, namespace=namespace)
 palace=PalaceRef(id=palace_id, local_path='/nonexistent', namespace=namespace)
 print(json.dumps({'derived_collection': QdrantBackend()._remote_collection_name(palace=palace, collection_name=collection, config=config)}))"""
