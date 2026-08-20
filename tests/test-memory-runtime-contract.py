@@ -391,6 +391,85 @@ class MemoryObserverContractTests(unittest.TestCase):
         }
         assert policy["spec"] == expected_spec
 
+    @staticmethod
+    def assert_mempalace_qdrant_egress(policy: dict[str, object]) -> None:
+        expected_spec = {
+            "podSelector": {
+                "matchLabels": {"app.kubernetes.io/name": "mempalace"},
+            },
+            "policyTypes": ["Egress"],
+            "egress": [{
+                "to": [{
+                    "podSelector": {
+                        "matchLabels": {"app.kubernetes.io/name": "qdrant"},
+                    },
+                }],
+                "ports": [{"protocol": "TCP", "port": 6333}],
+            }],
+        }
+        assert policy["spec"] == expected_spec
+
+    def test_mempalace_qdrant_policy_is_exact_and_reciprocal(self) -> None:
+        policies = self.memory_network_policies()
+        egress = policies.get("allow-mempalace-qdrant-egress")
+        if egress is None:
+            self.fail("MemPalace-to-Qdrant egress policy is absent")
+        self.assert_mempalace_qdrant_egress(egress)
+
+        qdrant_ingress = policies["allow-mempalace-to-qdrant"]["spec"]["ingress"]
+        expected_tuple = {
+            "from": [{
+                "podSelector": {
+                    "matchLabels": {"app.kubernetes.io/name": "mempalace"},
+                },
+            }],
+            "ports": [{"protocol": "TCP", "port": 6333}],
+        }
+        self.assertIn(expected_tuple, qdrant_ingress)
+
+    def test_mempalace_qdrant_policy_rejects_broad_or_drifting_shapes(self) -> None:
+        policy = {
+            "spec": {
+                "podSelector": {
+                    "matchLabels": {"app.kubernetes.io/name": "mempalace"},
+                },
+                "policyTypes": ["Egress"],
+                "egress": [{
+                    "to": [{
+                        "podSelector": {
+                            "matchLabels": {"app.kubernetes.io/name": "qdrant"},
+                        },
+                    }],
+                    "ports": [{"protocol": "TCP", "port": 6333}],
+                }],
+            },
+        }
+        mutations = (
+            lambda candidate: candidate["spec"].update({"podSelector": {}}),
+            lambda candidate: candidate["spec"]["egress"][0]["to"][0].update(
+                {"namespaceSelector": {}}
+            ),
+            lambda candidate: candidate["spec"]["egress"][0]["to"][0].update(
+                {"ipBlock": {"cidr": "10.0.0.0/8"}}
+            ),
+            lambda candidate: candidate["spec"]["egress"][0]["to"][0][
+                "podSelector"
+            ]["matchLabels"].update({"app.kubernetes.io/name": "other"}),
+            lambda candidate: candidate["spec"]["egress"][0]["ports"].append(
+                {"protocol": "TCP", "port": 9999}
+            ),
+            lambda candidate: candidate["spec"].update({"policyTypes": ["Ingress"]}),
+            lambda candidate: candidate["spec"]["egress"][0]["to"].append(
+                {"podSelector": {"matchLabels": {"app": "extra"}}}
+            ),
+        )
+        for mutate in mutations:
+            candidate = deepcopy(policy)
+            mutate(candidate)
+            with self.subTest(mutate=mutate):
+                with self.assertRaises(AssertionError):
+                    self.assert_mempalace_qdrant_egress(candidate)
+
     def test_observer_mempalace_policy_is_exact_and_reciprocal(self) -> None:
         policies = self.memory_network_policies()
         ingress = policies["allow-memory-observer-to-mempalace"]
