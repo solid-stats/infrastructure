@@ -4,16 +4,16 @@ milestone: v4.0
 milestone_name: SolidStats Memory Isolation
 current_phase: 20
 current_phase_name: Local Corpus Migration
-status: ready_to_execute
-stopped_at: Completed 20-09-PLAN.md; Plan 20-04 ready to execute
-last_updated: "2026-08-20T10:00:00+07:00"
+status: awaiting_checkpoint
+stopped_at: Completed 20-04-PLAN.md; Plan 20-08 blocking human mapping checkpoint next
+last_updated: "2026-08-20T10:15:00+07:00"
 last_activity: 2026-08-20
-last_activity_desc: Plan 20-09 complete; exact-image source inventory passed and Plan 20-04 ready
+last_activity_desc: Plan 20-04 complete; sanitized source inventory proof published
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 15
-  completed_plans: 11
+  completed_plans: 12
   percent: 25
 ---
 
@@ -31,9 +31,9 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 ## Current Position
 
 Phase: 20 — Local Corpus Migration
-Plan: 20-04 of 9 — real-source evidence publication
-Status: Ready to execute
-Last activity: 2026-08-20 — Plan 20-09 complete; main-owned exact-image inventory passed and Plan 20-04 is ready
+Plan: 20-08 of 9 — blocking human mapping checkpoint
+Status: Awaiting human mapping-contract decision
+Last activity: 2026-08-20 — Plan 20-04 complete; sanitized source evidence published
 
 **Plan 20-07 completion evidence:**
 
@@ -51,11 +51,19 @@ Last activity: 2026-08-20 — Plan 20-09 complete; main-owned exact-image invent
 - No corpus values, identifiers, metadata values, documents, vectors, paths, credentials, or secrets were copied into repository evidence.
 - Timestamp precedence/normalization, wing mapping, room/archive treatment, agent/other-wing disposition, and preservation representation remain unresolved. No mapping decision was selected; Plan 20-08 remains the later blocking human checkpoint.
 
+**Plan 20-04 completion and sanitized source evidence:**
+
+- The exact MemPalace v3.5.0 image inventoried the read-only immutable snapshot with networking disabled.
+- The source, unique-ID, and vector counts are each 19,555; four private outputs remain retained with directory mode `0700` and file mode `0600`.
+- Two independent post-inventory exact-image check-only runs passed, and private output plus snapshot-manifest hashes match `20-SOURCE-INVENTORY.json`.
+- The recursive privacy validator rejected a secret key, corpus fragment, metadata value, vector, query, and absolute path. The proof contains allowlisted aggregate data only.
+- No mapping contract was created or approved. Plan 20-08 is now the blocking human checkpoint; Plans 20-05 and 20-06 must not run first.
+
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 11/15 (this milestone)
+- Total plans completed: 12/15 (this milestone)
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -67,7 +75,7 @@ Last activity: 2026-08-20 — Plan 20-09 complete; main-owned exact-image invent
 | 08 | 3 | - | - |
 | 09 | 1 | - | - |
 | 19 | 6 | - | - |
-| 20 | 5 | - | - |
+| 20 | 6 | - | - |
 
 **Recent Trend:**
 
@@ -114,6 +122,7 @@ Last activity: 2026-08-20 — Plan 20-09 complete; main-owned exact-image invent
 | Phase 20 P03 | 1m       | 2 tasks | 1 files |
 | Phase 20 P07 | 0m       | 2 tasks | 2 files |
 | Phase 20 P09 | 0m       | 2 tasks | 2 files |
+| Phase 20 P04 | evidence | 2 tasks | 1 file  |
 
 ## Accumulated Context
 
@@ -265,11 +274,11 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-20T10:00:00+07:00
-Stopped at: Completed 20-09-PLAN.md; Plan 20-04 ready to execute
+Last session: 2026-08-20T10:15:00+07:00
+Stopped at: Completed 20-04-PLAN.md; Plan 20-08 blocking human mapping checkpoint next
 Resume file: None
 
 ## Operator Next Steps
 
-- Execute Plan 20-04 using the retained successful private inventory to publish sanitized real-source evidence.
-- Keep the authoritative dependency chain `20-03 -> 20-07 -> 20-09 -> 20-04 -> 20-08 -> 20-05 -> 20-06` and retain the blocking human checkpoint at Plan 20-08.
+- Stop at Plan 20-08 for the human mapping-contract checkpoint.
+- Keep the authoritative dependency chain `20-03 -> 20-07 -> 20-09 -> 20-04 -> 20-08 -> 20-05 -> 20-06`; do not execute Plans 20-05 or 20-06 before approval.
