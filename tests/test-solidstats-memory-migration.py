@@ -1333,6 +1333,10 @@ class ParityContractTests(unittest.TestCase):
             runtime.mkdir()
             retained = root / "retained"
             retained.mkdir()
+            report = root / "report.json"
+            handoff = root / "handoff.json"
+            report.write_text(json.dumps({"verdict": "pass", "qdrant_run_id": "run", "qdrant_image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.0-unprivileged@sha256:" + "a" * 64}), encoding="utf-8")
+            handoff.write_text(json.dumps({"parity_report_sha256": hashlib.sha256(report.read_bytes()).hexdigest()}), encoding="utf-8")
             with mock.patch.object(parity, "_qdrant_request") as target, mock.patch.object(parity.subprocess, "run") as docker:
                 with self.assertRaisesRegex(ValueError, "passing handoff"):
                     parity.cleanup_isolated_target(
@@ -1341,7 +1345,7 @@ class ParityContractTests(unittest.TestCase):
                     )
                 with self.assertRaisesRegex(ValueError, "retained"):
                     parity.cleanup_isolated_target(
-                        handoff={"verdict": "pass", "qdrant_run_id": "run"}, expected_run_id="run", collection="collection",
+                        report_path=report, handoff_path=handoff, expected_run_id="run", collection="collection",
                         container="container", data_dir=retained, private_root=root, retained_roots=[retained], qdrant_url="http://127.0.0.1:6333",
                     )
             target.assert_not_called()
@@ -1375,7 +1379,7 @@ class ParityContractTests(unittest.TestCase):
             handoff = root / "handoff.json"
             report_payload = parity.make_parity_report(
                 provenance={"source_inventory_sha256": "a" * 64, "mapping_contract_sha256": "b" * 64, "transform_manifest_sha256": "c" * 64},
-                transform={"bundle_sha256": "d" * 64, "oracle_version": "3.5.0", "oracle_revision": "v3.5.0", "qdrant_image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.0-unprivileged@sha256:" + "e" * 64, "qdrant_run_id": "run", "collection_derivation_sha256": "f" * 64, "vector_strategy": "reuse"},
+                transform={"bundle_sha256": "d" * 64, "oracle_version": "3.5.0", "oracle_revision": "v3.5.0", "qdrant_image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.0-unprivileged@sha256:" + "e" * 64, "qdrant_run_id": "a" * 32, "collection_derivation_sha256": "f" * 64, "vector_strategy": "reuse"},
                 results={"field_parity": {"compared": 1, "failures": 0}, "id_parity": {"compared": 1, "failures": 0}, "vector_parity": {"compared": 1, "failures": 0}, "recall_parity": {"compared": 1, "failures": 0}},
             )
             parity.write_parity_report(report, report_payload)
@@ -1399,6 +1403,15 @@ class ParityContractTests(unittest.TestCase):
         self.assertEqual({"wing": "web-archive", "room": "room"}, parity.map_fixture_filters({"wing": "web", "room": "room"}, contract))
         with self.assertRaisesRegex(ValueError, "unbound"):
             parity.map_fixture_filters({"wing": "Agent"}, contract)
+
+    def test_real_parity_cli_requires_snapshot_and_exact_run_binding(self) -> None:
+        source = PARITY_PATH.read_text(encoding="utf-8")
+        self.assertIn('parser.add_argument(f"--{name}", required=True)', source)
+        self.assertIn('"snapshot-dir"', source)
+        self.assertIn('labels.get("solidstats.qdrant-run-id") != expected_run', source)
+        self.assertIn("from mempalace.backends.chroma import ChromaCollection", source)
+        main_offset = source.index("def main")
+        self.assertLess(source.index("provenance = validate_provenance", main_offset), source.index("validate_container_attestation(args", main_offset))
 
 
 if __name__ == "__main__":
