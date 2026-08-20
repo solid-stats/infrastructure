@@ -46,7 +46,7 @@ key-decisions:
 patterns-established:
   - Every transition binds its canonical payload digest to the previous accepted stage.
   - Default-deny workload paths require an exact reciprocal ingress and egress contract.
-requirements-completed:
+requirements-progressed:
   - ISO-01
   - ISO-03
   - OPS-02
