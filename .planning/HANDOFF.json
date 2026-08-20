@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-08-20T09:45:30.734Z",
+  "phase": "21",
+  "phase_name": "Restore, Cutover & Recovery",
+  "phase_dir": ".planning",
+  "plan": 0,
+  "task": 0,
+  "total_tasks": 0,
+  "status": "paused",
+  "completed_tasks": [
+    {
+      "id": 20,
+      "name": "Complete and verify Local Corpus Migration",
+      "status": "done",
+      "commit": "e469b9b"
+    }
+  ],
+  "remaining_tasks": [
+    {
+      "id": 21,
+      "name": "Discuss, plan, and execute Restore, Cutover & Recovery",
+      "status": "not_started"
+    }
+  ],
+  "blockers": [],
+  "async_jobs": [],
+  "human_actions_pending": [],
+  "decisions": [
+    {
+      "decision": "Preserve lossless source data even when that retains duplicate representations and approved exclusions outside the target import.",
+      "rationale": "The approved mapping contract prioritizes preventing data loss over storage duplication.",
+      "phase": "20"
+    },
+    {
+      "decision": "Use strict cross-engine ANN equivalence instead of exact ordered top-k identity.",
+      "rationale": "Chroma and Qdrant build different HNSW graphs; exact field, ID, metadata, timestamp, and vector parity remains zero-tolerance while recall requires equal lengths, exact top-1, at least 80 percent overlap, preserved common-result order, and bounded common distances.",
+      "phase": "20"
+    },
+    {
+      "decision": "Remove the disposable local Qdrant target only after parity and handoff validation pass.",
+      "rationale": "Phase 21 must start from retained provenance-bound snapshot, source, bundle, report, and handoff artifacts rather than a leftover target runtime.",
+      "phase": "20"
+    }
+  ],
+  "uncommitted_files": [],
+  "next_action": "Run $gsd-resume-work, confirm STATE.md and ROADMAP.md still point to Phase 21, then run $gsd-discuss-phase 21.",
+  "context_notes": "Phase 20 is complete and verified. Phase 21 has no directory, context, or plans yet. The disposable Qdrant collection, container, and data directory were removed after a passing parity report. Retained private snapshot, source quartet, and bundle remain local and must be rediscovered through their provenance-bound public artifacts without printing or committing private paths or values. No background processes or async jobs remain."
+}
