@@ -7,6 +7,7 @@ import argparse
 from copy import deepcopy
 import fcntl
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -19,7 +20,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Protocol
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -52,6 +53,22 @@ RUN_STAGES = (
     "isolated-restore",
     "verify-restore",
 )
+OPERATOR_MARKERS = (
+    "backup_cidr",
+    "mempalace_image",
+    "mempalace_storage",
+    "private_collection",
+    "qdrant_storage",
+    "uploader_image",
+)
+OPERATOR_TARGETS = (
+    "k8s/memory/10-qdrant.yaml",
+    "k8s/memory/20-mempalace.yaml",
+    "k8s/memory/30-network-policy.yaml",
+    "k8s/memory/40-backup.yaml",
+)
+AGGREGATE_EVIDENCE_NAME = "21-BACKUP-RESTORE-EVIDENCE.json"
+AGGREGATE_EVIDENCE_SCHEMA = "solidstats-memory-backup-restore-evidence/v1"
 
 
 class RestoreControlError(ValueError):
@@ -60,6 +77,92 @@ class RestoreControlError(ValueError):
 
 class QdrantNotFound(RestoreControlError):
     """A target-specific Qdrant lookup returned HTTP 404."""
+
+
+class StageInputs:
+    """Exact public and private bindings for one restartable operator run."""
+
+    def __init__(
+        self,
+        *,
+        run_id: str,
+        handoff_path: Path,
+        parity_path: Path,
+        source_inventory_path: Path,
+        mapping_contract_path: Path,
+        transform_manifest_path: Path,
+        bundle_dir: Path,
+        private_run_root: Path,
+        evidence_dir: Path,
+        target_collection: str,
+        protected_collection: str,
+        probe_alias: str,
+        expected_vector_config: Mapping[str, object],
+        expected_count: int,
+    ) -> None:
+        self.run_id = run_id
+        self.handoff_path = Path(handoff_path)
+        self.parity_path = Path(parity_path)
+        self.source_inventory_path = Path(source_inventory_path)
+        self.mapping_contract_path = Path(mapping_contract_path)
+        self.transform_manifest_path = Path(transform_manifest_path)
+        self.bundle_dir = Path(bundle_dir)
+        self.private_run_root = Path(private_run_root)
+        self.evidence_dir = Path(evidence_dir)
+        self.target_collection = target_collection
+        self.protected_collection = protected_collection
+        self.probe_alias = probe_alias
+        self.expected_vector_config = dict(expected_vector_config)
+        self.expected_count = expected_count
+
+
+class StageAdapter(Protocol):
+    """Bounded live operations injected into the fail-closed stage machine."""
+
+    def inspect_preflight(
+        self, *, bindings: dict[str, str], expected_count: int
+    ) -> Mapping[str, object]: ...
+
+    def render_manifests(
+        self,
+        *,
+        operator_markers: dict[str, str],
+        target_set: tuple[str, ...],
+    ) -> object: ...
+
+    def validate_manifests(
+        self, rendered: object, *, mode: str
+    ) -> Mapping[str, object]: ...
+
+    def apply_manifests(self, rendered: object) -> Mapping[str, object]: ...
+
+    def load_backup_inputs(
+        self,
+    ) -> tuple[dict[str, object], dict[str, str]]: ...
+
+    def run_command(
+        self, command: tuple[str, ...], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]: ...
+
+    def apply_backup_job(self, job_path: Path) -> Mapping[str, object]: ...
+
+    def wait_backup_job(self) -> Mapping[str, object]: ...
+
+    def remote_package_inventory(self) -> list[str]: ...
+
+    def download_backup_package(self, package_dir: Path) -> None: ...
+
+    def qdrant_request(
+        self, method: str, path: str, body: object = None, **kwargs: object
+    ) -> object: ...
+
+    def run_phase20_parity(self) -> Mapping[str, object]: ...
+
+    def run_exact_image_probe(self) -> object: ...
+
+    def verify_prestate(
+        self, prestate: dict[str, str]
+    ) -> Mapping[str, object]: ...
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -487,6 +590,7 @@ def require_restore_capacity(
     return {
         "sufficient": True,
         "snapshot_bytes": snapshot,
+        "reserve_bytes": reserve,
         "required_bytes": required,
         "pvc_free_bytes": pvc,
         "node_free_bytes": node,
@@ -1359,6 +1463,764 @@ def validate_backup_job(
     return {"client_dry_run": True, "server_dry_run": True}
 
 
+def _stage_bindings(inputs: StageInputs) -> dict[str, str]:
+    """Recompute every public binding before opening retained private files."""
+    return recompute_phase20_bindings(
+        handoff_path=inputs.handoff_path,
+        parity_path=inputs.parity_path,
+        source_inventory_path=inputs.source_inventory_path,
+        mapping_contract_path=inputs.mapping_contract_path,
+        transform_manifest_path=inputs.transform_manifest_path,
+        bundle_dir=inputs.bundle_dir,
+    )
+
+
+def _validated_stage_inputs(inputs: StageInputs) -> StageInputs:
+    _require_run_id(inputs.run_id)
+    _require_name(inputs.target_collection, "restore target is invalid")
+    _require_name(inputs.protected_collection, "protected target is invalid")
+    _require_name(inputs.probe_alias, "probe alias is invalid")
+    _require_positive_int(inputs.expected_count, "expected count is invalid")
+    if (
+        inputs.target_collection == inputs.protected_collection
+        or not isinstance(inputs.expected_vector_config, Mapping)
+        or not inputs.expected_vector_config
+    ):
+        raise RestoreControlError("stage inputs are invalid")
+    return inputs
+
+
+def _require_exact_true_map(
+    value: object, keys: set[str], message: str
+) -> dict[str, bool]:
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != keys
+        or any(value.get(key) is not True for key in keys)
+    ):
+        raise RestoreControlError(message)
+    return {key: True for key in sorted(keys)}
+
+
+def _require_prestate(value: object) -> dict[str, str]:
+    keys = {
+        "active_alias_sha256",
+        "nginx_sha256",
+        "mcp_registration_sha256",
+        "legacy_runtime_sha256",
+        "schedule_sha256",
+    }
+    if not isinstance(value, Mapping) or set(value) != keys:
+        raise RestoreControlError("active pre-state proof is incomplete")
+    result: dict[str, str] = {}
+    for key in sorted(keys):
+        result[key] = _require_digest(
+            value.get(key), "active pre-state proof is incomplete"
+        )
+    return result
+
+
+def _require_quiescence(value: object) -> dict[str, object]:
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != {"stable", "writer_count"}
+        or value.get("stable") is not True
+        or value.get("writer_count") != 0
+    ):
+        raise RestoreControlError("write quiescence is not proven")
+    return {"stable": True, "writer_count": 0}
+
+
+def _require_operator_markers(value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping) or set(value) != set(OPERATOR_MARKERS):
+        raise RestoreControlError("measured operator markers are incomplete")
+    markers: dict[str, str] = {}
+    for key in OPERATOR_MARKERS:
+        marker = value.get(key)
+        if not isinstance(marker, str) or not marker or "\n" in marker or "\r" in marker:
+            raise RestoreControlError("measured operator markers are incomplete")
+        markers[key] = marker
+    return markers
+
+
+def _require_target_set(value: object) -> tuple[str, ...]:
+    if (
+        not isinstance(value, list)
+        or len(value) != len(OPERATOR_TARGETS)
+        or tuple(value) != OPERATOR_TARGETS
+    ):
+        raise RestoreControlError("operator manifest target set is invalid")
+    return OPERATOR_TARGETS
+
+
+def _private_stage_dir(inputs: StageInputs) -> Path:
+    root = Path(inputs.private_run_root)
+    try:
+        details = root.lstat()
+    except OSError as error:
+        raise RestoreControlError("private run root is missing or unsafe") from error
+    if (
+        stat.S_ISLNK(details.st_mode)
+        or not stat.S_ISDIR(details.st_mode)
+        or stat.S_IMODE(details.st_mode) & 0o077
+    ):
+        raise RestoreControlError("private run root is missing or unsafe")
+    run_dir = root / inputs.run_id
+    try:
+        run_dir.mkdir(mode=0o700, exist_ok=True)
+        run_details = run_dir.lstat()
+    except OSError as error:
+        raise RestoreControlError("private run directory is unavailable") from error
+    if (
+        stat.S_ISLNK(run_details.st_mode)
+        or not stat.S_ISDIR(run_details.st_mode)
+        or stat.S_IMODE(run_details.st_mode) & 0o077
+    ):
+        raise RestoreControlError("private run directory is unavailable")
+    return run_dir
+
+
+def _write_or_verify_private_json(path: Path, value: object) -> None:
+    expected = canonical_json_bytes(value) + b"\n"
+    if path.exists() or path.is_symlink():
+        _regular_file(path)
+        try:
+            current = path.read_bytes()
+        except OSError as error:
+            raise RestoreControlError("private control file could not be read") from error
+        if current != expected:
+            raise RestoreControlError("private control replay collision detected")
+        return
+    write_private_json(path, value)
+
+
+def _write_or_verify_evidence(path: Path, value: Mapping[str, object]) -> str:
+    expected = canonical_json_bytes(value) + b"\n"
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if path.exists() or path.is_symlink():
+        _regular_file(path)
+        try:
+            current = path.read_bytes()
+        except OSError as error:
+            raise RestoreControlError("aggregate evidence could not be read") from error
+        if current != expected:
+            raise RestoreControlError("aggregate evidence collision detected")
+        return hashlib.sha256(expected).hexdigest()
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(expected)
+            output.flush()
+            os.fsync(output.fileno())
+    except OSError as error:
+        raise RestoreControlError("aggregate evidence could not be written") from error
+    return hashlib.sha256(expected).hexdigest()
+
+
+def _validate_aggregate_evidence(value: Mapping[str, object]) -> None:
+    validator_path = ROOT / "scripts" / "validate-phase-21.py"
+    specification = importlib.util.spec_from_file_location(
+        "solidstats_phase21_validator", validator_path
+    )
+    if specification is None or specification.loader is None:
+        raise RestoreControlError("aggregate evidence validator is unavailable")
+    validator = importlib.util.module_from_spec(specification)
+    try:
+        specification.loader.exec_module(validator)
+        validator.validate_backup_restore_evidence(value)
+    except Exception as error:
+        raise RestoreControlError("aggregate evidence validation failed") from error
+
+
+def _load_stage_state(run_dir: Path, stage: str) -> dict[str, object]:
+    return _load_json(run_dir / f"{RUN_STAGES.index(stage):02d}-{stage}.json")
+
+
+def _save_stage_state(run_dir: Path, stage: str, state: Mapping[str, object]) -> str:
+    path = run_dir / f"{RUN_STAGES.index(stage):02d}-{stage}.json"
+    _write_or_verify_private_json(path, state)
+    return _digest(state)
+
+
+def _run_preflight(
+    inputs: StageInputs,
+    adapter: StageAdapter,
+    bindings: dict[str, str],
+) -> dict[str, object]:
+    observed = adapter.inspect_preflight(
+        bindings=bindings, expected_count=inputs.expected_count
+    )
+    if not isinstance(observed, Mapping) or set(observed) != {
+        "reachability",
+        "prestate",
+        "quiescence",
+        "capacity",
+        "operator_markers",
+        "target_set",
+    }:
+        raise RestoreControlError("preflight result is incomplete")
+    reachability = _require_exact_true_map(
+        observed.get("reachability"),
+        {"kubernetes", "qdrant", "s3"},
+        "required services are unreachable",
+    )
+    prestate = _require_prestate(observed.get("prestate"))
+    quiescence = _require_quiescence(observed.get("quiescence"))
+    capacity_source = observed.get("capacity")
+    if not isinstance(capacity_source, Mapping) or set(capacity_source) != {
+        "snapshot_bytes",
+        "pvc_free_bytes",
+        "node_free_bytes",
+        "reserve_bytes",
+    }:
+        raise RestoreControlError("measured restore capacity is incomplete")
+    capacity = require_restore_capacity(
+        snapshot_bytes=capacity_source["snapshot_bytes"],
+        pvc_free_bytes=capacity_source["pvc_free_bytes"],
+        node_free_bytes=capacity_source["node_free_bytes"],
+        reserve_bytes=capacity_source["reserve_bytes"],
+    )
+    markers = _require_operator_markers(observed.get("operator_markers"))
+    target_set = _require_target_set(observed.get("target_set"))
+    rendered = adapter.render_manifests(
+        operator_markers=markers, target_set=target_set
+    )
+    for mode in ("client", "server"):
+        result = adapter.validate_manifests(rendered, mode=mode)
+        if not isinstance(result, Mapping) or result.get("valid") is not True:
+            raise RestoreControlError("operator manifest dry-run failed")
+    current = _stage_bindings(inputs)
+    if current != bindings:
+        raise RestoreControlError("Phase 20 binding drift detected before mutation")
+    applied = adapter.apply_manifests(rendered)
+    if (
+        not isinstance(applied, Mapping)
+        or applied.get("applied") is not True
+        or applied.get("target_count") != len(OPERATOR_TARGETS)
+        or applied.get("marker_count") != len(OPERATOR_MARKERS)
+        or applied.get("recurring_schedule_changed") is not False
+    ):
+        raise RestoreControlError("operator manifest apply proof is invalid")
+    return {
+        "bindings": bindings,
+        "reachability": reachability,
+        "prestate": prestate,
+        "quiescence": quiescence,
+        "capacity": capacity,
+        "manifest_checks": {
+            "target_count": len(OPERATOR_TARGETS),
+            "marker_count": len(OPERATOR_MARKERS),
+            "client_dry_run": True,
+            "server_dry_run": True,
+            "applied": True,
+            "recurring_schedule_changed": False,
+        },
+    }
+
+
+def _run_backup(
+    inputs: StageInputs,
+    adapter: StageAdapter,
+    bindings: dict[str, str],
+    run_dir: Path,
+) -> dict[str, object]:
+    cronjob, private_environment = adapter.load_backup_inputs()
+    job = generate_backup_job(
+        cronjob,
+        run_id=inputs.run_id,
+        private_environment=private_environment,
+    )
+    job_path = run_dir / "backup-job.json"
+    _write_or_verify_private_json(job_path, job)
+    dry_run = validate_backup_job(job_path, runner=adapter.run_command)
+    current = _stage_bindings(inputs)
+    if current != bindings:
+        raise RestoreControlError("Phase 20 binding drift detected before mutation")
+    applied = adapter.apply_backup_job(job_path)
+    if (
+        not isinstance(applied, Mapping)
+        or not (
+            applied.get("created") is True
+            or applied.get("reused") is True
+        )
+        or applied.get("job_count") != 1
+    ):
+        raise RestoreControlError("one-shot backup Job proof is invalid")
+    completed = adapter.wait_backup_job()
+    if (
+        not isinstance(completed, Mapping)
+        or completed.get("complete") is not True
+        or completed.get("job_count") != 1
+    ):
+        raise RestoreControlError("one-shot backup Job did not complete")
+    inventory = adapter.remote_package_inventory()
+    if inventory != sorted(PACKAGE_MEMBERS):
+        raise RestoreControlError("remote backup package inventory is invalid")
+    package_dir = run_dir / "downloaded-package"
+    adapter.download_backup_package(package_dir)
+    package = verify_backup_package(
+        package_dir,
+        expected_run_id=inputs.run_id,
+        expected_phase20_bindings=bindings,
+    )
+    return {
+        "bindings": bindings,
+        "package_dir_sha256": hashlib.sha256(
+            str(package_dir).encode("utf-8")
+        ).hexdigest(),
+        "package_checks": {
+            **package,
+            "local_hashes_rechecked": True,
+            "job_count": 1,
+        },
+        "object_checks": {
+            "verified": True,
+            "inventory_exact": True,
+            "downloaded": True,
+            "hashes_rechecked": True,
+            "object_count": len(PACKAGE_MEMBERS),
+            "package_sha256": package["package_sha256"],
+        },
+        "job_checks": {**backup_job_evidence(job), **dry_run},
+    }
+
+
+def _run_isolated_restore(
+    inputs: StageInputs,
+    adapter: StageAdapter,
+    bindings: dict[str, str],
+    run_dir: Path,
+) -> dict[str, object]:
+    preflight = _load_stage_state(run_dir, "preflight")
+    backup = _load_stage_state(run_dir, "backup")
+    if preflight.get("bindings") != bindings or backup.get("bindings") != bindings:
+        raise RestoreControlError("restore stage binding collision detected")
+    package_dir = run_dir / "downloaded-package"
+    package = verify_backup_package(
+        package_dir,
+        expected_run_id=inputs.run_id,
+        expected_phase20_bindings=bindings,
+    )
+    stored_package = backup.get("package_checks")
+    if not isinstance(stored_package, Mapping) or any(
+        stored_package.get(key) != value for key, value in package.items()
+    ):
+        raise RestoreControlError("downloaded backup package changed")
+    absence = require_absent_target(
+        adapter.qdrant_request,
+        target_collection=inputs.target_collection,
+        protected_collection=inputs.protected_collection,
+    )
+    capacity = preflight.get("capacity")
+    if not isinstance(capacity, Mapping) or capacity.get("sufficient") is not True:
+        raise RestoreControlError("restore capacity proof is unavailable")
+    current = _stage_bindings(inputs)
+    if current != bindings:
+        raise RestoreControlError("Phase 20 binding drift detected before mutation")
+    recovery = recover_snapshot(
+        adapter.qdrant_request,
+        target_collection=inputs.target_collection,
+        snapshot_location=(package_dir / "qdrant.snapshot").resolve().as_uri(),
+        priority="snapshot",
+    )
+    return {
+        "bindings": bindings,
+        "target_absence": absence,
+        "recovery": recovery,
+    }
+
+
+def _normalize_rollback(value: object) -> dict[str, bool]:
+    source_keys = {
+        "active_state_unchanged",
+        "active_alias_unchanged",
+        "nginx_unchanged",
+        "mcp_registration_unchanged",
+        "legacy_runtime_unchanged",
+        "recurring_schedule_unchanged",
+    }
+    _require_exact_true_map(value, source_keys, "active pre-state changed")
+    return {
+        "active_state_unchanged": True,
+        "routing_unchanged": True,
+        "nginx_unchanged": True,
+        "registration_unchanged": True,
+        "legacy_runtime_unchanged": True,
+        "recurring_schedule_unchanged": True,
+    }
+
+
+def _run_verify_restore(
+    inputs: StageInputs,
+    adapter: StageAdapter,
+    bindings: dict[str, str],
+    run_dir: Path,
+) -> dict[str, object]:
+    preflight = _load_stage_state(run_dir, "preflight")
+    backup = _load_stage_state(run_dir, "backup")
+    restored = _load_stage_state(run_dir, "isolated-restore")
+    if any(
+        state.get("bindings") != bindings
+        for state in (preflight, backup, restored)
+    ):
+        raise RestoreControlError("verification stage binding collision detected")
+    package_dir = run_dir / "downloaded-package"
+    package = verify_backup_package(
+        package_dir,
+        expected_run_id=inputs.run_id,
+        expected_phase20_bindings=bindings,
+    )
+    parity_result: dict[str, object] = {}
+
+    def exact_parity() -> Mapping[str, object]:
+        nonlocal parity_result
+        observed = adapter.run_phase20_parity()
+        expected_fields = {
+            "verdict",
+            "record_count",
+            "field_exact",
+            "id_exact",
+            "metadata_exact",
+            "timestamp_exact",
+            "vector_exact",
+            "exclusion_exact",
+            "ann_exact",
+        }
+        if (
+            not isinstance(observed, Mapping)
+            or set(observed) != expected_fields
+            or observed.get("verdict") != "pass"
+            or observed.get("record_count") != inputs.expected_count
+            or any(
+                observed.get(key) is not True
+                for key in expected_fields - {"verdict", "record_count"}
+            )
+        ):
+            raise RestoreControlError("restored exact parity failed")
+        parity_result = dict(observed)
+        return observed
+
+    restore_checks = verify_restored_collection(
+        adapter.qdrant_request,
+        target_collection=inputs.target_collection,
+        expected_vector_config=inputs.expected_vector_config,
+        expected_count=inputs.expected_count,
+        parity_check=exact_parity,
+    )
+    current = _stage_bindings(inputs)
+    if current != bindings:
+        raise RestoreControlError("Phase 20 binding drift detected before mutation")
+    alias = probe_alias_compatibility(
+        adapter.qdrant_request,
+        restored_collection=inputs.target_collection,
+        probe_alias=inputs.probe_alias,
+        exact_image_probe=adapter.run_exact_image_probe,
+    )
+    rollback = _normalize_rollback(
+        adapter.verify_prestate(dict(preflight["prestate"]))
+    )
+    quiescence = dict(preflight["quiescence"])
+    reachability = preflight["reachability"]
+    if not isinstance(reachability, Mapping):
+        raise RestoreControlError("preflight reachability proof is unavailable")
+    quiescence.update(
+        {
+            "kubernetes_reachable": reachability.get("kubernetes") is True,
+            "qdrant_reachable": reachability.get("qdrant") is True,
+            "s3_reachable": reachability.get("s3") is True,
+        }
+    )
+    evidence = {
+        "schema": AGGREGATE_EVIDENCE_SCHEMA,
+        "run_id": inputs.run_id,
+        "phase20_bindings": bindings,
+        "quiescence": quiescence,
+        "capacity": preflight["capacity"],
+        "package_checks": backup["package_checks"],
+        "object_checks": backup["object_checks"],
+        "target_absence": restored["target_absence"],
+        "restore_checks": {
+            **restore_checks,
+            "snapshot_priority": restored.get("recovery", {}).get(
+                "snapshot_priority"
+            )
+            is True,
+        },
+        "parity_checks": {
+            "exact": parity_result.get("verdict") == "pass",
+            "record_count": parity_result.get("record_count"),
+            "field_exact": parity_result.get("field_exact"),
+            "id_exact": parity_result.get("id_exact"),
+            "metadata_exact": parity_result.get("metadata_exact"),
+            "timestamp_exact": parity_result.get("timestamp_exact"),
+            "vector_exact": parity_result.get("vector_exact"),
+            "exclusion_exact": parity_result.get("exclusion_exact"),
+            "ann_exact": parity_result.get("ann_exact"),
+        },
+        "alias_compatibility": {**alias, "exact_image": True},
+        "rollback_state": rollback,
+        "verdict": "pass",
+    }
+    if package.get("package_sha256") != evidence["package_checks"].get(
+        "package_sha256"
+    ):
+        raise RestoreControlError("downloaded backup package changed")
+    _validate_aggregate_evidence(evidence)
+    _write_or_verify_evidence(
+        Path(inputs.evidence_dir) / AGGREGATE_EVIDENCE_NAME, evidence
+    )
+    return {"bindings": bindings, "evidence": evidence}
+
+
+def execute_stage(
+    stage: str,
+    *,
+    inputs: StageInputs,
+    adapter: StageAdapter,
+    resume_run: bool,
+) -> dict[str, object]:
+    """Execute one exact stage, or replay its verified checkpoint without I/O."""
+    inputs = _validated_stage_inputs(inputs)
+    if stage not in RUN_STAGES:
+        raise RestoreControlError("run stage is invalid")
+    bindings = _stage_bindings(inputs)
+    run_dir = _private_stage_dir(inputs)
+    with acquire_run_lock(
+        inputs.evidence_dir,
+        run_id=inputs.run_id,
+        binding_sha256=bindings["binding_sha256"],
+        resume_run=resume_run,
+    ) as lock:
+        prior = str(lock.state["last_stage"])
+        prior_index = -1 if prior == "unstarted" else RUN_STAGES.index(prior)
+        stage_index = RUN_STAGES.index(stage)
+        if stage_index == prior_index:
+            state = _load_stage_state(run_dir, stage)
+            if _digest(state) != lock.state["last_evidence_sha256"]:
+                raise RestoreControlError("run checkpoint content changed")
+            return state
+        if stage_index != prior_index + 1:
+            raise RestoreControlError("run stage transition is invalid")
+        if stage == "preflight":
+            state = _run_preflight(inputs, adapter, bindings)
+        elif stage == "backup":
+            state = _run_backup(inputs, adapter, bindings, run_dir)
+        elif stage == "isolated-restore":
+            state = _run_isolated_restore(inputs, adapter, bindings, run_dir)
+        else:
+            state = _run_verify_restore(inputs, adapter, bindings, run_dir)
+        checkpoint = _save_stage_state(run_dir, stage, state)
+        checkpoint_run(lock, stage, checkpoint)
+        return state
+
+
+class JsonOperatorAdapter:
+    """Run explicit bounded operator operations through one private executable."""
+
+    def __init__(self, executable: Path, private_dir: Path) -> None:
+        executable = Path(executable)
+        if not executable.is_absolute():
+            raise RestoreControlError("operator executable must be absolute")
+        try:
+            details = executable.lstat()
+        except OSError as error:
+            raise RestoreControlError("operator executable is unavailable") from error
+        if (
+            stat.S_ISLNK(details.st_mode)
+            or not stat.S_ISREG(details.st_mode)
+            or not os.access(executable, os.X_OK)
+        ):
+            raise RestoreControlError("operator executable is unavailable")
+        self.executable = executable
+        self.private_dir = Path(private_dir)
+        self.private_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self.private_dir, 0o700)
+        self.sequence = 0
+
+    def _call(
+        self,
+        operation: str,
+        payload: Mapping[str, object],
+        *,
+        timeout: float,
+    ) -> object:
+        if not SAFE_NAME.fullmatch(operation) or timeout <= 0:
+            raise RestoreControlError("operator operation is invalid")
+        self.sequence += 1
+        stem = f"{self.sequence:03d}-{operation}"
+        request_path = self.private_dir / f"{stem}-request.json"
+        response_path = self.private_dir / f"{stem}-response.json"
+        write_private_json(request_path, payload)
+        command = (
+            str(self.executable),
+            operation,
+            str(request_path),
+            str(response_path),
+        )
+        try:
+            result = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise RestoreControlError("operator operation failed") from error
+        if result.returncode != 0:
+            raise RestoreControlError("operator operation failed")
+        response = _load_json(response_path)
+        if set(response) != {"ok", "result"} or response.get("ok") is not True:
+            raise RestoreControlError("operator response contract is invalid")
+        return response["result"]
+
+    @staticmethod
+    def _mapping(value: object) -> dict[str, object]:
+        if not isinstance(value, Mapping):
+            raise RestoreControlError("operator response contract is invalid")
+        return dict(value)
+
+    def inspect_preflight(
+        self, *, bindings: dict[str, str], expected_count: int
+    ) -> Mapping[str, object]:
+        return self._mapping(
+            self._call(
+                "inspect-preflight",
+                {"bindings": bindings, "expected_count": expected_count},
+                timeout=180,
+            )
+        )
+
+    def render_manifests(
+        self,
+        *,
+        operator_markers: dict[str, str],
+        target_set: tuple[str, ...],
+    ) -> object:
+        return self._call(
+            "render-manifests",
+            {"operator_markers": operator_markers, "target_set": list(target_set)},
+            timeout=60,
+        )
+
+    def validate_manifests(
+        self, rendered: object, *, mode: str
+    ) -> Mapping[str, object]:
+        if mode not in {"client", "server"}:
+            raise RestoreControlError("operator dry-run mode is invalid")
+        return self._mapping(
+            self._call(
+                "validate-manifests",
+                {"rendered": rendered, "mode": mode},
+                timeout=180,
+            )
+        )
+
+    def apply_manifests(self, rendered: object) -> Mapping[str, object]:
+        return self._mapping(
+            self._call(
+                "apply-manifests", {"rendered": rendered}, timeout=600
+            )
+        )
+
+    def load_backup_inputs(self) -> tuple[dict[str, object], dict[str, str]]:
+        value = self._call("load-backup-inputs", {}, timeout=60)
+        if (
+            not isinstance(value, Mapping)
+            or not isinstance(value.get("cronjob"), Mapping)
+            or not isinstance(value.get("private_environment"), Mapping)
+        ):
+            raise RestoreControlError("operator backup inputs are invalid")
+        environment = value["private_environment"]
+        if any(not isinstance(key, str) or not isinstance(item, str) for key, item in environment.items()):
+            raise RestoreControlError("operator backup inputs are invalid")
+        return dict(value["cronjob"]), dict(environment)
+
+    def run_command(
+        self, command: tuple[str, ...], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        allowed = (
+            ("kubectl", "apply", "--dry-run=client"),
+            ("kubectl", "apply", "--server-side", "--dry-run=server"),
+        )
+        if not any(command[: len(prefix)] == prefix for prefix in allowed):
+            raise RestoreControlError("external command is not allowlisted")
+        timeout = kwargs.get("timeout")
+        if not isinstance(timeout, (int, float)) or timeout <= 0:
+            raise RestoreControlError("external command timeout is invalid")
+        try:
+            return subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+                check=False,
+                text=True,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise RestoreControlError("external command failed") from error
+
+    def apply_backup_job(self, job_path: Path) -> Mapping[str, object]:
+        return self._mapping(
+            self._call(
+                "apply-backup-job", {"job_path": str(job_path)}, timeout=300
+            )
+        )
+
+    def wait_backup_job(self) -> Mapping[str, object]:
+        return self._mapping(self._call("wait-backup-job", {}, timeout=3600))
+
+    def remote_package_inventory(self) -> list[str]:
+        value = self._call("remote-package-inventory", {}, timeout=300)
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise RestoreControlError("remote backup package inventory is invalid")
+        return value
+
+    def download_backup_package(self, package_dir: Path) -> None:
+        result = self._mapping(
+            self._call(
+                "download-backup-package",
+                {"package_dir": str(package_dir)},
+                timeout=1800,
+            )
+        )
+        if result.get("downloaded") is not True:
+            raise RestoreControlError("backup package download failed")
+
+    def qdrant_request(
+        self, method: str, path: str, body: object = None, **_kwargs: object
+    ) -> object:
+        value = self._call(
+            "qdrant-request",
+            {"method": method, "path": path, "body": body},
+            timeout=60,
+        )
+        if isinstance(value, Mapping) and value.get("not_found") is True:
+            raise QdrantNotFound("Qdrant target is absent")
+        if not isinstance(value, Mapping) or set(value) != {"response"}:
+            raise RestoreControlError("Qdrant response contract is invalid")
+        return value["response"]
+
+    def run_phase20_parity(self) -> Mapping[str, object]:
+        return self._mapping(self._call("run-phase20-parity", {}, timeout=1800))
+
+    def run_exact_image_probe(self) -> object:
+        return self._call("run-exact-image-probe", {}, timeout=300)
+
+    def verify_prestate(
+        self, prestate: dict[str, str]
+    ) -> Mapping[str, object]:
+        return self._mapping(
+            self._call("verify-prestate", {"prestate": prestate}, timeout=300)
+        )
+
+
 def _command_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1374,8 +2236,59 @@ def _command_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Validate command inputs; live execution remains explicit and fail-closed."""
+def _required_environment(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RestoreControlError("live execution inputs are incomplete")
+    return value
+
+
+def _stage_inputs_from_environment(
+    *,
+    handoff_path: Path,
+    evidence_dir: Path,
+    run_id: str,
+    expected_count: int,
+) -> StageInputs:
+    phase20_dir = handoff_path.parent
+    try:
+        vector_config = json.loads(
+            _required_environment("SOLIDSTATS_MEMORY_VECTOR_CONFIG_JSON")
+        )
+    except json.JSONDecodeError as error:
+        raise RestoreControlError("live execution inputs are incomplete") from error
+    if not isinstance(vector_config, Mapping) or not vector_config:
+        raise RestoreControlError("live execution inputs are incomplete")
+    return StageInputs(
+        run_id=run_id,
+        handoff_path=handoff_path,
+        parity_path=phase20_dir / "20-PARITY-REPORT.json",
+        source_inventory_path=phase20_dir / "20-SOURCE-INVENTORY.json",
+        mapping_contract_path=phase20_dir / "20-MAPPING-CONTRACT.json",
+        transform_manifest_path=phase20_dir / "20-TRANSFORM-MANIFEST.json",
+        bundle_dir=Path(_required_environment("SOLIDSTATS_MEMORY_BUNDLE_DIR")),
+        private_run_root=Path(
+            _required_environment("SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT")
+        ),
+        evidence_dir=evidence_dir,
+        target_collection=_required_environment(
+            "SOLIDSTATS_MEMORY_TARGET_COLLECTION"
+        ),
+        protected_collection=_required_environment(
+            "SOLIDSTATS_MEMORY_PROTECTED_COLLECTION"
+        ),
+        probe_alias=_required_environment("SOLIDSTATS_MEMORY_PROBE_ALIAS"),
+        expected_vector_config=vector_config,
+        expected_count=expected_count,
+    )
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    adapter: StageAdapter | None = None,
+) -> int:
+    """Execute one bounded stage and emit only a value-free result line."""
     parser = _command_parser()
     args = parser.parse_args(argv)
     try:
@@ -1390,33 +2303,28 @@ def main(argv: list[str] | None = None) -> int:
         if args.check_only:
             print(f"PASS: {args.command} public contract validated")
             return 0
-        required_environment = {
-            "SOLIDSTATS_MEMORY_BUNDLE_DIR",
-            "SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT",
-        }
-        if run_id is None or any(not os.environ.get(name) for name in required_environment):
+        if run_id is None:
             raise RestoreControlError("live execution inputs are incomplete")
-        bundle_dir = Path(os.environ["SOLIDSTATS_MEMORY_BUNDLE_DIR"])
-        bindings = recompute_phase20_bindings(
+        inputs = _stage_inputs_from_environment(
             handoff_path=args.handoff,
-            bundle_dir=bundle_dir,
-        )
-        evidence_digest = _digest(
-            {
-                "command": args.command,
-                "handoff_sha256": sha256_file(args.handoff),
-                "binding_sha256": bindings["binding_sha256"],
-                "record_count": handoff["record_count"],
-            }
-        )
-        with acquire_run_lock(
-            args.evidence_dir,
+            evidence_dir=args.evidence_dir,
             run_id=run_id,
-            binding_sha256=bindings["binding_sha256"],
+            expected_count=_require_positive_int(
+                handoff.get("record_count"), "Phase 20 handoff count is invalid"
+            ),
+        )
+        if adapter is None:
+            adapter = JsonOperatorAdapter(
+                Path(_required_environment("SOLIDSTATS_MEMORY_OPERATOR")),
+                inputs.private_run_root / run_id / "operator",
+            )
+        execute_stage(
+            args.command,
+            inputs=inputs,
+            adapter=adapter,
             resume_run=args.resume_run,
-        ) as lock:
-            checkpoint_run(lock, args.command, evidence_digest)
-        print(f"PASS: {args.command} control gate validated")
+        )
+        print(f"PASS: {args.command} completed")
         return 0
     except (OSError, RestoreControlError) as error:
         print(f"FAIL: {error}", file=sys.stderr)

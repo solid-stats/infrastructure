@@ -63,6 +63,80 @@ BACKUP_RESTORE_FIELDS = {
     "rollback_state",
     "verdict",
 }
+BACKUP_RESTORE_SECTION_FIELDS = {
+    "quiescence": {
+        "stable",
+        "writer_count",
+        "kubernetes_reachable",
+        "qdrant_reachable",
+        "s3_reachable",
+    },
+    "capacity": {
+        "sufficient",
+        "snapshot_bytes",
+        "reserve_bytes",
+        "required_bytes",
+        "pvc_free_bytes",
+        "node_free_bytes",
+    },
+    "package_checks": {
+        "complete",
+        "member_count",
+        "package_sha256",
+        "snapshot_bytes",
+        "metadata_archive_bytes",
+        "local_hashes_rechecked",
+        "job_count",
+    },
+    "object_checks": {
+        "verified",
+        "inventory_exact",
+        "downloaded",
+        "hashes_rechecked",
+        "object_count",
+        "package_sha256",
+    },
+    "target_absence": {
+        "confirmed",
+        "collection_inventory_checked",
+        "alias_inventory_checked",
+        "target_lookup_checked",
+    },
+    "restore_checks": {
+        "green",
+        "configuration_match",
+        "count_match",
+        "parity_exact",
+        "record_count",
+        "snapshot_priority",
+    },
+    "parity_checks": {
+        "exact",
+        "record_count",
+        "field_exact",
+        "id_exact",
+        "metadata_exact",
+        "timestamp_exact",
+        "vector_exact",
+        "exclusion_exact",
+        "ann_exact",
+    },
+    "alias_compatibility": {
+        "probe_passed",
+        "prestate_sha256",
+        "poststate_sha256",
+        "restored",
+        "exact_image",
+    },
+    "rollback_state": {
+        "active_state_unchanged",
+        "routing_unchanged",
+        "nginx_unchanged",
+        "registration_unchanged",
+        "legacy_runtime_unchanged",
+        "recurring_schedule_unchanged",
+    },
+}
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 RUN_ID = re.compile(r"^[a-z0-9][a-z0-9-]{7,63}$")
 SAFE_KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -83,6 +157,13 @@ FORBIDDEN_KEY_PARTS = {
     "secret",
     "token",
     "vector",
+}
+AGGREGATE_SAFE_KEYS = {
+    "alias_inventory_checked",
+    "collection_inventory_checked",
+    "metadata_archive_bytes",
+    "metadata_exact",
+    "vector_exact",
 }
 
 
@@ -148,7 +229,8 @@ def _validate_value_free_node(
     if key and (
         not SAFE_KEY.fullmatch(key)
         or (
-            not _is_digest_key(key)
+            key not in AGGREGATE_SAFE_KEYS
+            and not _is_digest_key(key)
             and not (
                 allow_alias_compatibility
                 and depth == 1
@@ -328,21 +410,61 @@ def validate_backup_restore_evidence(payload: object) -> dict[str, object]:
         "verdict",
     }:
         section = payload.get(name)
-        if not isinstance(section, Mapping) or not section or not _checks_pass(section):
+        if (
+            not isinstance(section, Mapping)
+            or set(section) != BACKUP_RESTORE_SECTION_FIELDS[name]
+            or not _checks_pass(section)
+        ):
             raise Phase21ValidationError(
                 "backup and restore checks are not all passing"
             )
         sections[name] = section
     required_checks = {
-        "quiescence": ("stable",),
+        "quiescence": (
+            "stable",
+            "kubernetes_reachable",
+            "qdrant_reachable",
+            "s3_reachable",
+        ),
         "capacity": ("sufficient",),
-        "package_checks": ("complete",),
-        "object_checks": ("verified",),
-        "target_absence": ("confirmed",),
-        "restore_checks": ("green", "configuration_match", "count_match"),
-        "parity_checks": ("exact",),
-        "alias_compatibility": ("probe_passed", "restored"),
-        "rollback_state": ("active_state_unchanged",),
+        "package_checks": ("complete", "local_hashes_rechecked"),
+        "object_checks": (
+            "verified",
+            "inventory_exact",
+            "downloaded",
+            "hashes_rechecked",
+        ),
+        "target_absence": (
+            "confirmed",
+            "collection_inventory_checked",
+            "alias_inventory_checked",
+            "target_lookup_checked",
+        ),
+        "restore_checks": (
+            "green",
+            "configuration_match",
+            "count_match",
+            "snapshot_priority",
+        ),
+        "parity_checks": (
+            "exact",
+            "field_exact",
+            "id_exact",
+            "metadata_exact",
+            "timestamp_exact",
+            "vector_exact",
+            "exclusion_exact",
+            "ann_exact",
+        ),
+        "alias_compatibility": ("probe_passed", "restored", "exact_image"),
+        "rollback_state": (
+            "active_state_unchanged",
+            "routing_unchanged",
+            "nginx_unchanged",
+            "registration_unchanged",
+            "legacy_runtime_unchanged",
+            "recurring_schedule_unchanged",
+        ),
     }
     for section_name, keys in required_checks.items():
         for key in keys:
@@ -354,6 +476,26 @@ def validate_backup_restore_evidence(payload: object) -> dict[str, object]:
     alias = sections["alias_compatibility"]
     if alias.get("prestate_sha256") != alias.get("poststate_sha256"):
         raise Phase21ValidationError("alias prestate was not restored")
+    capacity = sections["capacity"]
+    if (
+        capacity.get("required_bytes")
+        != capacity.get("snapshot_bytes", 0) * 2 + capacity.get("reserve_bytes", 0)
+        or capacity.get("pvc_free_bytes", 0) < capacity.get("required_bytes", 0)
+        or capacity.get("node_free_bytes", 0) < capacity.get("required_bytes", 0)
+    ):
+        raise Phase21ValidationError("backup and restore capacity is invalid")
+    package = sections["package_checks"]
+    objects = sections["object_checks"]
+    restore = sections["restore_checks"]
+    parity = sections["parity_checks"]
+    if (
+        package.get("member_count") != 4
+        or package.get("job_count") != 1
+        or objects.get("object_count") != 4
+        or package.get("package_sha256") != objects.get("package_sha256")
+        or restore.get("record_count") != parity.get("record_count")
+    ):
+        raise Phase21ValidationError("backup and restore aggregate binding is invalid")
     if payload.get("verdict") != "pass":
         raise Phase21ValidationError("backup and restore verdict is not passing")
     return dict(payload)

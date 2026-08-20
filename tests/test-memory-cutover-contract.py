@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import redirect_stderr, redirect_stdout
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -14,6 +16,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -281,32 +284,78 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "schema": "solidstats-memory-backup-restore-evidence/v1",
             "run_id": self.run_id,
             "phase20_bindings": bindings,
-            "quiescence": {"stable": True, "tree_sha256": digest},
+            "quiescence": {
+                "stable": True,
+                "writer_count": 0,
+                "kubernetes_reachable": True,
+                "qdrant_reachable": True,
+                "s3_reachable": True,
+            },
             "capacity": {
                 "sufficient": True,
+                "snapshot_bytes": 10,
+                "reserve_bytes": 10,
                 "required_bytes": 30,
                 "pvc_free_bytes": 40,
                 "node_free_bytes": 50,
             },
             "package_checks": {
                 "complete": True,
+                "member_count": 4,
+                "package_sha256": digest,
+                "snapshot_bytes": 10,
+                "metadata_archive_bytes": 20,
+                "local_hashes_rechecked": True,
+                "job_count": 1,
+            },
+            "object_checks": {
+                "verified": True,
+                "inventory_exact": True,
+                "downloaded": True,
+                "hashes_rechecked": True,
+                "object_count": 4,
                 "package_sha256": digest,
             },
-            "object_checks": {"verified": True, "object_count": 4},
-            "target_absence": {"confirmed": True},
+            "target_absence": {
+                "confirmed": True,
+                "collection_inventory_checked": True,
+                "alias_inventory_checked": True,
+                "target_lookup_checked": True,
+            },
             "restore_checks": {
                 "green": True,
                 "configuration_match": True,
                 "count_match": True,
+                "parity_exact": True,
+                "record_count": 3,
+                "snapshot_priority": True,
             },
-            "parity_checks": {"exact": True, "record_count": 3},
+            "parity_checks": {
+                "exact": True,
+                "record_count": 3,
+                "field_exact": True,
+                "id_exact": True,
+                "metadata_exact": True,
+                "timestamp_exact": True,
+                "vector_exact": True,
+                "exclusion_exact": True,
+                "ann_exact": True,
+            },
             "alias_compatibility": {
                 "probe_passed": True,
                 "prestate_sha256": digest,
                 "poststate_sha256": digest,
                 "restored": True,
+                "exact_image": True,
             },
-            "rollback_state": {"active_state_unchanged": True},
+            "rollback_state": {
+                "active_state_unchanged": True,
+                "routing_unchanged": True,
+                "nginx_unchanged": True,
+                "registration_unchanged": True,
+                "legacy_runtime_unchanged": True,
+                "recurring_schedule_unchanged": True,
+            },
             "verdict": "pass",
         }
 
@@ -902,6 +951,418 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     invalid["restore_checks"]["green"] = False
                 with self.assertRaises(VALIDATOR.Phase21ValidationError):
                     VALIDATOR.validate_backup_restore_evidence(invalid)
+
+    def test_cli_stage_machine_executes_backup_restore_parity_and_rollback(self) -> None:
+        paths = self.make_phase20_fixture()
+        private_root = self.root / "private"
+        evidence_dir = self.root / "evidence"
+        private_root.mkdir(mode=0o700)
+        events: list[str] = []
+        aliases: dict[str, str] = {"active": "protected"}
+
+        class SyntheticOperator:
+            def inspect_preflight(
+                self, *, bindings: dict[str, str], expected_count: int
+            ) -> dict[str, object]:
+                events.append("inspect-preflight")
+                self.assert_binding(bindings)
+                self.assert_count(expected_count)
+                return {
+                    "reachability": {
+                        "kubernetes": True,
+                        "qdrant": True,
+                        "s3": True,
+                    },
+                    "prestate": {
+                        "active_alias_sha256": "1" * 64,
+                        "nginx_sha256": "2" * 64,
+                        "mcp_registration_sha256": "3" * 64,
+                        "legacy_runtime_sha256": "4" * 64,
+                        "schedule_sha256": "5" * 64,
+                    },
+                    "quiescence": {"stable": True, "writer_count": 0},
+                    "capacity": {
+                        "snapshot_bytes": 10,
+                        "pvc_free_bytes": 30,
+                        "node_free_bytes": 31,
+                        "reserve_bytes": 5,
+                    },
+                    "operator_markers": {
+                        "qdrant_storage": "measured-qdrant",
+                        "mempalace_storage": "measured-mempalace",
+                        "mempalace_image": "measured-mempalace-image",
+                        "backup_cidr": "measured-cidr",
+                        "uploader_image": "measured-uploader-image",
+                        "private_collection": "isolated",
+                    },
+                    "target_set": list(RESTORE.OPERATOR_TARGETS),
+                }
+
+            @staticmethod
+            def assert_binding(bindings: dict[str, str]) -> None:
+                if not bindings.get("binding_sha256"):
+                    raise AssertionError("missing binding")
+
+            @staticmethod
+            def assert_count(expected_count: int) -> None:
+                if expected_count != 3:
+                    raise AssertionError("wrong count")
+
+            def render_manifests(
+                self,
+                *,
+                operator_markers: dict[str, str],
+                target_set: tuple[str, ...],
+            ) -> object:
+                events.append("render-manifests")
+                self.assertEqual(
+                    set(RESTORE.OPERATOR_MARKERS), set(operator_markers)
+                )
+                self.assertEqual(RESTORE.OPERATOR_TARGETS, target_set)
+                return {"rendered": True}
+
+            def validate_manifests(
+                self, rendered: object, *, mode: str
+            ) -> dict[str, object]:
+                events.append(f"dry-run-{mode}")
+                self.assertEqual({"rendered": True}, rendered)
+                return {"valid": True}
+
+            def apply_manifests(self, rendered: object) -> dict[str, object]:
+                events.append("apply-manifests")
+                self.assertEqual({"rendered": True}, rendered)
+                return {
+                    "applied": True,
+                    "target_count": len(RESTORE.OPERATOR_TARGETS),
+                    "marker_count": len(RESTORE.OPERATOR_MARKERS),
+                    "recurring_schedule_changed": False,
+                }
+
+            def load_backup_inputs(self) -> tuple[dict[str, object], dict[str, str]]:
+                events.append("load-backup-inputs")
+                return (
+                    {
+                        "apiVersion": "batch/v1",
+                        "kind": "CronJob",
+                        "metadata": {"name": "backup", "namespace": "memory"},
+                        "spec": {
+                            "suspend": True,
+                            "jobTemplate": {
+                                "spec": {
+                                    "template": {
+                                        "spec": {
+                                            "restartPolicy": "Never",
+                                            "containers": [
+                                                {"name": "backup", "env": []}
+                                            ],
+                                        }
+                                    }
+                                }
+                            },
+                        },
+                    },
+                    {"PRIVATE_BINDING": "synthetic-value"},
+                )
+
+            def run_command(self, command: tuple[str, ...], **_kwargs: object) -> object:
+                events.append(
+                    "job-client-dry-run"
+                    if "--dry-run=client" in command
+                    else "job-server-dry-run"
+                )
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            def apply_backup_job(self, job_path: Path) -> dict[str, object]:
+                events.append("apply-backup-job")
+                self.assertTrue(job_path.is_file())
+                return {"created": True, "job_count": 1}
+
+            def wait_backup_job(self) -> dict[str, object]:
+                events.append("wait-backup-job")
+                return {"complete": True, "job_count": 1}
+
+            def remote_package_inventory(self) -> list[str]:
+                events.append("remote-inventory")
+                return sorted(RESTORE.PACKAGE_MEMBERS)
+
+            def download_backup_package(self, package_dir: Path) -> None:
+                events.append("download-package")
+                package_dir.mkdir(mode=0o700)
+                (package_dir / "qdrant.snapshot").write_bytes(b"snapshot")
+                (package_dir / "mempalace-metadata.tar").write_bytes(b"metadata")
+                RESTORE.create_backup_package(
+                    package_dir,
+                    run_id=self_run_id,
+                    phase20_bindings=current_bindings,
+                )
+
+            def qdrant_request(
+                self,
+                method: str,
+                path: str,
+                body: object = None,
+                **_kwargs: object,
+            ) -> object:
+                events.append(f"qdrant:{method}:{path}")
+                if path == "/collections":
+                    collections = ["protected"]
+                    if "recovered" in events:
+                        collections.append("isolated")
+                    return {
+                        "result": {
+                            "collections": [{"name": name} for name in collections]
+                        }
+                    }
+                if path == "/aliases":
+                    return {
+                        "result": {
+                            "aliases": [
+                                {
+                                    "alias_name": alias,
+                                    "collection_name": collection,
+                                }
+                                for alias, collection in aliases.items()
+                            ]
+                        }
+                    }
+                if path == "/collections/isolated" and method == "GET":
+                    if "recovered" not in events:
+                        raise RESTORE.QdrantNotFound("absent")
+                    return {
+                        "result": {
+                            "status": "green",
+                            "optimizer_status": "ok",
+                            "points_count": 3,
+                            "config": {
+                                "params": {
+                                    "vectors": {
+                                        "size": 3,
+                                        "distance": "Cosine",
+                                    }
+                                }
+                            },
+                        }
+                    }
+                if path.endswith("/snapshots/recover?wait=true"):
+                    events.append("recovered")
+                    return {"status": "ok", "result": True}
+                if path == "/collections/aliases":
+                    for action in body["actions"]:
+                        if "create_alias" in action:
+                            item = action["create_alias"]
+                            aliases[item["alias_name"]] = item["collection_name"]
+                        else:
+                            aliases.pop(action["delete_alias"]["alias_name"], None)
+                    return {"status": "ok"}
+                raise AssertionError((method, path))
+
+            def run_phase20_parity(self) -> dict[str, object]:
+                events.append("phase20-parity")
+                return {
+                    "verdict": "pass",
+                    "record_count": 3,
+                    "field_exact": True,
+                    "id_exact": True,
+                    "metadata_exact": True,
+                    "timestamp_exact": True,
+                    "vector_exact": True,
+                    "exclusion_exact": True,
+                    "ann_exact": True,
+                }
+
+            def run_exact_image_probe(self) -> bool:
+                events.append("exact-image-probe")
+                return aliases.get("probe") == "isolated"
+
+            def verify_prestate(
+                self, prestate: dict[str, str]
+            ) -> dict[str, object]:
+                events.append("verify-prestate")
+                self.assertEqual("1" * 64, prestate["active_alias_sha256"])
+                return {
+                    "active_state_unchanged": True,
+                    "active_alias_unchanged": True,
+                    "nginx_unchanged": True,
+                    "mcp_registration_unchanged": True,
+                    "legacy_runtime_unchanged": True,
+                    "recurring_schedule_unchanged": True,
+                }
+
+            assertEqual = self.assertEqual
+            assertTrue = self.assertTrue
+
+        self_run_id = self.run_id
+        current_bindings = RESTORE.recompute_phase20_bindings(
+            handoff_path=paths["handoff"],
+            parity_path=paths["parity"],
+            source_inventory_path=paths["source"],
+            mapping_contract_path=paths["mapping"],
+            transform_manifest_path=paths["transform"],
+            bundle_dir=paths["bundle"],
+        )
+        operator = SyntheticOperator()
+        live_environment = {
+            "SOLIDSTATS_MEMORY_BUNDLE_DIR": str(paths["bundle"]),
+            "SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT": str(private_root),
+            "SOLIDSTATS_MEMORY_TARGET_COLLECTION": "isolated",
+            "SOLIDSTATS_MEMORY_PROTECTED_COLLECTION": "protected",
+            "SOLIDSTATS_MEMORY_PROBE_ALIAS": "probe",
+            "SOLIDSTATS_MEMORY_VECTOR_CONFIG_JSON": json.dumps(
+                {"size": 3, "distance": "Cosine"}
+            ),
+        }
+        with mock.patch.dict(os.environ, live_environment, clear=False):
+            for index, stage in enumerate(RESTORE.RUN_STAGES):
+                arguments = [
+                    stage,
+                    "--handoff",
+                    str(paths["handoff"]),
+                    "--evidence-dir",
+                    str(evidence_dir),
+                    "--run-id",
+                    self.run_id,
+                ]
+                if index > 0:
+                    arguments.append("--resume-run")
+                output = io.StringIO()
+                errors = io.StringIO()
+                with redirect_stdout(output), redirect_stderr(errors):
+                    result = RESTORE.main(arguments, adapter=operator)
+                self.assertEqual(0, result, errors.getvalue())
+                self.assertEqual([f"PASS: {stage} completed"], output.getvalue().splitlines())
+                self.assertEqual([], errors.getvalue().splitlines())
+
+        evidence_path = evidence_dir / "21-BACKUP-RESTORE-EVIDENCE.json"
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        VALIDATOR.validate_backup_restore_evidence(evidence)
+        self.assertEqual({}, {key: value for key, value in aliases.items() if key == "probe"})
+        self.assertEqual("protected", aliases["active"])
+        self.assertEqual(
+            [
+                "inspect-preflight",
+                "render-manifests",
+                "dry-run-client",
+                "dry-run-server",
+                "apply-manifests",
+                "load-backup-inputs",
+                "job-client-dry-run",
+                "job-server-dry-run",
+                "apply-backup-job",
+                "wait-backup-job",
+                "remote-inventory",
+                "download-package",
+            ],
+            events[:12],
+        )
+        self.assertLess(events.index("phase20-parity"), events.index("exact-image-probe"))
+        self.assertLess(events.index("exact-image-probe"), events.index("verify-prestate"))
+
+        before = list(events)
+        with mock.patch.dict(os.environ, live_environment, clear=False):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                result = RESTORE.main(
+                    [
+                        "verify-restore",
+                        "--handoff",
+                        str(paths["handoff"]),
+                        "--evidence-dir",
+                        str(evidence_dir),
+                        "--run-id",
+                        self.run_id,
+                        "--resume-run",
+                    ],
+                    adapter=operator,
+                )
+        self.assertEqual(0, result)
+        self.assertEqual(before, events)
+
+    def test_cli_preflight_rechecks_provenance_before_manifest_apply(self) -> None:
+        paths = self.make_phase20_fixture()
+        private_root = self.root / "private-drift"
+        evidence_dir = self.root / "evidence-drift"
+        private_root.mkdir(mode=0o700)
+        applied: list[bool] = []
+
+        class DriftingOperator:
+            def inspect_preflight(self, **_kwargs: object) -> dict[str, object]:
+                return {
+                    "reachability": {
+                        "kubernetes": True,
+                        "qdrant": True,
+                        "s3": True,
+                    },
+                    "prestate": {
+                        "active_alias_sha256": "1" * 64,
+                        "nginx_sha256": "2" * 64,
+                        "mcp_registration_sha256": "3" * 64,
+                        "legacy_runtime_sha256": "4" * 64,
+                        "schedule_sha256": "5" * 64,
+                    },
+                    "quiescence": {"stable": True, "writer_count": 0},
+                    "capacity": {
+                        "snapshot_bytes": 10,
+                        "pvc_free_bytes": 30,
+                        "node_free_bytes": 31,
+                        "reserve_bytes": 5,
+                    },
+                    "operator_markers": {
+                        name: f"measured-{name}"
+                        for name in RESTORE.OPERATOR_MARKERS
+                    },
+                    "target_set": list(RESTORE.OPERATOR_TARGETS),
+                }
+
+            def render_manifests(self, **_kwargs: object) -> object:
+                paths["mapping"].write_bytes(b"{}\n")
+                return {"rendered": True}
+
+            @staticmethod
+            def validate_manifests(
+                _rendered: object, *, mode: str
+            ) -> dict[str, object]:
+                return {"valid": mode in {"client", "server"}}
+
+            @staticmethod
+            def apply_manifests(_rendered: object) -> dict[str, object]:
+                applied.append(True)
+                return {}
+
+        environment = {
+            "SOLIDSTATS_MEMORY_BUNDLE_DIR": str(paths["bundle"]),
+            "SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT": str(private_root),
+            "SOLIDSTATS_MEMORY_TARGET_COLLECTION": "isolated",
+            "SOLIDSTATS_MEMORY_PROTECTED_COLLECTION": "protected",
+            "SOLIDSTATS_MEMORY_PROBE_ALIAS": "probe",
+            "SOLIDSTATS_MEMORY_VECTOR_CONFIG_JSON": json.dumps(
+                {"size": 3, "distance": "Cosine"}
+            ),
+        }
+        output = io.StringIO()
+        errors = io.StringIO()
+        with (
+            mock.patch.dict(os.environ, environment, clear=False),
+            redirect_stdout(output),
+            redirect_stderr(errors),
+        ):
+            result = RESTORE.main(
+                [
+                    "preflight",
+                    "--handoff",
+                    str(paths["handoff"]),
+                    "--evidence-dir",
+                    str(evidence_dir),
+                    "--run-id",
+                    self.run_id,
+                ],
+                adapter=DriftingOperator(),
+            )
+
+        self.assertEqual(1, result)
+        self.assertEqual([], applied)
+        self.assertEqual([], output.getvalue().splitlines())
+        self.assertEqual(1, len(errors.getvalue().splitlines()))
+        self.assertNotIn("measured", errors.getvalue())
 
 
 if __name__ == "__main__":
