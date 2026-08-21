@@ -176,15 +176,21 @@ run_remote_batch() {
   fi
   local attempt max_attempts=3 retry_delay=0 call_timeout="${REMOTE_TIMEOUT}"
   local output_path="${STATE_DIR}/remote-${operation}.result"
-  if [[ "${operation}" == "verify-reboot-recovery" ]]; then
-    [[ "${1:-}" =~ ^[1-9][0-9]{0,3}$ ]] || {
-      echo "FATAL: reboot reconnect payload is invalid" >&2
-      return 1
-    }
-    max_attempts=$((($1 + 24) / 25))
-    retry_delay=5
-    call_timeout=20s
-  fi
+  case "${operation}" in
+    prove-backup-consistency)
+      max_attempts=1
+      call_timeout="${BACKUP_REMOTE_TIMEOUT_SECONDS}s"
+      ;;
+    verify-reboot-recovery)
+      [[ "${1:-}" =~ ^[1-9][0-9]{0,3}$ ]] || {
+        echo "FATAL: reboot reconnect payload is invalid" >&2
+        return 1
+      }
+      max_attempts=$((($1 + 24) / 25))
+      retry_delay=5
+      call_timeout=20s
+      ;;
+  esac
   for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
     if timeout "${call_timeout}" ssh \
       -F /dev/null \
@@ -1046,6 +1052,12 @@ main() {
   CURRENT_STAGE="PREPARED"
   PENDING_MUTATION="none"
   REMOTE_TIMEOUT="${SOLIDSTATS_MEMORY_REMOTE_TIMEOUT:-600s}"
+  BACKUP_REMOTE_TIMEOUT_SECONDS="${SOLIDSTATS_MEMORY_BACKUP_REMOTE_TIMEOUT_SECONDS:-3600}"
+  [[ "${BACKUP_REMOTE_TIMEOUT_SECONDS}" =~ ^[1-9][0-9]{0,3}$ &&
+    "${BACKUP_REMOTE_TIMEOUT_SECONDS}" -le 3600 ]] || {
+    echo "FATAL: backup remote timeout is invalid" >&2
+    return 64
+  }
   LOCAL_TIMEOUT="${SOLIDSTATS_MEMORY_LOCAL_TIMEOUT:-60s}"
   PROBE_TIMEOUT="${SOLIDSTATS_MEMORY_PROBE_TIMEOUT:-1800s}"
   SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

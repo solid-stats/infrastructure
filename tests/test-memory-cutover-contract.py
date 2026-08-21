@@ -3651,6 +3651,15 @@ class MemoryCutoverContractTests(unittest.TestCase):
         ):
             self.assertIn(required, cutover + remote)
         self.assertIn("backup_timeout_seconds", remote)
+        self.assertIn(
+            'BACKUP_REMOTE_TIMEOUT_SECONDS="${SOLIDSTATS_MEMORY_BACKUP_REMOTE_TIMEOUT_SECONDS:-3600}"',
+            cutover,
+        )
+        self.assertRegex(
+            cutover,
+            r"prove-backup-consistency\)\n\s+max_attempts=1\n"
+            r'\s+call_timeout="\$\{BACKUP_REMOTE_TIMEOUT_SECONDS\}s"',
+        )
         self.assertIn("inventory_before_sha256", remote)
         self.assertIn("inventory_after_sha256", remote)
         self.assertIn("behavior-oracle=pass", backup)
