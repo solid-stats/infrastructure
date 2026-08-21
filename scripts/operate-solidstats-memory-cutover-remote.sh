@@ -1403,6 +1403,12 @@ render_api_probe_pod() {
     printf '  serviceAccountName: %s\n' "${service_account}"
     printf '%s\n' \
       '  automountServiceAccountToken: false' \
+      '  securityContext:' \
+      '    runAsNonRoot: true' \
+      '    runAsUser: 1000' \
+      '    runAsGroup: 1000' \
+      '    seccompProfile:' \
+      '      type: RuntimeDefault' \
       '  containers:' \
       '    - name: probe'
     printf '      image: %s\n' "${image}"

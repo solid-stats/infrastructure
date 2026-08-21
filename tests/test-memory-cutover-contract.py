@@ -3513,6 +3513,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn('command: ["python3", "-c"]', operator)
         self.assertIn("urllib.request.urlopen(request,timeout=8", operator)
         self.assertNotIn("curl --config", operator)
+        self.assertIn("'    runAsNonRoot: true'", operator)
+        self.assertIn("'      type: RuntimeDefault'", operator)
         self.assertIn(
             "'        - ipBlock:'\n    printf '            cidr:",
             operator,
