@@ -447,6 +447,52 @@ class MemoryOperatorContractTests(unittest.TestCase):
         with self.assertRaisesRegex(OPERATOR.OperatorError, "alias action"):
             runtime.qdrant_request(invalid)
 
+    def test_exact_image_probe_accepts_stateless_streamable_http(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.mcp_token = self.root / "mcp-token"
+        runtime.mcp_token.write_text("synthetic-token", encoding="ascii")
+        runtime.mcp_token.chmod(0o600)
+        tunnel = mock.MagicMock()
+        tunnel.__enter__.return_value = 18765
+
+        def response(value: object) -> mock.MagicMock:
+            item = mock.MagicMock()
+            item.__enter__.return_value = item
+            item.headers = {}
+            item.read.return_value = json.dumps(value).encode()
+            return item
+
+        responses = [
+            response({"jsonrpc": "2.0", "id": 1, "result": {"capabilities": {}}}),
+            response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {"tools": [{"name": "list_drawers"}]},
+                }
+            ),
+            response(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "result": {"content": [], "isError": False},
+                }
+            ),
+        ]
+        with (
+            mock.patch.object(runtime, "_port_forward", return_value=tunnel),
+            mock.patch.object(
+                OPERATOR.urllib_request,
+                "urlopen",
+                side_effect=responses,
+            ) as urlopen,
+        ):
+            self.assertTrue(runtime.run_exact_image_probe({}))
+
+        self.assertEqual(3, urlopen.call_count)
+        for call in urlopen.call_args_list:
+            self.assertIsNone(call.args[0].get_header("Mcp-session-id"))
+
     def test_client_state_matches_only_exact_solidstats_registrations(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
         entries = [

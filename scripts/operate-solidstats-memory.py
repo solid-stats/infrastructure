@@ -1784,7 +1784,7 @@ class Runtime:
                     },
                 }
             )
-            if not session or not isinstance(initialized.get("result"), Mapping):
+            if not isinstance(initialized.get("result"), Mapping):
                 raise OperatorError("exact image alias probe failed")
             listed = call(
                 {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
