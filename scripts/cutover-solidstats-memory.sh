@@ -117,6 +117,36 @@ run_remote_batch() {
   fi
   required SOLIDSTATS_MEMORY_SSH_TARGET
   required SOLIDSTATS_MEMORY_REMOTE_OPERATOR
+  required SOLIDSTATS_MEMORY_SSH_IDENTITY_FILE
+  required SOLIDSTATS_MEMORY_SSH_KNOWN_HOSTS_FILE
+  [[ "${SOLIDSTATS_MEMORY_REMOTE_OPERATOR}" =~ ^/[A-Za-z0-9_./:@+-]+$ &&
+    "${SOLIDSTATS_MEMORY_REMOTE_OPERATOR}" != *".."* ]] || {
+    echo "FATAL: remote operator path is invalid" >&2
+    return 1
+  }
+  [[ "${SOLIDSTATS_MEMORY_SSH_TARGET}" =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9_.:-]+$ ]] || {
+    echo "FATAL: SSH target is invalid" >&2
+    return 1
+  }
+  local ssh_file ssh_mode
+  for ssh_file in "${SOLIDSTATS_MEMORY_SSH_IDENTITY_FILE}" "${SOLIDSTATS_MEMORY_SSH_KNOWN_HOSTS_FILE}"; do
+    [[ "${ssh_file}" =~ ^/[A-Za-z0-9_./:@+-]+$ && "${ssh_file}" != *".."* &&
+      -s "${ssh_file}" && -f "${ssh_file}" && ! -L "${ssh_file}" &&
+      "$(stat -c '%u' "${ssh_file}")" == "$(id -u)" ]] || {
+      echo "FATAL: SSH binding is unavailable or unsafe" >&2
+      return 1
+    }
+  done
+  ssh_mode=$(stat -c '%a' "${SOLIDSTATS_MEMORY_SSH_IDENTITY_FILE}")
+  [[ "${ssh_mode}" == "600" ]] || {
+    echo "FATAL: SSH identity mode is unsafe" >&2
+    return 1
+  }
+  ssh_mode=$(stat -c '%a' "${SOLIDSTATS_MEMORY_SSH_KNOWN_HOSTS_FILE}")
+  [[ "${ssh_mode}" =~ ^(600|640|644)$ ]] || {
+    echo "FATAL: SSH known-hosts mode is unsafe" >&2
+    return 1
+  }
   local input_path="/dev/null"
   if [[ "${operation}" == "install-nginx" ]]; then
     input_path="${1:-}"
@@ -129,6 +159,11 @@ run_remote_batch() {
   local attempt
   for attempt in 1 2 3; do
     if timeout "${REMOTE_TIMEOUT}" ssh \
+      -F /dev/null \
+      -i "${SOLIDSTATS_MEMORY_SSH_IDENTITY_FILE}" \
+      -o IdentitiesOnly=yes \
+      -o StrictHostKeyChecking=yes \
+      -o "UserKnownHostsFile=${SOLIDSTATS_MEMORY_SSH_KNOWN_HOSTS_FILE}" \
       -o BatchMode=yes \
       -o ConnectTimeout=10 \
       -o ServerAliveInterval=15 \
@@ -400,7 +435,7 @@ main() {
   SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   RESTORE_SCRIPT="${SCRIPT_DIR}/restore-solidstats-memory.py"
   PROBE_SCRIPT="${SCRIPT_DIR}/probe-solidstats-memory.py"
-  NGINX_TEMPLATE="${SCRIPT_DIR}/../config/nginx/sites-available/solidstats-memory-mcp.conf.template"
+  NGINX_TEMPLATE="${SCRIPT_DIR}/../config/nginx/sites-available/solidstats-memory-shared-cutover.patch.template"
 
   if [[ -e "${JOURNAL_PATH}" ]]; then
     [[ "${RESUME_RUN}" == "1" ]] || {

@@ -11,6 +11,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -1961,6 +1962,341 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "client nginx alias workload legacy",
             result.stdout,
         )
+
+    def test_remote_operator_executes_exact_shared_site_lifecycle(self) -> None:
+        remote = self.root / "remote-operator"
+        remote.mkdir(mode=0o700)
+        operator = remote / "operate-solidstats-memory-cutover-remote.sh"
+        renderer = remote / "render-solidstats-memory-shared-nginx.py"
+        shutil.copy2(ROOT / "scripts" / operator.name, operator)
+        shutil.copy2(ROOT / "scripts" / renderer.name, renderer)
+        operator.chmod(0o700)
+        renderer.chmod(0o700)
+
+        fixture = self.root / "fixture"
+        fixture.mkdir(mode=0o700)
+        legacy_state = fixture / "legacy.state"
+        freeze_state = fixture / "freeze.state"
+        new_state = fixture / "new.state"
+        events = fixture / "events"
+        legacy_state.write_text("running\n", encoding="ascii")
+        freeze_state.write_text("running\n", encoding="ascii")
+        new_state.write_text("stopped\n", encoding="ascii")
+
+        runuser_path = fixture / "runuser"
+        runuser_path.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -eu\n"
+            '[[ "$1" == -u && "$2" == palace && "$3" == -- ]] || exit 9\n'
+            'shift 3\nexec "$@"\n',
+            encoding="utf-8",
+        )
+        docker_path = fixture / "docker"
+        docker_path.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -eu\n"
+            f"legacy={legacy_state}\nfreeze={freeze_state}\nlog={events}\n"
+            '[[ "$1" == --host && "$2" == unix:///run/user/1001/docker.sock ]] || exit 9\n'
+            'shift 2\naction=$1\nshift\ncontainer=${@: -1}\n'
+            'case "$container" in solidstats-container) state="$legacy" ;; freeze-lock-container) state="$freeze" ;; *) exit 9 ;; esac\n'
+            'case "$action" in inspect) [[ "$(cat "$state")" == running ]] && echo true || echo false ;; start) printf "running\\n" >"$state"; printf "%s:start\\n" "$container" >>"$log" ;; stop) printf "stopped\\n" >"$state"; printf "%s:stop\\n" "$container" >>"$log" ;; *) exit 9 ;; esac\n',
+            encoding="utf-8",
+        )
+        kubectl_path = fixture / "kubectl"
+        kubectl_path.write_text(
+            "#!/usr/bin/env bash\nset -eu\n"
+            f"state={new_state}\nlog={events}\n"
+            '[[ " $* " == *" --context fixture-context "* && " $* " == *" -n solidstats-memory "* ]] || exit 9\n'
+            'if [[ " $* " == *" get deployment mempalace "* ]]; then replicas=$(cat "$state"); [[ "$replicas" == running ]] && replicas=1 || replicas=0; echo -n "$replicas"; '
+            'elif [[ " $* " == *" scale deployment/mempalace "* ]]; then [[ " $* " == *"--replicas=1"* ]] && printf "running\\n" >"$state" || printf "stopped\\n" >"$state"; printf "new:scale\\n" >>"$log"; '
+            'elif [[ " $* " == *" rollout status deployment/mempalace "* ]]; then [[ "$(cat "$state")" == running ]]; else exit 9; fi\n',
+            encoding="utf-8",
+        )
+        curl_path = fixture / "curl"
+        curl_path.write_text(
+            "#!/usr/bin/env bash\nset -eu\n"
+            f"[[ \"${{@: -1}}\" == http://10.23.45.67:8765/healthz && \"$(cat '{new_state}')\" == running ]]\n",
+            encoding="utf-8",
+        )
+        nginx_path = fixture / "nginx-binary"
+        nginx_path.write_text(
+            f"#!/usr/bin/env bash\nset -eu\n[[ \"$1\" == -t ]]\nprintf 'nginx:test\\n' >>'{events}'\n",
+            encoding="utf-8",
+        )
+        systemctl_path = fixture / "systemctl"
+        systemctl_path.write_text(
+            f"#!/usr/bin/env bash\nset -eu\n[[ \"$1\" == reload && \"$2\" == nginx.service ]]\nprintf 'nginx:reload\\n' >>'{events}'\n",
+            encoding="utf-8",
+        )
+        python_path = fixture / "python"
+        shutil.copy2(Path(sys.executable).resolve(), python_path)
+        for binary in (runuser_path, docker_path, kubectl_path, curl_path, nginx_path, systemctl_path):
+            binary.chmod(0o700)
+        python_path.chmod(0o700)
+
+        nginx_root = fixture / "nginx"
+        available_dir = nginx_root / "sites-available"
+        enabled_dir = nginx_root / "sites-enabled"
+        available_dir.mkdir(parents=True)
+        enabled_dir.mkdir()
+        available = available_dir / "shared-memory.conf"
+        enabled = enabled_dir / "shared-memory.conf"
+        original = (
+            b"server {\n"
+            b"    listen 8443 ssl;\n"
+            b"    ssl_certificate /private/certificate;\n"
+            b"    ssl_certificate_key /private/key;\n"
+            b"    location /personal/ {\n"
+            b"        proxy_pass http://127.0.0.1:8766;\n"
+            b"    }\n"
+            b"    location /solidstats/ {\n"
+            b"        proxy_pass http://127.0.0.1:8767/;\n"
+            b"    }\n"
+            b"}\n"
+        )
+        available.write_bytes(original)
+        available.chmod(0o640)
+        enabled.symlink_to(available)
+        state_root = fixture / "state"
+        config = Path(f"{operator}.config")
+        config.write_text(
+            "\n".join(
+                (
+                    "schema=solidstats-memory-remote-cutover-config/v1",
+                    f"state_root={state_root}",
+                    f"runuser_path={runuser_path}",
+                    f"docker_path={docker_path}",
+                    f"kubectl_path={kubectl_path}",
+                    f"curl_path={curl_path}",
+                    f"nginx_path={nginx_path}",
+                    f"systemctl_path={systemctl_path}",
+                    f"python_path={python_path}",
+                    "nginx_unit=nginx.service",
+                    "kube_context=fixture-context",
+                    "new_namespace=solidstats-memory",
+                    "new_deployment=mempalace",
+                    "new_expected_replicas=1",
+                    f"nginx_root={nginx_root}",
+                    f"nginx_available_path={available}",
+                    f"nginx_enabled_path={enabled}",
+                    "command_timeout_seconds=10",
+                    "legacy_user=palace",
+                    "legacy_socket=/run/user/1001/docker.sock",
+                    "legacy_container=solidstats-container",
+                    "freeze_lock_container=freeze-lock-container",
+                    "old_upstream=http://127.0.0.1:8767/",
+                    "new_upstream=http://10.23.45.67:8765/",
+                    "new_health_url=http://10.23.45.67:8765/healthz",
+                )
+            )
+            + "\n",
+            encoding="ascii",
+        )
+        config.chmod(0o600)
+        run_id = "a" * 64
+        template = (
+            ROOT
+            / "config/nginx/sites-available/solidstats-memory-shared-cutover.patch.template"
+        ).read_bytes()
+
+        def run(operation: str, *, stdin: bytes = b"") -> subprocess.CompletedProcess[bytes]:
+            return subprocess.run(
+                ["bash", str(operator), operation, run_id],
+                input=stdin,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+
+        self.assertEqual(0, run("capture-prestate").returncode)
+        self.assertEqual(0, run("capture-prestate").returncode)
+        self.assertEqual(0o700, state_root.stat().st_mode & 0o777)
+        run_root = state_root / run_id
+        self.assertEqual(0o700, run_root.stat().st_mode & 0o777)
+        self.assertTrue(all((path.stat().st_mode & 0o777) == 0o600 for path in run_root.iterdir()))
+        prestate = (run_root / "prestate").read_text(encoding="ascii")
+        self.assertIn("freeze_lock_state=running", prestate)
+
+        self.assertEqual(0, run("stop-legacy-start-new").returncode)
+        self.assertEqual("stopped", legacy_state.read_text().strip())
+        self.assertEqual("running", new_state.read_text().strip())
+        self.assertEqual("running", freeze_state.read_text().strip())
+        before_idempotent = events.read_bytes()
+        self.assertEqual(0, run("stop-legacy-start-new").returncode)
+        self.assertEqual(before_idempotent, events.read_bytes())
+
+        self.assertNotEqual(0, run("install-nginx").returncode)
+        self.assertEqual(original, available.read_bytes())
+        self.assertEqual(0, run("install-nginx", stdin=template).returncode)
+        installed = available.read_bytes()
+        self.assertIn(b"proxy_pass http://10.23.45.67:8765/;", installed)
+        self.assertIn(b"proxy_pass http://127.0.0.1:8766;", installed)
+        self.assertIn(b"ssl_certificate /private/certificate;", installed)
+        self.assertNotIn(b"proxy_pass http://127.0.0.1:8767/;", installed)
+        self.assertEqual(0o640, available.stat().st_mode & 0o777)
+        self.assertEqual(str(available), os.readlink(enabled))
+
+        self.assertEqual(0, run("rollback-nginx").returncode)
+        self.assertEqual(original, available.read_bytes())
+        self.assertEqual(0o640, available.stat().st_mode & 0o777)
+        self.assertEqual(str(available), os.readlink(enabled))
+        self.assertEqual(0, run("stop-new").returncode)
+        self.assertEqual(0, run("start-legacy").returncode)
+        self.assertEqual("running", legacy_state.read_text().strip())
+        self.assertEqual("stopped", new_state.read_text().strip())
+        self.assertEqual("running", freeze_state.read_text().strip())
+
+        race_run = "b" * 64
+        run_id = race_run
+        self.assertEqual(0, run("capture-prestate").returncode)
+        legacy_state.write_text("stopped\n", encoding="ascii")
+        raced = run("stop-legacy-start-new")
+        self.assertNotEqual(0, raced.returncode)
+        self.assertEqual("stopped", new_state.read_text().strip())
+        legacy_state.write_text("running\n", encoding="ascii")
+
+        nginx_race_run = "c" * 64
+        run_id = nginx_race_run
+        self.assertEqual(0, run("capture-prestate").returncode)
+        enabled.unlink()
+        enabled.symlink_to(available_dir / "other.conf")
+        nginx_race = run("install-nginx", stdin=template)
+        self.assertNotEqual(0, nginx_race.returncode)
+        self.assertEqual(original, available.read_bytes())
+
+        enabled.unlink()
+        enabled.symlink_to(available)
+        run_id = "d" * 64
+        self.assertEqual(0, run("capture-prestate").returncode)
+        original_config = config.read_text(encoding="ascii")
+        config.write_text(
+            original_config.replace(
+                "command_timeout_seconds=10", "command_timeout_seconds=11"
+            ),
+            encoding="ascii",
+        )
+        config.chmod(0o600)
+        self.assertNotEqual(0, run("stop-legacy-start-new").returncode)
+        config.write_text(original_config, encoding="ascii")
+        config.chmod(0o600)
+        remote.chmod(0o755)
+        run_id = "e" * 64
+        self.assertNotEqual(0, run("capture-prestate").returncode)
+        remote.chmod(0o700)
+
+    def test_remote_operator_rejects_unsafe_sibling_config(self) -> None:
+        remote = self.root / "unsafe-remote"
+        remote.mkdir(mode=0o700)
+        operator = remote / "operate-solidstats-memory-cutover-remote.sh"
+        renderer = remote / "render-solidstats-memory-shared-nginx.py"
+        shutil.copy2(ROOT / "scripts" / operator.name, operator)
+        shutil.copy2(ROOT / "scripts" / renderer.name, renderer)
+        operator.chmod(0o700)
+        renderer.chmod(0o700)
+        config = Path(f"{operator}.config")
+        config.write_text("schema=wrong\n", encoding="ascii")
+        config.chmod(0o640)
+        command = ["bash", str(operator), "capture-prestate", "d" * 64]
+        result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+        self.assertNotEqual(0, result.returncode)
+
+        template = (
+            ROOT / "config/solidstats-memory/remote-cutover-operator.config.template"
+        ).read_text(encoding="ascii")
+        keys = {line.split("=", 1)[0] for line in template.splitlines()}
+        self.assertEqual(
+            {
+                "schema",
+                "state_root",
+                "runuser_path",
+                "docker_path",
+                "kubectl_path",
+                "curl_path",
+                "nginx_path",
+                "systemctl_path",
+                "python_path",
+                "nginx_unit",
+                "kube_context",
+                "new_namespace",
+                "new_deployment",
+                "new_expected_replicas",
+                "nginx_root",
+                "nginx_available_path",
+                "nginx_enabled_path",
+                "command_timeout_seconds",
+                "legacy_user",
+                "legacy_socket",
+                "legacy_container",
+                "freeze_lock_container",
+                "old_upstream",
+                "new_upstream",
+                "new_health_url",
+            },
+            keys,
+        )
+        config.chmod(0o600)
+        result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+        self.assertNotEqual(0, result.returncode)
+        safe = remote / "safe-config"
+        safe.write_text("schema=wrong\n", encoding="ascii")
+        safe.chmod(0o600)
+        config.unlink()
+        config.symlink_to(safe)
+        result = subprocess.run(command, capture_output=True, timeout=10, check=False)
+        self.assertNotEqual(0, result.returncode)
+
+    def test_cutover_ssh_binding_has_no_ambient_fallback(self) -> None:
+        content = CUTOVER_PATH.read_text(encoding="utf-8")
+        for exact in (
+            "-F /dev/null",
+            '-i "${SOLIDSTATS_MEMORY_SSH_IDENTITY_FILE}"',
+            "-o IdentitiesOnly=yes",
+            "-o StrictHostKeyChecking=yes",
+            'UserKnownHostsFile=${SOLIDSTATS_MEMORY_SSH_KNOWN_HOSTS_FILE}',
+        ):
+            self.assertIn(exact, content)
+
+        identity = self.root / "identity"
+        known_hosts = self.root / "known-hosts"
+        identity.write_text("fixture\n", encoding="ascii")
+        known_hosts.write_text("fixture\n", encoding="ascii")
+        identity.chmod(0o640)
+        known_hosts.chmod(0o600)
+        private = self.root / "cutover-private"
+        private.mkdir(mode=0o700)
+        environment = {
+            **os.environ,
+            "SOLIDSTATS_MEMORY_RUN_ID": "phase21-ssh-fixture",
+            "SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT": str(private),
+            "SOLIDSTATS_MEMORY_SSH_TARGET": "root@example.invalid",
+            "SOLIDSTATS_MEMORY_REMOTE_OPERATOR": "/private/operator",
+            "SOLIDSTATS_MEMORY_SSH_IDENTITY_FILE": str(identity),
+            "SOLIDSTATS_MEMORY_SSH_KNOWN_HOSTS_FILE": str(known_hosts),
+        }
+        result = subprocess.run(
+            ["bash", str(CUTOVER_PATH), "preflight"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("SSH identity mode is unsafe", result.stderr)
+        identity.chmod(0o600)
+        identity_real = self.root / "identity-real"
+        identity.rename(identity_real)
+        identity.symlink_to(identity_real)
+        result = subprocess.run(
+            ["bash", str(CUTOVER_PATH), "preflight", "--resume-run"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("SSH binding is unavailable or unsafe", result.stderr)
 
 
 if __name__ == "__main__":
