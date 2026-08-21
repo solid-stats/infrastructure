@@ -80,8 +80,17 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
                 ],
                 [path.name for path in source_files],
             )
-            self.assertEqual([path.name for path in source_files], sorted(path.name for path in output_dir.glob("*.yaml")))
-            for source in source_files:
+            operator_source = ROOT / "k8s" / "memory" / "05-rbac.yaml"
+            rendered_sources = [
+                path for path in source_files if path != operator_source
+            ]
+            self.assertEqual(
+                [path.name for path in rendered_sources],
+                sorted(path.name for path in output_dir.glob("*.yaml")),
+            )
+            self.assertFalse((output_dir / operator_source.name).exists())
+            self.assertEqual(3, len(list(yaml.safe_load_all(operator_source.read_text()))))
+            for source in rendered_sources:
                 self.assertEqual(source.read_bytes(), (output_dir / source.name).read_bytes())
 
             overridden_dir = Path(directory) / "overridden"
@@ -92,7 +101,8 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
                 MEMORY_HOST_NGINX_SOURCE_CIDR="203.0.113.0/24",
             )
             self.assertEqual(overridden.returncode, 0, overridden.stderr)
-            for source in source_files:
+            self.assertFalse((overridden_dir / operator_source.name).exists())
+            for source in rendered_sources:
                 self.assertEqual((output_dir / source.name).read_bytes(), (overridden_dir / source.name).read_bytes())
 
     def test_backup_owns_endpoint_and_prefix_without_secret_refs(self) -> None:
