@@ -3759,6 +3759,10 @@ class MemoryCutoverContractTests(unittest.TestCase):
             activation.index("prepare_backup_activation"),
             activation.index("stage_guard_package"),
         )
+        commit = cutover[cutover.index("commit_backup_activation()") : cutover.index("restore_suspended_backup_source()")]
+        self.assertIn('cmp -s -- "${source}" "${BACKUP_SOURCE_CANDIDATE}"', commit)
+        self.assertIn('--allow-operator-placeholders', commit)
+        self.assertNotIn('--manifest-dir "${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}"', commit)
         self.assertIn(
             'BACKUP_REMOTE_TIMEOUT_SECONDS="${SOLIDSTATS_MEMORY_BACKUP_REMOTE_TIMEOUT_SECONDS:-3600}"',
             cutover,

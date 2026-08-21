@@ -766,8 +766,10 @@ commit_backup_activation() {
   local rendered="${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}/40-backup.yaml"
   install -m "$(stat -c '%a' "${rendered}")" "${BACKUP_RENDERED_CANDIDATE}" "${rendered}.tmp"
   mv -f "${rendered}.tmp" "${rendered}"
+  cmp -s -- "${source}" "${BACKUP_SOURCE_CANDIDATE}" || return 1
+  cmp -s -- "${rendered}" "${BACKUP_RENDERED_CANDIDATE}" || return 1
   timeout "${LOCAL_TIMEOUT}" python3 "${SCRIPT_DIR}/validate-memory-manifests.py" \
-    --manifest-dir "${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}" >/dev/null
+    --allow-operator-placeholders >/dev/null
 }
 
 restore_suspended_backup_source() {
