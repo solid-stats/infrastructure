@@ -127,6 +127,7 @@ class MemorySecretRendererContractTests(unittest.TestCase):
     values = {
         "MEMORY_QDRANT_API_KEY": "synthetic-qdrant-key",
         "MEMORY_QDRANT_COLLECTION": "synthetic-own-collection",
+        "MEMORY_QDRANT_LOGICAL_ALIAS": "synthetic-logical-alias",
         "MEMORY_MCP_HTTP_TOKEN": "synthetic-mcp-token",
         "S3_BUCKET": "synthetic-bucket",
         "S3_ACCESS_KEY_ID": "synthetic-access-key",
@@ -189,19 +190,45 @@ class MemorySecretRendererContractTests(unittest.TestCase):
             )
             for document in documents[1:]
         }
-        own = [
-            {"collection": self.values["MEMORY_QDRANT_COLLECTION"], "access": "rw"}
-        ]
-        self.assertEqual(claims["mempalace-runtime"]["access"], own)
-        self.assertEqual(claims["memory-backup-runtime"]["access"], own)
         self.assertEqual(
-            claims["memory-observer-runtime"]["access"],
-            [
-                {
-                    "collection": self.values["MEMORY_QDRANT_COLLECTION"],
-                    "access": "r",
-                }
-            ],
+            claims["mempalace-runtime"],
+            {
+                "sub": "solidstats-memory-mempalace",
+                "access": [
+                    {
+                        "collection": self.values["MEMORY_QDRANT_LOGICAL_ALIAS"],
+                        "access": "rw",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            claims["memory-backup-runtime"],
+            {
+                "sub": "solidstats-memory-backup",
+                "access": [
+                    {
+                        "collection": self.values["MEMORY_QDRANT_COLLECTION"],
+                        "access": "rw",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            claims["memory-observer-runtime"],
+            {
+                "sub": "solidstats-memory-observer",
+                "access": [
+                    {
+                        "collection": self.values["MEMORY_QDRANT_COLLECTION"],
+                        "access": "r",
+                    }
+                ],
+            },
+        )
+        self.assertNotEqual(
+            self.values["MEMORY_QDRANT_COLLECTION"],
+            self.values["MEMORY_QDRANT_LOGICAL_ALIAS"],
         )
         self.assertNotIn("synthetic-foreign-collection", json.dumps(claims))
 

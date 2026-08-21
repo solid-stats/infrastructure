@@ -577,7 +577,12 @@ class MemoryOperatorContractTests(unittest.TestCase):
         runtime.mcp_token = self.root / "mcp"
         runtime.qdrant_key.write_text("synthetic-admin-key", encoding="ascii")
         runtime.mcp_token.write_text("synthetic-mcp-token", encoding="ascii")
-        runtime.config = {"private_collection": "synthetic-own-collection"}
+        runtime.config = {
+            "private_collection": "synthetic-protected-collection",
+            "protected_collection": "synthetic-protected-collection",
+            "target_collection": "synthetic-target-collection",
+            "probe_alias": "synthetic-logical-alias",
+        }
         applied = []
 
         def kubectl(_arguments, **kwargs):
@@ -613,13 +618,48 @@ class MemoryOperatorContractTests(unittest.TestCase):
                 hashlib.sha256,
             ).digest()
             self.assertTrue(hmac.compare_digest(actual, expected))
-        mempalace_payload = by_name["mempalace-runtime"]["MEMPALACE_QDRANT_API_KEY"].split(".")[1]
-        claims = json.loads(base64.urlsafe_b64decode(mempalace_payload + "=" * (-len(mempalace_payload) % 4)))
+        role_tokens = {
+            "mempalace": by_name["mempalace-runtime"]["MEMPALACE_QDRANT_API_KEY"],
+            "backup": by_name["memory-backup-runtime"]["QDRANT_API_KEY"],
+            "observer": by_name["memory-observer-runtime"]["QDRANT_API_KEY"],
+        }
+        self.assertEqual(len(set(role_tokens.values())), 3)
+        claims = {}
+        for role, token in role_tokens.items():
+            payload = token.split(".")[1]
+            claims[role] = json.loads(
+                base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+            )
         self.assertEqual(
-            claims["access"],
-            [{"collection": "synthetic-own-collection", "access": "rw"}],
+            claims,
+            {
+                "mempalace": {
+                    "sub": "solidstats-memory-mempalace",
+                    "access": [
+                        {"collection": "synthetic-logical-alias", "access": "rw"}
+                    ],
+                },
+                "backup": {
+                    "sub": "solidstats-memory-backup",
+                    "access": [
+                        {
+                            "collection": "synthetic-protected-collection",
+                            "access": "rw",
+                        }
+                    ],
+                },
+                "observer": {
+                    "sub": "solidstats-memory-observer",
+                    "access": [
+                        {
+                            "collection": "synthetic-protected-collection",
+                            "access": "r",
+                        }
+                    ],
+                },
+            },
         )
-        self.assertNotIn("synthetic-foreign-collection", json.dumps(claims))
+        self.assertNotIn("synthetic-target-collection", json.dumps(claims))
 
     def test_capacity_uses_retained_snapshot_and_live_node_not_bundle_total(self) -> None:
         bundle = self.root / "bundle"
