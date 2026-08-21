@@ -34,6 +34,9 @@ assert RESTORE_SPEC and RESTORE_SPEC.loader
 RESTORE = importlib.util.module_from_spec(RESTORE_SPEC)
 RESTORE_SPEC.loader.exec_module(RESTORE)
 
+PROBE_PATH = ROOT / "scripts" / "probe-solidstats-memory.py"
+CUTOVER_PATH = ROOT / "scripts" / "cutover-solidstats-memory.sh"
+
 STAGES = (
     "PREPARED",
     "STAGED",
@@ -1508,6 +1511,332 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual([], output.getvalue().splitlines())
         self.assertEqual(1, len(errors.getvalue().splitlines()))
         self.assertNotIn("measured", errors.getvalue())
+
+    @staticmethod
+    def load_probe() -> object:
+        specification = importlib.util.spec_from_file_location(
+            "solidstats_memory_probe", PROBE_PATH
+        )
+        assert specification and specification.loader
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        return module
+
+    def test_alias_cutover_refuses_race_before_mutation(self) -> None:
+        aliases = {"active": "concurrent"}
+        mutations: list[object] = []
+
+        def request(method: str, path: str, body: object = None) -> object:
+            if method == "GET" and path == "/aliases":
+                return {
+                    "result": {
+                        "aliases": [
+                            {
+                                "alias_name": alias,
+                                "collection_name": collection,
+                            }
+                            for alias, collection in aliases.items()
+                        ]
+                    }
+                }
+            mutations.append(body)
+            return {"status": "ok"}
+
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "concurrent"):
+            RESTORE.compare_and_switch_alias(
+                request,
+                alias_name="active",
+                target_collection="restored",
+                recorded_prestate={"active": "protected"},
+            )
+
+        self.assertEqual([], mutations)
+        self.assertEqual({"active": "concurrent"}, aliases)
+
+    def test_alias_cutover_and_rollback_restore_exact_prestate(self) -> None:
+        aliases = {"active": "protected", "other": "untouched"}
+        action_batches: list[list[dict[str, object]]] = []
+
+        def request(method: str, path: str, body: object = None) -> object:
+            if method == "GET" and path == "/aliases":
+                return {
+                    "result": {
+                        "aliases": [
+                            {
+                                "alias_name": alias,
+                                "collection_name": collection,
+                            }
+                            for alias, collection in aliases.items()
+                        ]
+                    }
+                }
+            self.assertEqual(("POST", "/collections/aliases"), (method, path))
+            actions = body["actions"]
+            action_batches.append(actions)
+            for action in actions:
+                if "delete_alias" in action:
+                    aliases.pop(action["delete_alias"]["alias_name"], None)
+                if "create_alias" in action:
+                    item = action["create_alias"]
+                    aliases[item["alias_name"]] = item["collection_name"]
+            return {"status": "ok"}
+
+        switched = RESTORE.compare_and_switch_alias(
+            request,
+            alias_name="active",
+            target_collection="restored",
+            recorded_prestate={"active": "protected", "other": "untouched"},
+        )
+        self.assertTrue(switched["read_back_verified"])
+        self.assertEqual("restored", aliases["active"])
+        self.assertEqual(2, len(action_batches[0]))
+
+        rolled_back = RESTORE.restore_alias_prestate(
+            request,
+            alias_name="active",
+            prestate={"active": "protected", "other": "untouched"},
+        )
+        self.assertTrue(rolled_back["restored"])
+        self.assertEqual(
+            {"active": "protected", "other": "untouched"}, aliases
+        )
+
+    def test_probe_fixture_covers_auth_session_schema_and_behavior(self) -> None:
+        probe = self.load_probe()
+        calls: list[tuple[str, str | None, str]] = []
+        synthetic_content = (
+            "Task: phase21-cutover-uat\n"
+            "Outcome: synthetic probe conclusion\n"
+            "Decisions: disposable exact-id fixture\n"
+            "Validation: read-back then exact cleanup\n"
+            "Sources: phase21-cutover-uat"
+        )
+
+        tool_schemas = {
+            name: {"type": "object", "properties": {}}
+            for name in (
+                "mempalace_search",
+                "mempalace_list_rooms",
+                "mempalace_list_drawers",
+                "mempalace_get_drawer",
+                "mempalace_check_duplicate",
+                "mempalace_add_drawer",
+                "mempalace_delete_drawer",
+            )
+        }
+
+        class FixtureTransport:
+            def __init__(self) -> None:
+                self.capture_created = False
+
+            def request(
+                self,
+                message: dict[str, object],
+                *,
+                session_id: str | None,
+                token_mode: str,
+                protocol_version: str | None,
+            ) -> object:
+                method = str(message.get("method"))
+                calls.append((method, session_id, token_mode))
+                if token_mode == "missing":
+                    return probe.HttpProbeResult(401, {}, None, "1" * 64)
+                if token_mode == "invalid":
+                    return probe.HttpProbeResult(403, {}, None, "2" * 64)
+                if method == "initialize":
+                    return probe.HttpProbeResult(
+                        200,
+                        {"mcp-session-id": "fixture-session"},
+                        {
+                            "jsonrpc": "2.0",
+                            "id": message["id"],
+                            "result": {
+                                "protocolVersion": "2025-06-18",
+                                "capabilities": {"tools": {}},
+                                "serverInfo": {
+                                    "name": "fixture",
+                                    "version": "1",
+                                },
+                            },
+                        },
+                        "3" * 64,
+                    )
+                self.assertEqual("fixture-session", session_id)
+                self.assertEqual("2025-06-18", protocol_version)
+                if method == "notifications/initialized":
+                    return probe.HttpProbeResult(202, {}, None, "4" * 64)
+                if method == "tools/list":
+                    return probe.HttpProbeResult(
+                        200,
+                        {},
+                        {
+                            "jsonrpc": "2.0",
+                            "id": message["id"],
+                            "result": {
+                                "tools": [
+                                    {"name": name, "inputSchema": schema}
+                                    for name, schema in tool_schemas.items()
+                                ]
+                            },
+                        },
+                        "5" * 64,
+                    )
+                params = message["params"]
+                name = params["name"]
+                arguments = params["arguments"]
+                structured: dict[str, object]
+                if name == "mempalace_search":
+                    structured = {"results": []}
+                elif name == "mempalace_list_rooms":
+                    structured = {"rooms": ["operations"]}
+                elif name == "mempalace_list_drawers":
+                    structured = {
+                        "drawers": [
+                            {"drawer_id": "archive-fixture", "count": 1}
+                        ],
+                        "total": 1,
+                    }
+                elif name == "mempalace_check_duplicate":
+                    self.assertEqual(synthetic_content, arguments["content"])
+                    structured = {"duplicate": False, "match_count": 0}
+                elif name == "mempalace_add_drawer":
+                    self.assertEqual("infrastructure", arguments["wing"])
+                    self.assertEqual("migrations", arguments["room"])
+                    self.capture_created = True
+                    structured = {"drawer_id": "capture-fixture", "created": True}
+                elif name == "mempalace_get_drawer":
+                    if arguments["drawer_id"] == "capture-fixture":
+                        self.assertTrue(self.capture_created)
+                        structured = {
+                            "drawer_id": "capture-fixture",
+                            "content": synthetic_content,
+                        }
+                    else:
+                        structured = {
+                            "drawer_id": "archive-fixture",
+                            "content": "untrusted archive lead",
+                        }
+                elif name == "mempalace_delete_drawer":
+                    self.assertEqual("capture-fixture", arguments["drawer_id"])
+                    structured = {"deleted": True}
+                else:
+                    raise AssertionError(name)
+                return probe.HttpProbeResult(
+                    200,
+                    {},
+                    {
+                        "jsonrpc": "2.0",
+                        "id": message["id"],
+                        "result": {"structuredContent": structured},
+                    },
+                    "6" * 64,
+                )
+
+            assertEqual = self.assertEqual
+            assertTrue = self.assertTrue
+
+        transport = FixtureTransport()
+        auth, session = probe.probe_auth_matrix(transport)
+        tools = probe.mcp_list_tools(session)
+        behavior = probe.probe_behavior_matrix(
+            session,
+            tools,
+            wing="infrastructure",
+            archive_wing="infrastructure-archive",
+            synthetic_content=synthetic_content,
+        )
+        evidence = {"auth_checks": auth, "mcp_checks": behavior}
+        probe.validate_probe_evidence(evidence)
+
+        self.assertTrue(auth["missing_rejected"])
+        self.assertTrue(auth["invalid_rejected"])
+        self.assertTrue(auth["valid_accepted"])
+        self.assertTrue(auth["session_propagated"])
+        self.assertTrue(behavior["schema_digest_recorded"])
+        self.assertTrue(behavior["scoped_recall"])
+        self.assertTrue(behavior["semantic_miss_fallback"])
+        self.assertTrue(behavior["archive_untrusted"])
+        self.assertTrue(behavior["dedup_checked"])
+        self.assertTrue(behavior["capture_shape_valid"])
+        self.assertTrue(behavior["read_back_verified"])
+        self.assertTrue(behavior["cleanup_exact"])
+        serialized = json.dumps(evidence, sort_keys=True)
+        for forbidden in (
+            synthetic_content,
+            "capture-fixture",
+            "archive-fixture",
+            "fixture-session",
+            "untrusted archive lead",
+        ):
+            self.assertNotIn(forbidden, serialized)
+        self.assertTrue(
+            all(
+                session_id == "fixture-session"
+                for method, session_id, mode in calls
+                if mode == "valid" and method != "initialize"
+            )
+        )
+
+    def test_client_command_builder_is_exact_and_preserves_legacy(self) -> None:
+        probe = self.load_probe()
+        commands = probe.build_client_commands(
+            name="solidstats_memory",
+            url="https://memory.example/solidstats/mcp",
+            token_env="SOLIDSTATS_MEMORY_TOKEN",
+        )
+        self.assertEqual(
+            (
+                "codex",
+                "mcp",
+                "add",
+                "solidstats_memory",
+                "--url",
+                "https://memory.example/solidstats/mcp",
+                "--bearer-token-env-var",
+                "SOLIDSTATS_MEMORY_TOKEN",
+            ),
+            commands["add"],
+        )
+        self.assertEqual(
+            ("codex", "mcp", "get", "solidstats_memory"), commands["get"]
+        )
+        self.assertEqual(
+            ("codex", "mcp", "remove", "solidstats_memory"),
+            commands["remove"],
+        )
+        self.assertNotIn("mempalace", " ".join(commands["add"]))
+
+        invalid = (
+            {"name": "mempalace"},
+            {"url": "https://memory.example/mcp"},
+            {"token_env": "not-valid"},
+        )
+        for mutation in invalid:
+            arguments = {
+                "name": "solidstats_memory",
+                "url": "https://memory.example/solidstats/mcp",
+                "token_env": "SOLIDSTATS_MEMORY_TOKEN",
+                **mutation,
+            }
+            with self.subTest(mutation=mutation), self.assertRaises(
+                probe.ProbeError
+            ):
+                probe.build_client_commands(**arguments)
+
+    def test_cutover_self_test_exercises_reverse_order_rollback(self) -> None:
+        result = subprocess.run(
+            ["bash", str(CUTOVER_PATH), "--self-test"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("SELF_TEST PASSED", result.stdout)
+        self.assertIn(
+            "client nginx alias workload legacy",
+            result.stdout,
+        )
 
 
 if __name__ == "__main__":
