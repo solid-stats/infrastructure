@@ -131,6 +131,17 @@ def require_workload_safety(docs: dict[str, str]) -> None:
         "name: mempalace-runtime-bootstrap\n            defaultMode: 0444",
     ):
         require(required in mempalace, f"MemPalace runtime bootstrap misses: {required}")
+    embedding_resources = """resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              cpu: \"1\"
+              memory: 3Gi"""
+    require(
+        mempalace.count(embedding_resources) == 2,
+        "MemPalace init and runtime embedding resources must match the proven 1Gi/3Gi contract",
+    )
     bootstrap = RUNTIME_BOOTSTRAP.read_text(encoding="utf-8")
     for required in (
         "QdrantBackend",

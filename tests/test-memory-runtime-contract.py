@@ -105,6 +105,12 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
         )
         container = deployment["spec"]["template"]["spec"]["containers"][0]
         init_container = deployment["spec"]["template"]["spec"]["initContainers"][0]
+        embedding_resources = {
+            "requests": {"cpu": "250m", "memory": "1Gi"},
+            "limits": {"cpu": "1", "memory": "3Gi"},
+        }
+        self.assertEqual(embedding_resources, init_container["resources"])
+        self.assertEqual(embedding_resources, container["resources"])
         self.assertEqual(init_container["name"], "runtime-bootstrap")
         self.assertEqual(
             init_container["image"], "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST"

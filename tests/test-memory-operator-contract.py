@@ -15,6 +15,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "scripts/operate-solidstats-memory.py"
@@ -694,12 +696,26 @@ class MemoryOperatorContractTests(unittest.TestCase):
         )
         container = job["spec"]["template"]["spec"]["containers"][0]
         environment = {entry["name"]: entry for entry in container["env"]}
+        embedding_resources = {
+            "requests": {"cpu": "250m", "memory": "1Gi"},
+            "limits": {"cpu": "1", "memory": "3Gi"},
+        }
+        self.assertEqual(embedding_resources, container["resources"])
+        deployment = next(
+            document
+            for document in yaml.safe_load_all(
+                (ROOT / "k8s/memory/20-mempalace.yaml").read_text()
+            )
+            if document["kind"] == "Deployment"
+        )
+        pod_spec = deployment["spec"]["template"]["spec"]
         self.assertEqual(
-            {
-                "requests": {"cpu": "250m", "memory": "1Gi"},
-                "limits": {"cpu": "1", "memory": "3Gi"},
-            },
-            container["resources"],
+            embedding_resources,
+            pod_spec["initContainers"][0]["resources"],
+        )
+        self.assertEqual(
+            embedding_resources,
+            pod_spec["containers"][0]["resources"],
         )
         self.assertEqual(["online"], container["args"])
         self.assertEqual(OPERATOR.OFFICIAL_MEMPALACE_IMAGE, container["image"])
