@@ -2265,6 +2265,10 @@ def execute_stage(
 class JsonOperatorAdapter:
     """Run explicit bounded operator operations through one private executable."""
 
+    CONTROL_FILE = re.compile(
+        r"^(?P<sequence>[0-9]{3})-[a-z0-9-]+-(?:request|response)\.json$"
+    )
+
     def __init__(self, executable: Path, private_dir: Path) -> None:
         executable = Path(executable)
         if not executable.is_absolute():
@@ -2283,7 +2287,27 @@ class JsonOperatorAdapter:
         self.private_dir = Path(private_dir)
         self.private_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.private_dir, 0o700)
-        self.sequence = 0
+        self.sequence = self._last_sequence()
+
+    def _last_sequence(self) -> int:
+        sequence = 0
+        try:
+            entries = tuple(self.private_dir.iterdir())
+            for entry in entries:
+                match = self.CONTROL_FILE.fullmatch(entry.name)
+                if match is None:
+                    continue
+                details = entry.lstat()
+                if (
+                    stat.S_ISLNK(details.st_mode)
+                    or not stat.S_ISREG(details.st_mode)
+                    or stat.S_IMODE(details.st_mode) & 0o077
+                ):
+                    raise RestoreControlError("private control history is unsafe")
+                sequence = max(sequence, int(match.group("sequence")))
+        except OSError as error:
+            raise RestoreControlError("private control history is unavailable") from error
+        return sequence
 
     def _call(
         self,

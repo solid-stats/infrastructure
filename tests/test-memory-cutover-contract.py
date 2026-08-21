@@ -671,6 +671,42 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual("backup", resumed.state["last_stage"])
         self.assertEqual("f" * 64, resumed.state["last_evidence_sha256"])
 
+    def test_operator_adapter_resumes_after_incomplete_private_call(self) -> None:
+        executable = self.root / "operator"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o700)
+        private = self.root / "operator-state"
+        private.mkdir(mode=0o700)
+        previous = private / "001-inspect-preflight-request.json"
+        previous.write_text("{}\n", encoding="utf-8")
+        previous.chmod(0o600)
+        adapter = RESTORE.JsonOperatorAdapter(executable, private)
+
+        def respond(command: tuple[str, ...], **_kwargs: object) -> mock.Mock:
+            response = Path(command[3])
+            RESTORE.write_private_json(response, {"ok": True, "result": {}})
+            return mock.Mock(returncode=0)
+
+        with mock.patch.object(RESTORE.subprocess, "run", side_effect=respond):
+            result = adapter._call("inspect-runtime", {}, timeout=1)
+
+        self.assertEqual({}, result)
+        self.assertTrue((private / "002-inspect-runtime-request.json").is_file())
+        self.assertTrue((private / "002-inspect-runtime-response.json").is_file())
+
+    def test_operator_adapter_rejects_unsafe_private_call_history(self) -> None:
+        executable = self.root / "operator"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o700)
+        private = self.root / "operator-state"
+        private.mkdir(mode=0o700)
+        previous = private / "001-inspect-preflight-request.json"
+        previous.write_text("{}\n", encoding="utf-8")
+        previous.chmod(0o640)
+
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "unsafe"):
+            RESTORE.JsonOperatorAdapter(executable, private)
+
     def test_target_capacity_recovery_and_alias_probe_fail_closed(self) -> None:
         calls: list[tuple[str, str, object]] = []
         aliases: dict[str, str] = {"active": "protected"}
