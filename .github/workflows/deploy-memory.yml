@@ -86,9 +86,9 @@ jobs:
           python3 scripts/validate-memory-manifests.py --manifest-dir rendered-memory
           umask 077
           python3 scripts/render-memory-secrets.py > rendered-memory/secrets.yaml
-          # 00-namespace.yaml and 01-ci-rbac.yaml are operator bootstrap
-          # resources and must never enter the CI workload manifest list.
-          mapfile -t MEMORY_WORKLOAD_FILES < <(find rendered-memory -maxdepth 1 -name '*.yaml' ! -name '00-namespace.yaml' ! -name '01-ci-rbac.yaml' ! -name 'secrets.yaml' | sort)
+          # 00-namespace.yaml, 01-ci-rbac.yaml, and 05-rbac.yaml are operator
+          # bootstrap resources and must never enter the CI workload list.
+          mapfile -t MEMORY_WORKLOAD_FILES < <(find rendered-memory -maxdepth 1 -name '*.yaml' ! -name '00-namespace.yaml' ! -name '01-ci-rbac.yaml' ! -name '05-rbac.yaml' ! -name 'secrets.yaml' | sort)
           test "${#MEMORY_WORKLOAD_FILES[@]}" -gt 0
           kubectl --context memory-k3s-staging -n solidstats-memory apply --server-side --dry-run=server -f rendered-memory/secrets.yaml
           kubectl --context memory-k3s-staging -n solidstats-memory apply --server-side --dry-run=server "${MEMORY_WORKLOAD_FILES[@]/#/-f}"

@@ -137,6 +137,42 @@ manifest, and checksums under `backups/solidstats-memory/`. Restore always targe
 an isolated collection and is verified before any active alias or client changes.
 Legacy KG and tunnel deletion requires a separate exact-ID approval.
 
+### Recovery and final seal
+
+Recovery is fail-closed and uses the same authenticated MCP behavior probe
+after every disruption. Run the stages against the accepted `CLIENT_ADDED`
+run in this order:
+
+1. `restart-recovery` restarts MemPalace, proves the full matrix, then restarts
+   Qdrant and proves the full matrix again.
+2. `prove-backup-api-access` discovers the live Kubernetes Service and ready
+   endpoint candidates. It trials one exact host prefix and port per fresh pod,
+   then requires the backup-identity positive control, wrong-label network
+   denial, and unprivileged-identity RBAC denial. No destination address is
+   committed.
+3. `prove-backup-consistency` derives one Job from the still-suspended CronJob,
+   records the writer replica state, proves zero writers and PVC consumers,
+   requires matching source-before, source-after, and extracted-archive
+   digests, verifies the uploaded and downloaded package, restores the exact
+   replicas, and proves capture plus read-after-write.
+4. `reboot-recovery --reconnect-timeout 900` accepts only a changed boot
+   identity, bounded SSH reconnection, node/PVC/workload/nginx recovery, and a
+   fresh full behavior probe.
+5. `exercise-rollback` runs the real reverse-order rollback, proves the legacy
+   path, reapplies the exact forward chain, and proves the new path again.
+6. `activate-backup-schedule` is legal only after all five predecessor gates.
+   It keeps `concurrencyPolicy: Forbid`, enables the verified schedule, and
+   retires only the exact legacy SolidStats registration.
+7. `seal` validates the aggregate recovery evidence and final predecessor-bound
+   seal. Repository evidence contains booleans, counts, and digests only.
+
+Any API measurement, quiescence, archive, upload, download, replica
+restoration, or post-resume behavior failure triggers the recorded writer
+restoration path, keeps the recurring schedule suspended, and leaves the
+cutover unsealed. Rerun the failed stage with `--resume-run` only after the
+retained diagnostics identify the fault. Do not widen RBAC or NetworkPolicy as
+a recovery shortcut.
+
 ## Post-cutover Archive Distillation
 
 Archive distillation is a separate post-cutover phase and does not block the

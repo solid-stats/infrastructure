@@ -337,6 +337,137 @@ run_probe() {
     --run-id "${SOLIDSTATS_MEMORY_RUN_ID}" >/dev/null
 }
 
+write_recovery_gate() {
+  local name="$1"
+  local path="${STATE_DIR}/recovery-${name}.gate"
+  umask 077
+  printf 'pass\n' >"${path}.tmp"
+  chmod 600 "${path}.tmp"
+  mv "${path}.tmp" "${path}"
+}
+
+require_recovery_gate() {
+  local name="$1"
+  local path="${STATE_DIR}/recovery-${name}.gate"
+  [[ -f "${path}" && ! -L "${path}" &&
+    "$(stat -c '%a' "${path}")" == "600" &&
+    "$(cat "${path}")" == "pass" ]] || {
+    echo "FATAL: recovery predecessor is unavailable" >&2
+    return 1
+  }
+}
+
+restart_recovery() {
+  [[ "${CURRENT_STAGE}" == "CLIENT_ADDED" ]] || {
+    echo "FATAL: restart recovery requires CLIENT_ADDED" >&2
+    return 1
+  }
+  run_remote_batch restart-mempalace
+  run_probe
+  run_remote_batch restart-qdrant
+  run_probe
+  write_recovery_gate restart
+}
+
+measure_backup_api_egress() {
+  # The remote operator discovers Service and ready EndpointSlice candidates,
+  # trials one exact /32 and port per fresh pod, prefers the Service result,
+  # and retains only the selected mode/digest/booleans.
+  run_remote_batch measure-backup-api-egress
+}
+
+prove_backup_api_access() {
+  require_recovery_gate restart
+  measure_backup_api_egress
+  run_remote_batch prove-backup-api-positive
+  run_remote_batch prove-backup-api-network-negative
+  run_remote_batch prove-backup-api-rbac-negative
+  run_remote_batch recheck-backup-api-access
+  write_recovery_gate backup-api
+}
+
+prove_backup_consistency() {
+  require_recovery_gate backup-api
+  if ! run_remote_batch prove-backup-consistency; then
+    run_remote_batch restore-backup-writer || true
+    run_remote_batch suspend-backup-schedule || true
+    echo "FATAL: backup consistency failed; restoration was attempted" >&2
+    return 1
+  fi
+  if ! run_probe; then
+    run_remote_batch restore-backup-writer || true
+    run_remote_batch suspend-backup-schedule || true
+    echo "FATAL: write resumption behavior failed" >&2
+    return 1
+  fi
+  write_recovery_gate backup-consistency
+}
+
+reboot_recovery() {
+  require_recovery_gate backup-consistency
+  run_remote_batch capture-boot-identity
+  run_remote_batch reboot-host
+  run_remote_batch verify-reboot-recovery "${RECONNECT_TIMEOUT}"
+  run_probe
+  write_recovery_gate reboot
+}
+
+exercise_live_rollback() {
+  require_recovery_gate reboot
+  rollback
+  run_remote_batch verify-legacy-behavior
+  perform_cutover
+  run_probe
+  run_remote_batch verify-retained-collections
+  write_recovery_gate rollback-forward
+}
+
+activate_backup_schedule() {
+  require_recovery_gate restart
+  require_recovery_gate backup-api
+  require_recovery_gate backup-consistency
+  require_recovery_gate reboot
+  require_recovery_gate rollback-forward
+  run_remote_batch activate-backup-schedule
+  if [[ "${CUTOVER_SELF_TEST:-}" != "1" ]]; then
+    if ! retire_legacy_client; then
+      run_remote_batch suspend-backup-schedule || true
+      echo "FATAL: client retirement failed; backup schedule was suspended" >&2
+      return 1
+    fi
+  fi
+  write_recovery_gate activated
+}
+
+retire_legacy_client() {
+  required SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME
+  required SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH
+  [[ "${SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME}" == "mempalace" ]] || {
+    echo "FATAL: legacy client name is not the accepted exact name" >&2
+    return 1
+  }
+  timeout "${LOCAL_TIMEOUT}" codex mcp remove \
+    "${SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME}" >/dev/null
+  ! timeout "${LOCAL_TIMEOUT}" codex mcp get \
+    "${SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME}" >/dev/null 2>&1
+  timeout "${LOCAL_TIMEOUT}" codex mcp get solidstats_memory >/dev/null
+  timeout "${LOCAL_TIMEOUT}" python3 "${PROBE_SCRIPT}" client-policy \
+    --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
+    --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
+    --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" >/dev/null
+}
+
+seal_cutover() {
+  require_recovery_gate activated
+  required SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE
+  required SOLIDSTATS_MEMORY_CUTOVER_SEAL
+  timeout "${LOCAL_TIMEOUT}" python3 "${PHASE21_VALIDATOR}" \
+    --evidence "${SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE}" >/dev/null
+  timeout "${LOCAL_TIMEOUT}" python3 "${PHASE21_VALIDATOR}" \
+    --evidence "${SOLIDSTATS_MEMORY_CUTOVER_SEAL}" >/dev/null
+  write_recovery_gate sealed
+}
+
 preflight() {
   if [[ "${CURRENT_STAGE}" != "PREPARED" ]]; then
     return 0
@@ -443,6 +574,7 @@ self_test() {
   RUN_ID_SHA256=$(printf 'phase21-self-test' | sha256sum | cut -d' ' -f1)
   CURRENT_STAGE="PREPARED"
   PENDING_MUTATION="none"
+  NGINX_TEMPLATE="/dev/null"
 
   self_test_failure_case PREPARED workload "workload legacy"
   self_test_failure_case PRIVATE_LIVE alias "alias workload legacy"
@@ -470,13 +602,34 @@ self_test() {
     echo "SELF_TEST FAILED: client policy rollback order mismatch" >&2
     return 1
   }
+  CURRENT_STAGE="CLIENT_ADDED"
+  PENDING_MUTATION="none"
+  RECONNECT_TIMEOUT=30
+  : >"${EVENT_LOG}"
+  restart_recovery
+  prove_backup_api_access
+  prove_backup_consistency
+  reboot_recovery
+  exercise_live_rollback
+  activate_backup_schedule
+  local recovery_events
+  recovery_events=$(sed -e 's/[[:space:]]*$//' "${EVENT_LOG}")
+  [[ "${recovery_events}" == restart-mempalace\ probe\ restart-qdrant\ probe\ * ]] || {
+    echo "SELF_TEST FAILED: restart behavior order mismatch" >&2
+    return 1
+  }
+  for gate in restart backup-api backup-consistency reboot rollback-forward activated; do
+    require_recovery_gate "${gate}"
+  done
   echo "SELF_TEST PASSED: ${ROLLBACK_ORDER}"
+  echo "RECOVERY_SELF_TEST PASSED"
+  rm -f "${STATE_DIR}"/recovery-*.gate
   rm -f "${EVENT_LOG}" "${JOURNAL_PATH}"
   rmdir "${STATE_DIR}" "${temporary}"
 }
 
 usage() {
-  echo "usage: cutover-solidstats-memory.sh [preflight|cutover|rollback] [--dry-run] [--resume-run]"
+  echo "usage: cutover-solidstats-memory.sh [preflight|cutover|rollback|restart-recovery|reboot-recovery|prove-backup-api-access|prove-backup-consistency|exercise-rollback|activate-backup-schedule|seal] [--dry-run] [--resume-run] [--reconnect-timeout SECONDS]"
   echo "       cutover-solidstats-memory.sh --self-test"
 }
 
@@ -484,15 +637,24 @@ main() {
   local command=""
   DRY_RUN=0
   RESUME_RUN=0
+  RECONNECT_TIMEOUT=900
   if [[ "${1:-}" == "--self-test" ]]; then
     self_test
     return 0
   fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      preflight|cutover|rollback) command="$1" ;;
+      preflight|cutover|rollback|restart-recovery|reboot-recovery|prove-backup-api-access|prove-backup-consistency|exercise-rollback|activate-backup-schedule|seal) command="$1" ;;
       --dry-run) DRY_RUN=1 ;;
       --resume-run) RESUME_RUN=1 ;;
+      --reconnect-timeout)
+        shift
+        [[ "${1:-}" =~ ^[1-9][0-9]{0,3}$ ]] || {
+          echo "FATAL: reconnect timeout is invalid" >&2
+          return 64
+        }
+        RECONNECT_TIMEOUT="$1"
+        ;;
       --help|-h) usage; return 0 ;;
       *) echo "FATAL: unknown argument" >&2; usage >&2; return 64 ;;
     esac
@@ -519,6 +681,7 @@ main() {
   PRIVATE_OPERATOR_SCRIPT="${SCRIPT_DIR}/operate-solidstats-memory.py"
   PROBE_SCRIPT="${SCRIPT_DIR}/probe-solidstats-memory.py"
   CLIENT_POLICY_SCRIPT="${SCRIPT_DIR}/configure-solidstats-memory-client.py"
+  PHASE21_VALIDATOR="${SCRIPT_DIR}/validate-phase-21.py"
   CLIENT_CONFIG_PRESTATE="${STATE_DIR}/codex-config.prestate.toml"
   NGINX_TEMPLATE="${SCRIPT_DIR}/../config/nginx/sites-available/solidstats-memory-shared-cutover.patch.template"
 
@@ -542,6 +705,13 @@ main() {
       echo "PASS: CLIENT_ADDED; legacy is transitional until Plan 21-04 seal"
       ;;
     rollback) rollback ;;
+    restart-recovery) restart_recovery ;;
+    reboot-recovery) reboot_recovery ;;
+    prove-backup-api-access) prove_backup_api_access ;;
+    prove-backup-consistency) prove_backup_consistency ;;
+    exercise-rollback) exercise_live_rollback ;;
+    activate-backup-schedule) activate_backup_schedule ;;
+    seal) seal_cutover ;;
   esac
 }
 

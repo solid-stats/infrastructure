@@ -26,6 +26,8 @@ DEFAULT_PARITY = (
 STAGE_SCHEMA = "solidstats-memory-phase21-stage/v1"
 EVIDENCE_SCHEMA = "solidstats-memory-phase21-evidence/v1"
 BACKUP_RESTORE_SCHEMA = "solidstats-memory-backup-restore-evidence/v1"
+RECOVERY_SCHEMA = "solidstats-memory-recovery-evidence/v1"
+CUTOVER_SEAL_SCHEMA = "solidstats-memory-cutover-seal/v1"
 STAGES = (
     "PREPARED",
     "STAGED",
@@ -140,6 +142,102 @@ BACKUP_RESTORE_SECTION_FIELDS = {
         "legacy_runtime_unchanged",
         "recurring_schedule_unchanged",
     },
+}
+RECOVERY_FIELDS = {
+    "schema",
+    "run_id",
+    "cutover_evidence_sha256",
+    "restart_checks",
+    "backup_api_control_checks",
+    "steady_state_backup_consistency",
+    "fresh_backup_checks",
+    "writer_resumption_checks",
+    "reboot_checks",
+    "rollback_checks",
+    "forward_checks",
+    "client_checks",
+    "verdict",
+}
+RECOVERY_SECTION_FIELDS = {
+    "restart_checks": {
+        "mempalace_identity_changed",
+        "mempalace_behavior_passed",
+        "qdrant_identity_changed",
+        "qdrant_behavior_passed",
+        "ordered",
+    },
+    "backup_api_control_checks": {
+        "measured",
+        "binding_current",
+        "single_candidate",
+        "positive_get",
+        "network_negative",
+        "rbac_negative",
+        "policy_sha256",
+    },
+    "steady_state_backup_consistency": {
+        "writer_prestate_recorded",
+        "zero_writers",
+        "zero_pvc_consumers",
+        "source_before_sha256",
+        "source_after_sha256",
+        "archive_sha256",
+    },
+    "fresh_backup_checks": {
+        "exact_template",
+        "upload_inventory_exact",
+        "downloaded",
+        "checksums_rechecked",
+    },
+    "writer_resumption_checks": {
+        "replicas_restored",
+        "available",
+        "capture_passed",
+        "read_after_write_passed",
+        "schedules_suspended_on_failure",
+    },
+    "reboot_checks": {
+        "boot_identity_changed",
+        "reconnected_within_deadline",
+        "node_ready",
+        "pvc_bound",
+        "qdrant_ready",
+        "mempalace_available",
+        "nginx_active",
+        "behavior_passed",
+    },
+    "rollback_checks": {
+        "reverse_order",
+        "legacy_behavior_passed",
+        "retained_data_preserved",
+    },
+    "forward_checks": {
+        "exact_replay",
+        "behavior_passed",
+        "retained_data_preserved",
+    },
+    "client_checks": {
+        "legacy_retained_until_recovery",
+        "unrelated_unchanged",
+        "new_client_live",
+    },
+}
+CUTOVER_SEAL_FIELDS = {
+    "schema",
+    "run_id",
+    "recovery_evidence_sha256",
+    "requirements",
+    "prohibitions",
+    "legacy_client_absent",
+    "new_client_live",
+    "backup_schedule_live",
+    "verdict",
+}
+CUTOVER_SEAL_REQUIREMENTS = {"iso_01", "iso_03", "ops_02", "ops_03", "ops_05"}
+CUTOVER_SEAL_PROHIBITIONS = {
+    "no_early_legacy_removal",
+    "no_public_qdrant",
+    "no_retained_data_deletion",
 }
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 RUN_ID = re.compile(r"^[a-z0-9][a-z0-9-]{7,63}$")
@@ -286,6 +384,8 @@ def _validate_value_free_node(
         STAGE_SCHEMA,
         EVIDENCE_SCHEMA,
         BACKUP_RESTORE_SCHEMA,
+        RECOVERY_SCHEMA,
+        CUTOVER_SEAL_SCHEMA,
     }:
         return
     if key == "run_id" and RUN_ID.fullmatch(value):
@@ -511,6 +611,90 @@ def validate_backup_restore_evidence(payload: object) -> dict[str, object]:
     return dict(payload)
 
 
+def validate_recovery_evidence(payload: object) -> dict[str, object]:
+    """Validate exact behavior, consistency, and recovery aggregates."""
+    validate_value_free_payload(payload)
+    if not isinstance(payload, Mapping) or set(payload) != RECOVERY_FIELDS:
+        raise Phase21ValidationError("recovery evidence fields are invalid")
+    if payload.get("schema") != RECOVERY_SCHEMA:
+        raise Phase21ValidationError("recovery evidence schema is invalid")
+    run_id = payload.get("run_id")
+    if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id):
+        raise Phase21ValidationError("recovery run identity is invalid")
+    cutover_digest = payload.get("cutover_evidence_sha256")
+    if not isinstance(cutover_digest, str) or not SHA256.fullmatch(cutover_digest):
+        raise Phase21ValidationError("recovery predecessor digest is invalid")
+    sections: dict[str, Mapping[str, object]] = {}
+    for name, expected_fields in RECOVERY_SECTION_FIELDS.items():
+        section = payload.get(name)
+        if not isinstance(section, Mapping) or set(section) != expected_fields:
+            raise Phase21ValidationError("recovery check fields are invalid")
+        sections[name] = section
+        for key, value in section.items():
+            if key.endswith("_sha256"):
+                if not isinstance(value, str) or not SHA256.fullmatch(value):
+                    raise Phase21ValidationError("recovery digest is invalid")
+            elif value is not True:
+                raise Phase21ValidationError("recovery checks are not all passing")
+    consistency = sections["steady_state_backup_consistency"]
+    if not (
+        consistency["source_before_sha256"]
+        == consistency["source_after_sha256"]
+        == consistency["archive_sha256"]
+    ):
+        raise Phase21ValidationError("steady-state metadata digests differ")
+    if payload.get("verdict") != "pass":
+        raise Phase21ValidationError("recovery verdict is not passing")
+    return dict(payload)
+
+
+def validate_cutover_seal(
+    payload: object,
+    *,
+    recovery_payload: object | None = None,
+) -> dict[str, object]:
+    """Validate the final seal and its exact recovery predecessor."""
+    validate_value_free_payload(payload)
+    if not isinstance(payload, Mapping) or set(payload) != CUTOVER_SEAL_FIELDS:
+        raise Phase21ValidationError("cutover seal fields are invalid")
+    if payload.get("schema") != CUTOVER_SEAL_SCHEMA:
+        raise Phase21ValidationError("cutover seal schema is invalid")
+    run_id = payload.get("run_id")
+    if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id):
+        raise Phase21ValidationError("cutover seal run identity is invalid")
+    requirements = payload.get("requirements")
+    prohibitions = payload.get("prohibitions")
+    if (
+        not isinstance(requirements, Mapping)
+        or set(requirements) != CUTOVER_SEAL_REQUIREMENTS
+        or any(value is not True for value in requirements.values())
+        or not isinstance(prohibitions, Mapping)
+        or set(prohibitions) != CUTOVER_SEAL_PROHIBITIONS
+        or any(value is not True for value in prohibitions.values())
+    ):
+        raise Phase21ValidationError("cutover seal gates are not all passing")
+    for key in (
+        "legacy_client_absent",
+        "new_client_live",
+        "backup_schedule_live",
+    ):
+        if payload.get(key) is not True:
+            raise Phase21ValidationError("cutover seal gates are not all passing")
+    digest = payload.get("recovery_evidence_sha256")
+    if not isinstance(digest, str) or not SHA256.fullmatch(digest):
+        raise Phase21ValidationError("cutover seal predecessor digest is invalid")
+    if recovery_payload is not None:
+        recovery = validate_recovery_evidence(recovery_payload)
+        if recovery["run_id"] != run_id:
+            raise Phase21ValidationError("cutover seal run identity differs")
+        expected = hashlib.sha256(canonical_json_bytes(recovery)).hexdigest()
+        if digest != expected:
+            raise Phase21ValidationError("cutover seal predecessor digest differs")
+    if payload.get("verdict") != "pass":
+        raise Phase21ValidationError("cutover seal verdict is not passing")
+    return dict(payload)
+
+
 def _phase20_bindings(
     handoff_path: Path,
     parity_path: Path,
@@ -636,6 +820,44 @@ def _chain_files(directory: Path) -> list[Path]:
     return [path for _order, path in sorted(selected, key=lambda item: item[0])]
 
 
+def validate_phase_artifact_chain(directory: Path) -> dict[str, object]:
+    """Validate the committed aggregate chain through its current live stage."""
+    if not directory.is_dir():
+        raise Phase21ValidationError("evidence chain directory is invalid")
+    backup_path = directory / "21-BACKUP-RESTORE-EVIDENCE.json"
+    cutover_path = directory / "21-CUTOVER-EVIDENCE.json"
+    backup = validate_backup_restore_evidence(_load_json(backup_path))
+    cutover = validate_evidence_envelope(_load_json(cutover_path))
+    backup_digest = sha256_file(backup_path)
+    if (
+        cutover.get("stage") != "CLIENT_ADDED"
+        or cutover.get("prior_evidence_sha256") != backup_digest
+        or not isinstance(cutover.get("input_digests"), Mapping)
+        or cutover["input_digests"].get("backup_restore_evidence_sha256")
+        != backup_digest
+        or cutover.get("verdict") != "pass"
+    ):
+        raise Phase21ValidationError("cutover evidence predecessor is invalid")
+    stage = "CLIENT_ADDED"
+    recovery_path = directory / "21-RECOVERY-EVIDENCE.json"
+    seal_path = directory / "21-CUTOVER-SEAL.json"
+    if recovery_path.exists():
+        recovery = validate_recovery_evidence(_load_json(recovery_path))
+        if recovery.get("cutover_evidence_sha256") != sha256_file(cutover_path):
+            raise Phase21ValidationError("recovery cutover digest differs")
+        stage = "RECOVERY_PROVEN"
+        if seal_path.exists():
+            seal = validate_cutover_seal(
+                _load_json(seal_path), recovery_payload=recovery
+            )
+            if seal.get("recovery_evidence_sha256") != sha256_file(recovery_path):
+                raise Phase21ValidationError("seal recovery file digest differs")
+            stage = "SEALED"
+    elif seal_path.exists():
+        raise Phase21ValidationError("cutover seal lacks recovery evidence")
+    return {"stage": stage, "verdict": "pass"}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--handoff", type=Path)
@@ -647,7 +869,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.check_chain is not None:
             if paths:
                 raise Phase21ValidationError("evidence inputs are ambiguous")
-            paths = _chain_files(args.check_chain)
+            validate_phase_artifact_chain(args.check_chain)
+            print("PASS: Phase 21 evidence chain validated")
+            return 0
         if not paths:
             raise Phase21ValidationError("evidence input is required")
         payloads = [_load_json(path) for path in paths]
@@ -655,6 +879,12 @@ def main(argv: list[str] | None = None) -> int:
             if payloads[0].get("schema") == BACKUP_RESTORE_SCHEMA:
                 validate_backup_restore_evidence(payloads[0])
                 message = "PASS: Phase 21 backup and restore evidence validated"
+            elif payloads[0].get("schema") == RECOVERY_SCHEMA:
+                validate_recovery_evidence(payloads[0])
+                message = "PASS: Phase 21 recovery evidence validated"
+            elif payloads[0].get("schema") == CUTOVER_SEAL_SCHEMA:
+                validate_cutover_seal(payloads[0])
+                message = "PASS: Phase 21 cutover seal validated"
             else:
                 validate_evidence_envelope(payloads[0])
                 message = "PASS: Phase 21 evidence validated"
