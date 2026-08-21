@@ -76,35 +76,91 @@ def parse_descriptor(data: bytes) -> dict[str, str]:
     return result
 
 
-def find_block(data: bytes, declaration: bytes) -> tuple[int, int]:
+def find_blocks(data: bytes, declaration: bytes) -> list[tuple[int, int]]:
     matches = list(re.finditer(rb"(?m)^[ \t]*" + re.escape(declaration) + rb"[ \t]*\{[ \t]*(?:#.*)?$", data))
-    if len(matches) != 1:
-        raise PatchError("nginx shared-site boundary is ambiguous")
-    start = matches[0].start()
-    cursor = matches[0].end()
-    depth = 1
-    while cursor < len(data):
-        end = data.find(b"\n", cursor)
-        if end == -1:
-            end = len(data)
-        line = data[cursor:end].split(b"#", 1)[0]
+    blocks: list[tuple[int, int]] = []
+    for match in matches:
+        start = match.start()
+        cursor = match.end()
+        depth = 1
+        while cursor < len(data):
+            end = data.find(b"\n", cursor)
+            if end == -1:
+                end = len(data)
+            line = data[cursor:end].split(b"#", 1)[0]
+            depth += line.count(b"{") - line.count(b"}")
+            if depth == 0:
+                blocks.append((start, end + (end < len(data))))
+                break
+            if depth < 0:
+                break
+            cursor = end + 1
+        else:
+            raise PatchError("nginx shared-site boundary is ambiguous")
+        if len(blocks) == 0 or blocks[-1][0] != start:
+            raise PatchError("nginx shared-site boundary is ambiguous")
+    return blocks
+
+
+def shared_server_boundary(site: bytes) -> tuple[int, int, int, int]:
+    servers = find_blocks(site, b"server")
+    solidstats = find_blocks(site, b"location /solidstats/")
+    personal = find_blocks(site, b"location /personal/")
+    if len(solidstats) != 1 or len(personal) != 1:
+        raise PatchError("nginx shared-site route boundary is ambiguous")
+
+    solidstats_block = solidstats[0]
+    personal_block = personal[0]
+    solidstats_owners = [
+        server
+        for server in servers
+        if server[0] < solidstats_block[0] and solidstats_block[1] <= server[1]
+    ]
+    personal_owners = [
+        server
+        for server in servers
+        if server[0] < personal_block[0] and personal_block[1] <= server[1]
+    ]
+    if (
+        len(solidstats_owners) != 1
+        or len(personal_owners) != 1
+        or solidstats_owners[0] != personal_owners[0]
+    ):
+        raise PatchError("nginx shared-site route boundary is ambiguous")
+
+    server_start, server_end = solidstats_owners[0]
+    server = site[server_start:server_end]
+    listens: list[tuple[bytes, tuple[bytes, ...]]] = []
+    depth = 0
+    for raw_line in server.splitlines():
+        line = raw_line.split(b"#", 1)[0].strip()
+        if depth == 1 and line.startswith(b"listen"):
+            if not line.endswith(b";"):
+                raise PatchError("nginx shared-site listen contract is invalid")
+            tokens = line[:-1].split()
+            if not tokens or tokens[0] != b"listen" or len(tokens) < 2:
+                raise PatchError("nginx shared-site listen contract is invalid")
+            listens.append((tokens[1], tuple(tokens[2:])))
         depth += line.count(b"{") - line.count(b"}")
-        if depth == 0:
-            return start, end + (end < len(data))
         if depth < 0:
-            break
-        cursor = end + 1
-    raise PatchError("nginx shared-site boundary is ambiguous")
+            raise PatchError("nginx shared-site boundary is ambiguous")
+
+    expected_addresses = {b"8443", b"[::]:8443"}
+    expected_flags = {b"ssl", b"http2", b"default_server"}
+    if (
+        len(listens) != 2
+        or {address for address, _ in listens} != expected_addresses
+        or any(
+            len(flags) != len(expected_flags) or set(flags) != expected_flags
+            for _, flags in listens
+        )
+    ):
+        raise PatchError("nginx shared-site listen contract is invalid")
+    return server_start, server_end, solidstats_block[0], solidstats_block[1]
 
 
 def render(site: bytes, descriptor: dict[str, str]) -> bytes:
-    listen_matches = re.findall(rb"(?m)^[ \t]*listen[ \t]+(?:\[::\]:)?8443(?:[ \t]+ssl)?[ \t]*;", site)
-    if not listen_matches:
-        raise PatchError("nginx shared-site port is not exact")
-    personal_before = site.count(b"location /personal/")
-    if personal_before != 1:
-        raise PatchError("nginx sibling route is ambiguous")
-    start, end = find_block(site, b"location /solidstats/")
+    _, _, start, end = shared_server_boundary(site)
     block = site[start:end]
     old = descriptor["old_upstream"].encode("ascii")
     new = descriptor["new_upstream"].encode("ascii")
@@ -115,8 +171,6 @@ def render(site: bytes, descriptor: dict[str, str]) -> bytes:
     if count != 1:
         raise PatchError("nginx SolidStats upstream is ambiguous")
     rendered = site[:start] + replaced_block + site[end:]
-    if rendered.count(b"location /personal/") != personal_before:
-        raise PatchError("nginx sibling route changed")
     reverse_pattern = re.compile(rb"(?m)^([ \t]*proxy_pass[ \t]+)" + re.escape(new) + rb"([ \t]*;[ \t]*(?:#.*)?(?:\n|$))")
     reverse_block, reverse_count = reverse_pattern.subn(rb"\g<1>" + old + rb"\g<2>", replaced_block)
     reverse = site[:start] + reverse_block + site[end:]

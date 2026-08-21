@@ -2043,7 +2043,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
         enabled = enabled_dir / "shared-memory.conf"
         original = (
             b"server {\n"
-            b"    listen 8443 ssl;\n"
+            b"    listen 8443 ssl http2 default_server;\n"
+            b"    listen [::]:8443 ssl http2 default_server;\n"
             b"    ssl_certificate /private/certificate;\n"
             b"    ssl_certificate_key /private/key;\n"
             b"    location /personal/ {\n"
@@ -2245,11 +2246,14 @@ class MemoryCutoverContractTests(unittest.TestCase):
 
     def test_shared_nginx_renderer_requires_origin_roots_with_one_slash(self) -> None:
         site = self.root / "shared-8443.conf"
-        site.write_bytes(
+        shared_server = (
             b"server {\n"
-            b"    listen [::]:8443 ssl;\n"
+            b"    listen 8443 ssl http2 default_server;\n"
+            b"    listen [::]:8443 ssl http2 default_server;\n"
+            b"    server_name synthetic.example.invalid;\n"
             b"    ssl_certificate /synthetic/tls.crt;\n"
             b"    ssl_certificate_key /synthetic/tls.key;\n"
+            b"    add_header X-Synthetic \"sibling-bytes\" always;\n"
             b"    location /personal/ {\n"
             b"        proxy_pass http://127.0.0.1:8766/;\n"
             b"    }\n"
@@ -2257,6 +2261,13 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b"        proxy_pass http://127.0.0.1:8767/;\n"
             b"    }\n"
             b"}\n"
+        )
+        site.write_bytes(
+            b"server {\n"
+            b"    listen 8080;\n"
+            b"    location /health/ { return 204; }\n"
+            b"}\n"
+            + shared_server
         )
         renderer = ROOT / "scripts/render-solidstats-memory-shared-nginx.py"
 
@@ -2321,6 +2332,61 @@ class MemoryCutoverContractTests(unittest.TestCase):
         for index, pair in enumerate(invalid_pairs, start=1):
             with self.subTest(upstreams=pair):
                 self.assertNotEqual(0, render(*pair, index).returncode)
+
+        valid_site = site.read_bytes()
+        invalid_sites = {
+            "wrong-port": valid_site.replace(b"8443", b"9443"),
+            "missing-ipv6": valid_site.replace(
+                b"    listen [::]:8443 ssl http2 default_server;\n", b""
+            ),
+            "missing-ssl": valid_site.replace(
+                b"listen 8443 ssl http2 default_server;",
+                b"listen 8443 http2 default_server;",
+            ),
+            "missing-default-server": valid_site.replace(
+                b"listen [::]:8443 ssl http2 default_server;",
+                b"listen [::]:8443 ssl http2;",
+            ),
+            "duplicate-server": valid_site + shared_server,
+            "duplicate-location": valid_site.replace(
+                b"    location /solidstats/ {\n"
+                b"        proxy_pass http://127.0.0.1:8767/;\n"
+                b"    }\n",
+                b"    location /solidstats/ {\n"
+                b"        proxy_pass http://127.0.0.1:8767/;\n"
+                b"    }\n"
+                b"    location /solidstats/ {\n"
+                b"        return 409;\n"
+                b"    }\n",
+            ),
+            "split-locations": (
+                b"server {\n"
+                b"    listen 8443 ssl http2 default_server;\n"
+                b"    listen [::]:8443 ssl http2 default_server;\n"
+                b"    location /personal/ {\n"
+                b"        proxy_pass http://127.0.0.1:8766/;\n"
+                b"    }\n"
+                b"}\n"
+                b"server {\n"
+                b"    listen 9443 ssl http2 default_server;\n"
+                b"    listen [::]:9443 ssl http2 default_server;\n"
+                b"    location /solidstats/ {\n"
+                b"        proxy_pass http://127.0.0.1:8767/;\n"
+                b"    }\n"
+                b"}\n"
+            ),
+        }
+        for index, (case, invalid_site) in enumerate(invalid_sites.items(), start=20):
+            with self.subTest(shared_server_boundary=case):
+                site.write_bytes(invalid_site)
+                self.assertNotEqual(
+                    0,
+                    render(
+                        "http://127.0.0.1:8767/",
+                        "http://192.168.50.20:8765/",
+                        index,
+                    ).returncode,
+                )
 
     def test_remote_operator_rejects_unsafe_sibling_config(self) -> None:
         remote = self.root / "unsafe-remote"
