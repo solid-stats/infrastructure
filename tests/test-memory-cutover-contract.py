@@ -3915,6 +3915,15 @@ class MemoryCutoverContractTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 COLLECTOR.parse_exact_result(dedicated, schema, source_fields)
 
+        public = self.root / "public-evidence.json"
+        public.write_text("{}\n", encoding="ascii")
+        for mode in (0o644, 0o664):
+            public.chmod(mode)
+            self.assertEqual(b"{}\n", COLLECTOR.safe(public, 0o644))
+        public.chmod(0o600)
+        with self.assertRaises(ValueError):
+            COLLECTOR.safe(public, 0o644)
+
     def test_backup_activation_renderer_binds_source_render_and_template(self) -> None:
         source = self.root / "source.yaml"
         rendered = self.root / "rendered.yaml"

@@ -121,7 +121,13 @@ def parse_exact_result(path: Path, schema: str, fields: set[str]) -> dict[str, s
 
 def safe(path: Path, mode: int) -> bytes:
     info = path.lstat()
-    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != mode:
+    accepted_modes = {0o644, 0o664} if mode == 0o644 else {mode}
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or info.st_uid != os.getuid()
+        or stat.S_IMODE(info.st_mode) not in accepted_modes
+    ):
         raise ValueError("unsafe evidence input")
     return path.read_bytes()
 
