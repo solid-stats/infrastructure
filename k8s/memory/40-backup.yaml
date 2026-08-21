@@ -52,9 +52,77 @@ spec:
               command: ["/bin/sh", "-ec"]
               args:
                 - |
+                  api_root="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}"
+                  api_token_path=/var/run/secrets/solidstats-memory/token
+                  api_ca=/var/run/secrets/solidstats-memory/ca.crt
+                  deployment_path="${api_root}/apis/apps/v1/namespaces/solidstats-memory/deployments/mempalace"
+                  scale_path="${api_root}/apis/apps/v1/namespaces/solidstats-memory/deployments/mempalace/scale"
+                  pods_path="${api_root}/api/v1/namespaces/solidstats-memory/pods"
+                  writer_pods_path="${pods_path}?labelSelector=app.kubernetes.io%2Fname%3Dmempalace"
+                  api_get() {
+                    curl --fail --show-error --silent --cacert "${api_ca}" \
+                      -H "Authorization: Bearer $(cat "${api_token_path}")" "$1"
+                  }
+                  api_patch() {
+                    curl --fail --show-error --silent --cacert "${api_ca}" \
+                      -H "Authorization: Bearer $(cat "${api_token_path}")" \
+                      -H 'Content-Type: application/merge-patch+json' \
+                      -X PATCH --data "$2" "$1" >/dev/null
+                  }
+                  deployment_json="$(api_get "${deployment_path}")"
+                  original_generation="$(printf '%s' "${deployment_json}" | tr -d '[:space:]' | sed -n 's/.*"generation":\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+                  scale_json="$(api_get "${scale_path}")"
+                  original_replicas="$(printf '%s' "${scale_json}" | tr -d '[:space:]' | sed -n 's/.*"replicas":\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+                  original_writer_pods_json="$(api_get "${writer_pods_path}")"
+                  original_writer_pod_count="$(printf '%s' "${original_writer_pods_json}" | grep -o '"app.kubernetes.io/name":"mempalace"' | wc -l | tr -d ' ')"
+                  original_writer_pods_sha256="$(printf '%s' "${original_writer_pods_json}" | sha256sum | cut -d' ' -f1)"
+                  test -n "${original_generation}"
+                  test "${original_replicas}" -gt 0
+                  test "${original_writer_pod_count}" = "${original_replicas}"
+                  restore_writer() {
+                    api_patch "${scale_path}" "{\"spec\":{\"replicas\":${original_replicas}}}" || return 1
+                    attempt=0
+                    while test "${attempt}" -lt 60; do
+                      deployment_json="$(api_get "${deployment_path}")" || return 1
+                      available="$(printf '%s' "${deployment_json}" | tr -d '[:space:]' | sed -n 's/.*"availableReplicas":\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+                      test "${available:-0}" = "${original_replicas}" && return 0
+                      attempt=$((attempt + 1))
+                      sleep 5
+                    done
+                    return 1
+                  }
+                  restore_required=1
+                  on_exit() {
+                    status=$?
+                    trap - EXIT INT TERM
+                    if test "${restore_required}" = 1; then
+                      restore_writer || status=1
+                    fi
+                    exit "${status}"
+                  }
+                  trap on_exit EXIT INT TERM
+                  api_patch "${scale_path}" '{"spec":{"replicas":0}}'
+                  attempt=0
+                  while test "${attempt}" -lt 60; do
+                    pods_json="$(api_get "${pods_path}")"
+                    writer_count="$(printf '%s' "${pods_json}" | grep -o '"app.kubernetes.io/name":"mempalace"' | wc -l | tr -d ' ')"
+                    pvc_consumer_count="$(printf '%s' "${pods_json}" | grep -o '"claimName":"mempalace-data"' | wc -l | tr -d ' ')"
+                    test "${writer_count}" = 0 && test "${pvc_consumer_count}" = 1 && break
+                    attempt=$((attempt + 1))
+                    sleep 5
+                  done
+                  test "${attempt}" -lt 60
                   backup_id="$(date -u +%Y%m%dT%H%M%SZ)"
                   work_dir="/tmp/${backup_id}"
                   mkdir -p "${work_dir}"
+                  metadata_tree_digest() {
+                    (
+                      cd "$1"
+                      find . -type f -print0 | sort -z | \
+                        xargs -0 -r sha256sum | sha256sum | cut -d' ' -f1
+                    )
+                  }
+                  metadata_source_before_sha256="$(metadata_tree_digest /metadata/palace)"
                   snapshot_json="${work_dir}/snapshot.json"
                   curl --fail --show-error --silent \
                     -X POST \
@@ -69,13 +137,34 @@ spec:
                     -o "${work_dir}/qdrant.snapshot"
                   tar --create --file "${work_dir}/mempalace-metadata.tar" \
                     --directory /metadata palace
-                  sha256sum "${work_dir}/qdrant.snapshot" \
-                    "${work_dir}/mempalace-metadata.tar" > "${work_dir}/SHA256SUMS"
-                  printf '{\"backup_id\":\"%s\",\"collection\":\"%s\",\"snapshot\":\"%s\"}\n' \
+                  metadata_source_after_sha256="$(metadata_tree_digest /metadata/palace)"
+                  mkdir "${work_dir}/metadata-extracted"
+                  tar --extract --file "${work_dir}/mempalace-metadata.tar" \
+                    --directory "${work_dir}/metadata-extracted"
+                  metadata_archive_sha256="$(metadata_tree_digest "${work_dir}/metadata-extracted/palace")"
+                  test "${metadata_source_before_sha256}" = "${metadata_source_after_sha256}"
+                  test "${metadata_source_before_sha256}" = "${metadata_archive_sha256}"
+                  printf '{\"backup_id\":\"%s\",\"collection\":\"%s\",\"snapshot\":\"%s\",\"writer_replicas\":%s,\"writer_generation\":%s,\"writer_pods_sha256\":\"%s\"}\n' \
                     "${backup_id}" "${QDRANT_COLLECTION}" "${snapshot_name}" \
+                    "${original_replicas}" "${original_generation}" \
+                    "${original_writer_pods_sha256}" \
                     > "${work_dir}/manifest.json"
+                  sha256sum "${work_dir}/qdrant.snapshot" \
+                    "${work_dir}/mempalace-metadata.tar" \
+                    "${work_dir}/manifest.json" > "${work_dir}/SHA256SUMS"
                   aws --endpoint-url "${S3_ENDPOINT}" s3 cp --recursive \
                     "${work_dir}" "s3://${S3_BUCKET}/${S3_PREFIX}${backup_id}/"
+                  download_dir="/tmp/download-${backup_id}"
+                  mkdir "${download_dir}"
+                  aws --endpoint-url "${S3_ENDPOINT}" s3 cp --recursive \
+                    "s3://${S3_BUCKET}/${S3_PREFIX}${backup_id}/" "${download_dir}"
+                  cd "${download_dir}"
+                  sha256sum --check SHA256SUMS
+                  cd /
+                  restore_writer
+                  restore_required=0
+                  trap - EXIT INT TERM
+                  printf 'PASS: consistency package and writer restoration verified\n'
               env:
                 - name: QDRANT_URL
                   value: http://qdrant:6333
@@ -125,9 +214,24 @@ spec:
                   readOnly: true
                 - name: tmp
                   mountPath: /tmp
+                - name: kubernetes-api-access
+                  mountPath: /var/run/secrets/solidstats-memory
+                  readOnly: true
           volumes:
             - name: mempalace-data
               persistentVolumeClaim:
                 claimName: mempalace-data
             - name: tmp
               emptyDir: {}
+            - name: kubernetes-api-access
+              projected:
+                defaultMode: 0400
+                sources:
+                  - serviceAccountToken:
+                      path: token
+                      expirationSeconds: 600
+                  - configMap:
+                      name: kube-root-ca.crt
+                      items:
+                        - key: ca.crt
+                          path: ca.crt

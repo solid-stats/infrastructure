@@ -67,6 +67,19 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
             rendered = self.render(output_dir)
             self.assertEqual(rendered.returncode, 0, rendered.stderr)
             source_files = sorted((ROOT / "k8s" / "memory").glob("*.yaml"))
+            self.assertEqual(
+                [
+                    "00-namespace.yaml",
+                    "01-ci-rbac.yaml",
+                    "05-rbac.yaml",
+                    "10-qdrant.yaml",
+                    "20-mempalace.yaml",
+                    "30-network-policy.yaml",
+                    "40-backup.yaml",
+                    "50-monitoring.yaml",
+                ],
+                [path.name for path in source_files],
+            )
             self.assertEqual([path.name for path in source_files], sorted(path.name for path in output_dir.glob("*.yaml")))
             for source in source_files:
                 self.assertEqual(source.read_bytes(), (output_dir / source.name).read_bytes())
@@ -155,14 +168,20 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
         projected = next(volume for volume in pod["volumes"] if volume["name"] == "kubernetes-api-access")
         sources = projected["projected"]["sources"]
         self.assertEqual(600, sources[0]["serviceAccountToken"]["expirationSeconds"])
-        self.assertEqual("solidstats-memory-backup", sources[0]["serviceAccountToken"]["audience"])
+        self.assertNotIn("audience", sources[0]["serviceAccountToken"])
         self.assertEqual("kube-root-ca.crt", sources[1]["configMap"]["name"])
         container = pod["containers"][0]
         mount = next(item for item in container["volumeMounts"] if item["name"] == "kubernetes-api-access")
         self.assertTrue(mount["readOnly"])
         command = container["args"][0]
+        self.assertNotIn('api_token="', command)
+        self.assertGreaterEqual(command.count('cat "${api_token_path}"'), 2)
         for marker in (
             "deployments/mempalace/scale",
+            "original_generation",
+            "original_writer_pod_count",
+            "original_writer_pods_sha256",
+            'cd "$1"',
             "metadata_source_before_sha256",
             "metadata_source_after_sha256",
             "metadata_archive_sha256",
@@ -888,6 +907,50 @@ class MemoryValidatorContractTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("endpoint", result.stderr)
 
+    def test_validator_rejects_backup_control_plane_broadening(self) -> None:
+        mutations = (
+            ('resources: ["deployments"]', 'resources: ["deployments", "secrets"]'),
+            ('resourceNames: ["mempalace"]', 'resourceNames: ["mempalace", "other"]'),
+            ('verbs: ["get"]', 'verbs: ["get", "list"]'),
+            ('verbs: ["get", "patch"]', 'verbs: ["get", "patch", "update"]'),
+            ('resources: ["pods"]', 'resources: ["pods", "secrets"]'),
+            ('name: solidstats-memory-backup\n    namespace: solidstats-memory\nroleRef:', 'name: other\n    namespace: solidstats-memory\nroleRef:'),
+            ('app.kubernetes.io/name: solidstats-memory-backup\n  policyTypes:', 'app.kubernetes.io/name: other\n  policyTypes:'),
+            ('cidr: MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR', 'cidr: 10.0.0.0/8'),
+            ('port: MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT', 'port: 443\n        - protocol: TCP\n          port: 6443'),
+        )
+        for original, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                path = manifest_dir / "05-rbac.yaml"
+                source = path.read_text()
+                self.assertIn(original, source)
+                path.write_text(source.replace(original, replacement, 1))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertNotEqual(0, result.returncode)
+
+    def test_validator_rejects_backup_identity_projection_drift(self) -> None:
+        mutations = (
+            ("expirationSeconds: 600", "expirationSeconds: 3600"),
+            ("name: kube-root-ca.crt", "name: other-ca"),
+            ("mountPath: /var/run/secrets/solidstats-memory", "mountPath: /var/run/secrets/kubernetes.io/serviceaccount"),
+            (
+                "mountPath: /var/run/secrets/solidstats-memory\n                  readOnly: true",
+                "mountPath: /var/run/secrets/solidstats-memory\n                  readOnly: false",
+            ),
+        )
+        for original, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                path = manifest_dir / "40-backup.yaml"
+                source = path.read_text()
+                self.assertIn(original, source)
+                path.write_text(source.replace(original, replacement, 1))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertNotEqual(0, result.returncode)
+
     def test_validator_rejects_broad_or_drifting_mempalace_egress(self) -> None:
         mutations = (
             (
@@ -960,6 +1023,8 @@ class MemoryValidatorContractTests(unittest.TestCase):
             "MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR": "not-a-cidr",
             "MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR": "also-not-a-cidr",
             "MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME": "Invalid_Collection",
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR": "10.0.0.0/8",
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT": "not-a-port",
         }
         for path in manifest_dir.glob("*.yaml"):
             text = path.read_text()
@@ -982,6 +1047,8 @@ class MemoryValidatorContractTests(unittest.TestCase):
             "MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR": "203.0.113.0/24",
             "MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR": "198.51.100.0/24",
             "MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME": "solidstats_memory",
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR": "10.43.0.1/32",
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT": "443",
         }
         for path in manifest_dir.glob("*.yaml"):
             text = path.read_text()

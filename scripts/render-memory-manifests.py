@@ -12,6 +12,7 @@ SOURCE_DIR = ROOT / "k8s" / "memory"
 EXPECTED = {
     "00-namespace.yaml",
     "01-ci-rbac.yaml",
+    "05-rbac.yaml",
     "10-qdrant.yaml",
     "20-mempalace.yaml",
     "30-network-policy.yaml",
