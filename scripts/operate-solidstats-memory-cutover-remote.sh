@@ -103,12 +103,8 @@ load_config() {
   [[ "${LEGACY_CONTAINER:-}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || fatal
   [[ "${FREEZE_LOCK_CONTAINER:-}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || fatal
   [[ "${LEGACY_CONTAINER}" != "${FREEZE_LOCK_CONTAINER}" ]] || fatal
-  [[ "${OLD_UPSTREAM:-}" =~ ^http://127\.0\.0\.1:[1-9][0-9]{0,4}/?$ ]] || fatal
-  [[ "${NEW_UPSTREAM:-}" =~ ^http://(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}):[1-9][0-9]{0,4}/?$ ]] || fatal
-  local old_suffix=none new_suffix=none
-  [[ "${OLD_UPSTREAM}" == */ ]] && old_suffix=slash
-  [[ "${NEW_UPSTREAM}" == */ ]] && new_suffix=slash
-  [[ "${old_suffix}" == "${new_suffix}" ]] || fatal
+  [[ "${OLD_UPSTREAM:-}" =~ ^http://127\.0\.0\.1:[1-9][0-9]{0,4}/$ ]] || fatal
+  [[ "${NEW_UPSTREAM:-}" =~ ^http://(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}):[1-9][0-9]{0,4}/$ ]] || fatal
   [[ "${NEW_HEALTH_URL:-}" == "${NEW_UPSTREAM%/}/healthz" ]] || fatal
   local old_port new_port
   old_port=${OLD_UPSTREAM%/}
@@ -420,8 +416,8 @@ receive_patch_descriptor() {
     printf 'schema=solidstats-memory-nginx-patch/v1\n'
     printf 'public_port=8443\n'
     printf 'public_location=/solidstats/\n'
-    printf 'old_upstream=MEMORY_OPERATOR_BOUND_OLD_UPSTREAM\n'
-    printf 'new_upstream=MEMORY_OPERATOR_BOUND_NEW_UPSTREAM\n'
+    printf 'old_upstream=MEMORY_OPERATOR_BOUND_OLD_UPSTREAM_ROOT_WITH_TRAILING_SLASH\n'
+    printf 'new_upstream=MEMORY_OPERATOR_BOUND_NEW_UPSTREAM_ROOT_WITH_TRAILING_SLASH\n'
   } | private_write "${expected}"
   cmp -s -- "${temporary}" "${expected}" || fatal
   chmod 600 "${temporary}"

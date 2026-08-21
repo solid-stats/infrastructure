@@ -13,7 +13,9 @@ import sys
 
 SCHEMA = "solidstats-memory-nginx-patch/v1"
 MAX_BYTES = 1024 * 1024
-SAFE_UPSTREAM = re.compile(r"http://([0-9]{1,3}(?:\.[0-9]{1,3}){3}):([1-9][0-9]{0,4})(/?)")
+SAFE_UPSTREAM_ROOT = re.compile(
+    r"http://([0-9]{1,3}(?:\.[0-9]{1,3}){3}):([1-9][0-9]{0,4})/"
+)
 
 
 class PatchError(ValueError):
@@ -52,8 +54,8 @@ def parse_descriptor(data: bytes) -> dict[str, str]:
         "new_upstream",
     }:
         raise PatchError("nginx patch descriptor is invalid")
-    old_match = SAFE_UPSTREAM.fullmatch(result.get("old_upstream", ""))
-    new_match = SAFE_UPSTREAM.fullmatch(result.get("new_upstream", ""))
+    old_match = SAFE_UPSTREAM_ROOT.fullmatch(result.get("old_upstream", ""))
+    new_match = SAFE_UPSTREAM_ROOT.fullmatch(result.get("new_upstream", ""))
     try:
         old_ip = ipaddress.ip_address(old_match.group(1) if old_match else "")
         new_ip = ipaddress.ip_address(new_match.group(1) if new_match else "")
@@ -68,7 +70,6 @@ def parse_descriptor(data: bytes) -> dict[str, str]:
         or new_ip.is_loopback
         or int(new_match.group(2)) > 65535
         or int(old_match.group(2)) > 65535
-        or old_match.group(3) != new_match.group(3)
         or result["old_upstream"] == result["new_upstream"]
     ):
         raise PatchError("nginx patch descriptor is invalid")

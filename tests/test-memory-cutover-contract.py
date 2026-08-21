@@ -2129,12 +2129,33 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual(original, available.read_bytes())
         self.assertEqual(0, run("install-nginx", stdin=template).returncode)
         installed = available.read_bytes()
+        expected = original.replace(
+            b"proxy_pass http://127.0.0.1:8767/;",
+            b"proxy_pass http://10.23.45.67:8765/;",
+            1,
+        )
+        self.assertEqual(expected, installed)
         self.assertIn(b"proxy_pass http://10.23.45.67:8765/;", installed)
         self.assertIn(b"proxy_pass http://127.0.0.1:8766;", installed)
         self.assertIn(b"ssl_certificate /private/certificate;", installed)
         self.assertNotIn(b"proxy_pass http://127.0.0.1:8767/;", installed)
         self.assertEqual(0o640, available.stat().st_mode & 0o777)
         self.assertEqual(str(available), os.readlink(enabled))
+        request_path = "/solidstats/mcp"
+        location_prefix = "/solidstats/"
+        upstream_root_path = "/"
+        self.assertEqual(
+            "/mcp",
+            upstream_root_path + request_path.removeprefix(location_prefix),
+        )
+        self.assertEqual(
+            original,
+            installed.replace(
+                b"proxy_pass http://10.23.45.67:8765/;",
+                b"proxy_pass http://127.0.0.1:8767/;",
+                1,
+            ),
+        )
 
         self.assertEqual(0, run("rollback-nginx").returncode)
         self.assertEqual(original, available.read_bytes())
@@ -2183,6 +2204,123 @@ class MemoryCutoverContractTests(unittest.TestCase):
         run_id = "e" * 64
         self.assertNotEqual(0, run("capture-prestate").returncode)
         remote.chmod(0o700)
+
+        original_config = config.read_text(encoding="ascii")
+        invalid_bindings = (
+            (
+                "old_upstream=http://127.0.0.1:8767/",
+                "old_upstream=http://127.0.0.1:8767",
+            ),
+            (
+                "old_upstream=http://127.0.0.1:8767/",
+                "old_upstream=http://127.0.0.1:8767//",
+            ),
+            (
+                "old_upstream=http://127.0.0.1:8767/",
+                "old_upstream=http://127.0.0.1:8767/mcp/",
+            ),
+            (
+                "new_upstream=http://10.23.45.67:8765/",
+                "new_upstream=http://10.23.45.67:8765",
+            ),
+            (
+                "new_upstream=http://10.23.45.67:8765/",
+                "new_upstream=http://10.23.45.67:8765/?query=1",
+            ),
+            (
+                "new_upstream=http://10.23.45.67:8765/",
+                "new_upstream=http://10.23.45.67:8765/#fragment",
+            ),
+        )
+        for index, (valid, invalid) in enumerate(invalid_bindings):
+            with self.subTest(remote_binding=invalid):
+                config.write_text(
+                    original_config.replace(valid, invalid), encoding="ascii"
+                )
+                config.chmod(0o600)
+                run_id = f"{index + 10:064x}"
+                self.assertNotEqual(0, run("capture-prestate").returncode)
+        config.write_text(original_config, encoding="ascii")
+        config.chmod(0o600)
+
+    def test_shared_nginx_renderer_requires_origin_roots_with_one_slash(self) -> None:
+        site = self.root / "shared-8443.conf"
+        site.write_bytes(
+            b"server {\n"
+            b"    listen [::]:8443 ssl;\n"
+            b"    ssl_certificate /synthetic/tls.crt;\n"
+            b"    ssl_certificate_key /synthetic/tls.key;\n"
+            b"    location /personal/ {\n"
+            b"        proxy_pass http://127.0.0.1:8766/;\n"
+            b"    }\n"
+            b"    location /solidstats/ {\n"
+            b"        proxy_pass http://127.0.0.1:8767/;\n"
+            b"    }\n"
+            b"}\n"
+        )
+        renderer = ROOT / "scripts/render-solidstats-memory-shared-nginx.py"
+
+        def render(
+            old: str, new: str, index: int
+        ) -> subprocess.CompletedProcess[str]:
+            descriptor = self.root / f"descriptor-{index}"
+            output = self.root / f"rendered-{index}.conf"
+            descriptor.write_text(
+                "\n".join(
+                    (
+                        "schema=solidstats-memory-nginx-patch/v1",
+                        "public_port=8443",
+                        "public_location=/solidstats/",
+                        f"old_upstream={old}",
+                        f"new_upstream={new}",
+                    )
+                )
+                + "\n",
+                encoding="ascii",
+            )
+            descriptor.chmod(0o600)
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(renderer),
+                    str(site),
+                    str(descriptor),
+                    str(output),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+
+        accepted = render(
+            "http://127.0.0.1:8767/", "http://192.168.50.20:8765/", 0
+        )
+        self.assertEqual(0, accepted.returncode, accepted.stderr)
+        rendered = (self.root / "rendered-0.conf").read_bytes()
+        self.assertEqual(
+            site.read_bytes().replace(
+                b"proxy_pass http://127.0.0.1:8767/;",
+                b"proxy_pass http://192.168.50.20:8765/;",
+                1,
+            ),
+            rendered,
+        )
+        self.assertEqual(
+            "/mcp", "/" + "/solidstats/mcp".removeprefix("/solidstats/")
+        )
+
+        invalid_pairs = (
+            ("http://127.0.0.1:8767", "http://192.168.50.20:8765/"),
+            ("http://127.0.0.1:8767//", "http://192.168.50.20:8765/"),
+            ("http://127.0.0.1:8767/mcp/", "http://192.168.50.20:8765/"),
+            ("http://127.0.0.1:8767/", "http://192.168.50.20:8765"),
+            ("http://127.0.0.1:8767/", "http://192.168.50.20:8765/?query=1"),
+            ("http://127.0.0.1:8767/", "http://192.168.50.20:8765/#fragment"),
+        )
+        for index, pair in enumerate(invalid_pairs, start=1):
+            with self.subTest(upstreams=pair):
+                self.assertNotEqual(0, render(*pair, index).returncode)
 
     def test_remote_operator_rejects_unsafe_sibling_config(self) -> None:
         remote = self.root / "unsafe-remote"
