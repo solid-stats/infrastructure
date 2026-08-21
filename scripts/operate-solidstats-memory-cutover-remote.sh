@@ -507,6 +507,24 @@ set_legacy_state() {
   [[ "$(legacy_state)" == "${desired}" ]] || fatal
 }
 
+set_freeze_lock_state() {
+  local desired="$1" current
+  current=$(freeze_lock_state)
+  [[ "${current}" == "${desired}" ]] && return 0
+  case "${desired}" in
+    running)
+      run_quiet "${RUNUSER_PATH}" -u "${LEGACY_USER}" -- "${DOCKER_PATH}" \
+        --host "unix://${LEGACY_SOCKET}" start "${FREEZE_LOCK_CONTAINER}"
+      ;;
+    stopped)
+      run_quiet "${RUNUSER_PATH}" -u "${LEGACY_USER}" -- "${DOCKER_PATH}" \
+        --host "unix://${LEGACY_SOCKET}" stop --time 30 "${FREEZE_LOCK_CONTAINER}"
+      ;;
+    *) fatal ;;
+  esac
+  [[ "$(freeze_lock_state)" == "${desired}" ]] || fatal
+}
+
 new_state() {
   local replicas available
   replicas=$(new_replicas)
@@ -830,6 +848,7 @@ restore_runtime_component() {
   else
     set_new_replicas "${desired}"
   fi
+  set_freeze_lock_state "$(field freeze_lock_state)"
   [[ "$(freeze_lock_state)" == "$(field freeze_lock_state)" ]] || fatal
   record_operation "${operation}" complete
 }
@@ -1049,10 +1068,12 @@ verify_reboot_recovery() {
   kube_quiet rollout status "statefulset/${QDRANT_STATEFULSET}" \
     "--timeout=${reconnect_timeout}s"
   wait_new_replicas "${NEW_EXPECTED_REPLICAS}"
+  set_freeze_lock_state "$(field freeze_lock_state)"
   run_quiet "${SYSTEMCTL_PATH}" is-active --quiet "${NGINX_UNIT}"
   write_result verify-reboot-recovery \
     "boot_identity_changed=true" "node_ready=true" "pvc_bound=true" \
     "qdrant_ready=true" "mempalace_available=true" "nginx_active=true" \
+    "freeze_lock_restored=true" \
     "reconnect_timeout_seconds=${reconnect_timeout}"
   record_operation verify-reboot-recovery complete
 }
