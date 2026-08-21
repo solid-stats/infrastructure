@@ -331,11 +331,11 @@ remove_new_client() {
     return 0
   fi
   required SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH
+  if ! timeout "${LOCAL_TIMEOUT}" codex mcp get solidstats_memory \
+    >/dev/null 2>&1; then
+    return 0
+  fi
   if [[ ! -f "${CLIENT_CONFIG_PRESTATE}" || -L "${CLIENT_CONFIG_PRESTATE}" ]]; then
-    if ! timeout "${LOCAL_TIMEOUT}" codex mcp get solidstats_memory \
-      >/dev/null 2>&1; then
-      return 0
-    fi
     echo "FATAL: exact client config prestate is unavailable" >&2
     return 1
   fi

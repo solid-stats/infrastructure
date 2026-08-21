@@ -3744,6 +3744,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn("backup_timeout_seconds", remote)
         self.assertIn("set_freeze_lock_state", remote)
         self.assertIn('"freeze_lock_restored=true"', remote)
+        self.assertIn("codex mcp get solidstats_memory", cutover)
         self.assertIn(
             'BACKUP_REMOTE_TIMEOUT_SECONDS="${SOLIDSTATS_MEMORY_BACKUP_REMOTE_TIMEOUT_SECONDS:-3600}"',
             cutover,
