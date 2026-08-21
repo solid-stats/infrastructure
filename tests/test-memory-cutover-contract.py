@@ -2542,6 +2542,20 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 self.assertEqual(current, config.read_bytes())
                 self.assertFalse(result.exists())
 
+        config.write_bytes(current)
+        config.chmod(0o600)
+        def partial_remove(_expected: bytes) -> None:
+            config.write_bytes(b"partial external mutation\n")
+            raise CLIENT_POLICY.PolicyError("injected partial remove failure")
+        with self.assertRaises(CLIENT_POLICY.PolicyError):
+            CLIENT_POLICY.retire_transaction(
+                config, prestate, result,
+                url="https://memory.example/solidstats/mcp",
+                token_env="SOLIDSTATS_MEMORY_TOKEN",
+                remove=partial_remove,
+            )
+        self.assertEqual(current, config.read_bytes())
+
         CLIENT_POLICY.retire_transaction(
             config,
             prestate,

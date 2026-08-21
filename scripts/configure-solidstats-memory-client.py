@@ -425,8 +425,6 @@ def retire_transaction(
     except BaseException as error:
         try:
             observed, _ = _safe_file(config)
-            if observed not in (current, retired):
-                raise PolicyError("client drift prevents retirement rollback")
             if observed != current:
                 _atomic_replace(config, current, mode)
             restored, _ = _safe_file(config)
