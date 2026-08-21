@@ -228,6 +228,39 @@ class MemoryOperatorContractTests(unittest.TestCase):
         state.assert_called_once_with()
         measured.assert_called_once_with()
 
+        with (
+            mock.patch.object(runtime, "_namespace_exists", return_value=False),
+            mock.patch.object(runtime, "_kubectl"),
+            mock.patch.object(runtime, "_verify_mempalace_registry_image"),
+            mock.patch.object(runtime, "_verify_uploader_registry_image"),
+            mock.patch.object(runtime, "_probe_s3"),
+            mock.patch.object(
+                runtime,
+                "_measure_prestate",
+                return_value=(prestate, {"stable": True, "writer_count": 0}),
+            ),
+            mock.patch.object(runtime, "_measure_capacity", return_value=capacity),
+        ):
+            replay = runtime.inspect_preflight(self.valid["inspect-preflight"])
+        self.assertEqual(result, replay)
+
+        changed = {**prestate, "nginx_sha256": "6" * 64}
+        with (
+            mock.patch.object(runtime, "_namespace_exists", return_value=False),
+            mock.patch.object(runtime, "_kubectl"),
+            mock.patch.object(runtime, "_verify_mempalace_registry_image"),
+            mock.patch.object(runtime, "_verify_uploader_registry_image"),
+            mock.patch.object(runtime, "_probe_s3"),
+            mock.patch.object(
+                runtime,
+                "_measure_prestate",
+                return_value=(changed, {"stable": True, "writer_count": 0}),
+            ),
+            mock.patch.object(runtime, "_measure_capacity", return_value=capacity),
+        ):
+            with self.assertRaisesRegex(OPERATOR.OperatorError, "collision"):
+                runtime.inspect_preflight(self.valid["inspect-preflight"])
+
     def test_s3_probe_uses_checked_in_region_without_vendor_head_header(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
         runtime._source_s3_values = mock.Mock(

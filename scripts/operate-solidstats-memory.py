@@ -1010,7 +1010,12 @@ class Runtime:
         if quiescence != {"stable": True, "writer_count": 0}:
             raise OperatorError("write quiescence is not proven")
         capacity = self._measure_capacity()
-        write_private(self.state_root / "prestate.json", prestate)
+        prestate_path = self.state_root / "prestate.json"
+        if prestate_path.exists():
+            if load_json(prestate_path, private=True) != prestate:
+                raise OperatorError("preflight pre-state replay collision")
+        else:
+            write_private(prestate_path, prestate)
         return {
             "reachability": {"kubernetes": True, "s3": True},
             "prestate": prestate,
