@@ -129,14 +129,34 @@ spec:
 
                   def canonical_tree_digest(root):
                       root = Path(root)
+                      resolved_root = root.resolve(strict=True)
                       digest = hashlib.sha256()
                       for path in sorted(root.rglob("*")):
+                          relative = path.relative_to(root).as_posix().encode()
                           if path.is_symlink():
-                              raise RuntimeError("metadata symlink is not allowed")
+                              target = os.readlink(path)
+                              if Path(target).is_absolute():
+                                  raise RuntimeError("absolute metadata symlink is not allowed")
+                              try:
+                                  resolved = path.resolve(strict=True)
+                                  resolved.relative_to(resolved_root)
+                              except (OSError, ValueError) as exc:
+                                  raise RuntimeError(
+                                      "escaping metadata symlink is not allowed"
+                                  ) from exc
+                              if not resolved.is_file():
+                                  raise RuntimeError(
+                                      "metadata symlink target must be a regular file"
+                                  )
+                              digest.update(relative + b"\0L\0")
+                              digest.update(target.encode("utf-8") + b"\0")
+                              digest.update(
+                                  hashlib.sha256(resolved.read_bytes()).digest()
+                              )
+                              continue
                           if not path.is_file():
                               continue
-                          relative = path.relative_to(root).as_posix().encode()
-                          digest.update(relative + b"\0")
+                          digest.update(relative + b"\0F\0")
                           digest.update(hashlib.sha256(path.read_bytes()).digest())
                       return digest.hexdigest()
 
@@ -484,13 +504,34 @@ spec:
 
                   def canonical_tree_digest(root):
                       root = Path(root)
+                      resolved_root = root.resolve(strict=True)
                       digest = hashlib.sha256()
                       for path in sorted(root.rglob("*")):
+                          relative = path.relative_to(root).as_posix().encode()
                           if path.is_symlink():
-                              raise RuntimeError("metadata symlink is not allowed")
+                              target = os.readlink(path)
+                              if Path(target).is_absolute():
+                                  raise RuntimeError("absolute metadata symlink is not allowed")
+                              try:
+                                  resolved = path.resolve(strict=True)
+                                  resolved.relative_to(resolved_root)
+                              except (OSError, ValueError) as exc:
+                                  raise RuntimeError(
+                                      "escaping metadata symlink is not allowed"
+                                  ) from exc
+                              if not resolved.is_file():
+                                  raise RuntimeError(
+                                      "metadata symlink target must be a regular file"
+                                  )
+                              digest.update(relative + b"\0L\0")
+                              digest.update(target.encode("utf-8") + b"\0")
+                              digest.update(
+                                  hashlib.sha256(resolved.read_bytes()).digest()
+                              )
+                              continue
                           if not path.is_file():
                               continue
-                          digest.update(path.relative_to(root).as_posix().encode() + b"\0")
+                          digest.update(relative + b"\0F\0")
                           digest.update(hashlib.sha256(path.read_bytes()).digest())
                       return digest.hexdigest()
 

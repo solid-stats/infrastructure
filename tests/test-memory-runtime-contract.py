@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import importlib.util
@@ -276,6 +277,60 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
             r"restore_required = False\n\s+mark\(writer_restored\)",
         )
         self.assertNotIn("snapshot-and-package", [item["name"] for item in containers])
+
+    def test_backup_metadata_digest_preserves_only_contained_file_symlinks(self) -> None:
+        cronjob = next(
+            document
+            for document in yaml.safe_load_all(
+                (ROOT / "k8s" / "memory" / "40-backup.yaml").read_text()
+            )
+            if document["kind"] == "CronJob"
+        )
+        pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        sources = (
+            pod["initContainers"][0]["args"][0],
+            pod["containers"][0]["args"][0],
+        )
+
+        functions = []
+        for source in sources:
+            definition = next(
+                node
+                for node in ast.parse(source).body
+                if isinstance(node, ast.FunctionDef)
+                and node.name == "canonical_tree_digest"
+            )
+            namespace = {"Path": Path, "hashlib": hashlib, "os": os}
+            exec(compile(ast.Module([definition], []), "digest.py", "exec"), namespace)
+            functions.append(namespace["canonical_tree_digest"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "palace"
+            blobs = root / "blobs"
+            snapshot = root / "snapshots" / "revision"
+            blobs.mkdir(parents=True)
+            snapshot.mkdir(parents=True)
+            (blobs / "model").write_bytes(b"model-bytes")
+            (snapshot / "model").symlink_to("../../blobs/model")
+
+            expected = functions[0](root)
+            self.assertEqual(expected, functions[1](root))
+
+            archive = Path(directory) / "metadata.tar"
+            with tarfile.open(archive, "w") as package:
+                package.add(root, arcname="palace")
+            extracted = Path(directory) / "extracted"
+            extracted.mkdir()
+            with tarfile.open(archive) as package:
+                package.extractall(extracted, filter="data")
+            self.assertEqual(expected, functions[1](extracted / "palace"))
+
+            outside = Path(directory) / "outside"
+            outside.write_bytes(b"outside")
+            (root / "escape").symlink_to(outside)
+            for function in functions:
+                with self.assertRaisesRegex(RuntimeError, "symlink"):
+                    function(root)
 
     def test_mempalace_uses_the_pinned_exact_image_cli_contract(self) -> None:
         documents = list(
