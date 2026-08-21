@@ -1151,7 +1151,7 @@ print(hashlib.sha256(raw).hexdigest())
 import json,sys
 value=json.load(open(sys.argv[1]))
 expected={"schema","source_suspended_sha256","rendered_suspended_sha256","active_candidate_sha256","canonical_job_template_sha256","source_render_exact"}
-ok=set(value)==expected and value["schema"]=="solidstats-memory-backup-activation-render/v1" and value["source_render_exact"] is True and value["source_suspended_sha256"]==value["rendered_suspended_sha256"] and value["active_candidate_sha256"]==sys.argv[2] and value["canonical_job_template_sha256"]==sys.argv[3]
+ok=set(value)==expected and value["schema"]=="solidstats-memory-backup-activation-render/v1" and value["source_render_exact"] is True and value["source_suspended_sha256"]!=value["rendered_suspended_sha256"] and value["active_candidate_sha256"]==sys.argv[2] and value["canonical_job_template_sha256"]==sys.argv[3]
 print("true" if ok else "false")
 ' "${directory}/backup-activation.provenance.json" "${candidate_sha}" "${digest}")
   [[ "${provenance_status}" == true ]] || fatal

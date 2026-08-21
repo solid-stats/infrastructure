@@ -3794,17 +3794,60 @@ spec:
     spec:
       template:
         spec:
+          initContainers:
+            - name: prepare
+              image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST
+            - name: upload
+              image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST
+            - name: download
+              image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST
+          containers:
+            - name: verify
+              image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST
+              env:
+                - name: QDRANT_COLLECTION
+                  value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME
           restartPolicy: Never
 """
+        mempalace_image = "ghcr.io/mempalace/mempalace@sha256:" + "1" * 64
+        uploader_image = "public.ecr.aws/aws-cli/aws-cli@sha256:" + "2" * 64
+        collection = "solidstats_memory_test"
+        rendered_manifest = (
+            manifest.replace(
+                b"MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST",
+                mempalace_image.encode(),
+            )
+            .replace(
+                b"MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST",
+                uploader_image.encode(),
+            )
+            .replace(
+                b"MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
+                collection.encode(),
+            )
+        )
         source.write_bytes(manifest)
-        rendered.write_bytes(manifest)
+        rendered.write_bytes(rendered_manifest)
+        config = self.root / "operator-config.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "mempalace_image": mempalace_image,
+                    "uploader_image": uploader_image,
+                    "private_collection": collection,
+                }
+            ),
+            encoding="ascii",
+        )
+        config.chmod(0o600)
 
         def invoke(suffix: str) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
                 [sys.executable, str(ACTIVATION_RENDERER_PATH), str(source), str(rendered),
                  str(self.root / f"active-source-{suffix}.yaml"),
                  str(self.root / f"active-rendered-{suffix}.yaml"),
-                 str(self.root / f"descriptor-{suffix}.json")],
+                 str(self.root / f"descriptor-{suffix}.json"),
+                 "--operator-config", str(config)],
                 capture_output=True, text=True, timeout=10, check=False,
             )
 
@@ -3812,14 +3855,16 @@ spec:
         self.assertEqual(0, accepted.returncode, accepted.stderr)
         descriptor = json.loads((self.root / "descriptor-accepted.json").read_text())
         self.assertTrue(descriptor["source_render_exact"])
-        self.assertEqual(descriptor["source_suspended_sha256"], descriptor["rendered_suspended_sha256"])
-        self.assertEqual(
+        self.assertNotEqual(descriptor["source_suspended_sha256"], descriptor["rendered_suspended_sha256"])
+        self.assertNotEqual(
             (self.root / "active-source-accepted.yaml").read_bytes(),
             (self.root / "active-rendered-accepted.yaml").read_bytes(),
         )
-        rendered.write_bytes(manifest + b"# render drift\n")
+        self.assertIn(mempalace_image.encode(), (self.root / "active-rendered-accepted.yaml").read_bytes())
+        self.assertIn(b"MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST", (self.root / "active-source-accepted.yaml").read_bytes())
+        rendered.write_bytes(rendered_manifest + b"# render drift\n")
         self.assertNotEqual(0, invoke("render-drift").returncode)
-        rendered.write_bytes(manifest)
+        rendered.write_bytes(rendered_manifest)
         source.write_bytes(manifest + b"# source drift\n")
         self.assertNotEqual(0, invoke("source-drift").returncode)
 

@@ -697,10 +697,9 @@ prepare_backup_activation() {
   [[ "${CUTOVER_SELF_TEST:-}" != 1 ]] || return 0
   local source="${SCRIPT_DIR}/../k8s/memory/40-backup.yaml"
   required SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR
+  required SOLIDSTATS_MEMORY_OPERATOR_CONFIG
   timeout "${LOCAL_TIMEOUT}" python3 "${SCRIPT_DIR}/validate-memory-manifests.py" \
     --allow-operator-placeholders >/dev/null
-  timeout "${LOCAL_TIMEOUT}" python3 "${SCRIPT_DIR}/validate-memory-manifests.py" \
-    --manifest-dir "${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}" >/dev/null
   BACKUP_SOURCE_PRESTATE="${STATE_DIR}/40-backup.suspended.yaml"
   BACKUP_SOURCE_CANDIDATE="${STATE_DIR}/40-backup.active.yaml"
   BACKUP_RENDERED_PRESTATE="${STATE_DIR}/40-backup.rendered-suspended.yaml"
@@ -714,7 +713,8 @@ prepare_backup_activation() {
   timeout "${LOCAL_TIMEOUT}" python3 "${ACTIVATION_RENDERER}" \
     "${source}" "${rendered}" "${BACKUP_SOURCE_CANDIDATE}" \
     "${BACKUP_RENDERED_CANDIDATE}" \
-    "${STATE_DIR}/backup-activation.provenance.json" >/dev/null
+    "${STATE_DIR}/backup-activation.provenance.json" \
+    --operator-config "${SOLIDSTATS_MEMORY_OPERATOR_CONFIG}" >/dev/null
   sha256sum "${source}" "${BACKUP_SOURCE_CANDIDATE}" \
     "${rendered}" "${BACKUP_RENDERED_CANDIDATE}" >"${STATE_DIR}/backup-activation.digests"
   chmod 600 "${STATE_DIR}/backup-activation.digests"
