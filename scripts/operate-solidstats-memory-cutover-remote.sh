@@ -243,22 +243,111 @@ resource_identity() {
 }
 
 qdrant_inventory() {
-  local value
+  local value image manifest
+  local pod="phase21-qdrant-inventory-${RUN_ID_SHA256:0:12}"
+  local policy="${pod}"
+  image=$(kube_value get deployment "${MEMORY_DEPLOYMENT}" \
+    -o 'jsonpath={.spec.template.spec.containers[?(@.name=="mempalace")].image}')
+  [[ "${image}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}@sha256:[0-9a-f]{64}$ ]] || fatal
+  manifest="${RUN_ROOT}/qdrant-inventory.yaml"
+  {
+    printf '%s\n' \
+      'apiVersion: networking.k8s.io/v1' \
+      'kind: NetworkPolicy' \
+      'metadata:' \
+      "  name: ${policy}" \
+      "  namespace: ${MEMORY_NAMESPACE}" \
+      'spec:' \
+      '  podSelector:' \
+      '    matchLabels:' \
+      '      solidstats.memory/role: qdrant-admin-inventory' \
+      '  policyTypes: [Egress]' \
+      '  egress:' \
+      '    - to:' \
+      '        - podSelector:' \
+      '            matchLabels:' \
+      '              app.kubernetes.io/name: qdrant' \
+      '      ports:' \
+      '        - protocol: TCP' \
+      '          port: 6333' \
+      '---' \
+      'apiVersion: v1' \
+      'kind: Pod' \
+      'metadata:' \
+      "  name: ${pod}" \
+      "  namespace: ${MEMORY_NAMESPACE}" \
+      '  labels:' \
+      '    solidstats.memory/role: qdrant-admin-inventory' \
+      'spec:' \
+      '  serviceAccountName: mempalace' \
+      '  automountServiceAccountToken: false' \
+      '  restartPolicy: Never' \
+      '  securityContext:' \
+      '    runAsNonRoot: true' \
+      '    runAsUser: 1000' \
+      '    runAsGroup: 1000' \
+      '    seccompProfile:' \
+      '      type: RuntimeDefault' \
+      '  containers:' \
+      '    - name: inventory' \
+      "      image: ${image}" \
+      '      imagePullPolicy: IfNotPresent' \
+      '      command: ["python"]' \
+      '      args:' \
+      '        - -c' \
+      '        - |' \
+      '          import hashlib,json,os,urllib.request' \
+      '          headers={"api-key":os.environ["QDRANT_API_KEY"]}' \
+      '          def get(path):' \
+      '           request=urllib.request.Request("http://qdrant:6333"+path,headers=headers)' \
+      '           with urllib.request.urlopen(request,timeout=20) as response:return json.load(response)' \
+      '          collections=sorted(x["name"] for x in get("/collections")["result"]["collections"])' \
+      '          aliases=sorted((x["alias_name"],x["collection_name"]) for x in get("/collections/aliases")["result"]["aliases"])' \
+      '          raw=json.dumps({"collections":collections,"aliases":aliases},separators=(",",":"),sort_keys=True).encode()' \
+      '          print(hashlib.sha256(raw).hexdigest(),len(collections),len(aliases))' \
+      '      env:' \
+      '        - name: QDRANT_API_KEY' \
+      '          valueFrom:' \
+      '            secretKeyRef:' \
+      '              name: qdrant-runtime' \
+      '              key: QDRANT_API_KEY' \
+      '      securityContext:' \
+      '        allowPrivilegeEscalation: false' \
+      '        readOnlyRootFilesystem: true' \
+      '        capabilities:' \
+      '          drop: ["ALL"]' \
+      '      resources:' \
+      '        requests:' \
+      '          cpu: 10m' \
+      '          memory: 32Mi' \
+      '        limits:' \
+      '          cpu: 100m' \
+      '          memory: 128Mi'
+  } | private_write "${manifest}"
+  cleanup_qdrant_inventory() {
+    local failed=0
+    timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
+      "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
+      delete pod "${pod}" --ignore-not-found=true --wait=true \
+      "--timeout=${COMMAND_TIMEOUT_SECONDS}s" </dev/null >/dev/null 2>&1 || failed=1
+    timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
+      "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
+      delete networkpolicy "${policy}" --ignore-not-found=true --wait=true \
+      "--timeout=${COMMAND_TIMEOUT_SECONDS}s" </dev/null >/dev/null 2>&1 || failed=1
+    return "${failed}"
+  }
+  cleanup_qdrant_inventory || fatal
+  trap 'cleanup_qdrant_inventory || exit 1' EXIT INT TERM
+  kube_quiet apply -f "${manifest}"
+  kube_quiet wait --for=jsonpath='{.status.phase}'=Succeeded "pod/${pod}" \
+    "--timeout=${COMMAND_TIMEOUT_SECONDS}s"
   value=$(timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
     "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
-    exec deployment/mempalace -- python3 -c '
-import hashlib,json,os,urllib.request
-root=os.environ["MEMPALACE_QDRANT_URL"].rstrip("/")
-headers={"api-key":os.environ["MEMPALACE_QDRANT_API_KEY"]}
-def get(path):
- req=urllib.request.Request(root+path,headers=headers)
- with urllib.request.urlopen(req,timeout=20) as response:return json.load(response)
-collections=sorted(x["name"] for x in get("/collections")["result"]["collections"])
-aliases=sorted((x["alias_name"],x["collection_name"]) for x in get("/collections/aliases")["result"]["aliases"])
-raw=json.dumps({"collections":collections,"aliases":aliases},separators=(",",":"),sort_keys=True).encode()
-print(hashlib.sha256(raw).hexdigest(),len(collections),len(aliases))
-' 2>/dev/null) || fatal
+    logs "pod/${pod}" </dev/null 2>/dev/null) || fatal
+  [[ "${#value}" -le 96 && "${value}" != *$'\n'* ]] || fatal
   [[ "${value}" =~ ^[0-9a-f]{64}[[:space:]][0-9]+[[:space:]][0-9]+$ ]] || fatal
+  cleanup_qdrant_inventory || fatal
+  trap - EXIT INT TERM
   printf '%s\n' "${value}"
 }
 

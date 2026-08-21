@@ -2686,6 +2686,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         mempalace_uid = fixture / "mempalace.uid"
         qdrant_uid = fixture / "qdrant.uid"
         backup_schedule = fixture / "backup.schedule"
+        inventory_output = fixture / "inventory.output"
         events = fixture / "events"
         legacy_state.write_text("running\n", encoding="ascii")
         freeze_state.write_text("running\n", encoding="ascii")
@@ -2693,6 +2694,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         mempalace_uid.write_text("mempalace-before\n", encoding="ascii")
         qdrant_uid.write_text("qdrant-before\n", encoding="ascii")
         backup_schedule.write_text("true\n", encoding="ascii")
+        inventory_output.write_text("0" * 64 + " 2 1\n", encoding="ascii")
 
         runuser_path = fixture / "runuser"
         runuser_path.write_text(
@@ -2716,12 +2718,18 @@ class MemoryCutoverContractTests(unittest.TestCase):
         kubectl_path = fixture / "kubectl"
         kubectl_path.write_text(
             "#!/usr/bin/env bash\nset -eu\n"
-            f"state={new_state}\nmem_uid={mempalace_uid}\nqdrant_uid={qdrant_uid}\nschedule={backup_schedule}\nlog={events}\n"
+            f"state={new_state}\nmem_uid={mempalace_uid}\nqdrant_uid={qdrant_uid}\nschedule={backup_schedule}\ninventory={inventory_output}\nlog={events}\n"
             '[[ " $* " == *" --context fixture-context "* && " $* " == *" -n solidstats-memory "* ]] || exit 9\n'
-            'if [[ " $* " == *" get deployment mempalace "* ]]; then replicas=$(cat "$state"); [[ "$replicas" == running ]] && replicas=1 || replicas=0; echo -n "$replicas"; '
+            'if [[ " $* " == *" get deployment mempalace "* && " $* " == *"containers[?(@.name==\\\"mempalace\\\")].image"* ]]; then printf "ghcr.io/solid-stats/mempalace@sha256:%064d" 0; '
+            'elif [[ " $* " == *" get deployment mempalace "* ]]; then replicas=$(cat "$state"); [[ "$replicas" == running ]] && replicas=1 || replicas=0; echo -n "$replicas"; '
             'elif [[ " $* " == *" get pods -l app.kubernetes.io/name=mempalace "* ]]; then cat "$mem_uid"; '
             'elif [[ " $* " == *" get pods -l app.kubernetes.io/name=qdrant "* ]]; then cat "$qdrant_uid"; '
-            'elif [[ " $* " == *" exec deployment/mempalace "* ]]; then printf "%064d 2 1\\n" 0; '
+            'elif [[ " $* " == *" exec deployment/mempalace "* ]]; then exit 88; '
+            'elif [[ " $* " == *" delete pod phase21-qdrant-inventory-"* ]]; then printf "inventory:pod-cleanup\\n" >>"$log"; '
+            'elif [[ " $* " == *" delete networkpolicy phase21-qdrant-inventory-"* ]]; then printf "inventory:policy-cleanup\\n" >>"$log"; '
+            'elif [[ " $* " == *" apply -f "* ]]; then printf "inventory:apply\\n" >>"$log"; '
+            'elif [[ " $* " == *" wait --for=jsonpath={.status.phase}=Succeeded pod/phase21-qdrant-inventory-"* ]]; then true; '
+            'elif [[ " $* " == *" logs pod/phase21-qdrant-inventory-"* ]]; then cat "$inventory"; '
             'elif [[ " $* " == *" rollout restart deployment/mempalace "* ]]; then printf "mempalace-after\\n" >"$mem_uid"; printf "mempalace:restart\\n" >>"$log"; '
             'elif [[ " $* " == *" rollout restart statefulset/qdrant "* ]]; then printf "qdrant-after\\n" >"$qdrant_uid"; printf "qdrant:restart\\n" >>"$log"; '
             'elif [[ " $* " == *" scale deployment/mempalace "* ]]; then [[ " $* " == *"--replicas=1"* ]] && printf "running\\n" >"$state" || printf "stopped\\n" >"$state"; printf "new:scale\\n" >>"$log"; '
@@ -2860,6 +2868,27 @@ class MemoryCutoverContractTests(unittest.TestCase):
             self.assertNotIn("10.23.45.67", public_result)
             self.assertNotIn("Bearer", public_result)
             self.assertNotIn("/private/", public_result)
+
+        inventory_manifest = (run_root / "qdrant-inventory.yaml").read_text()
+        self.assertIn("secretKeyRef:", inventory_manifest)
+        self.assertIn("name: qdrant-runtime", inventory_manifest)
+        self.assertIn("key: QDRANT_API_KEY", inventory_manifest)
+        self.assertIn("solidstats.memory/role: qdrant-admin-inventory", inventory_manifest)
+        self.assertIn("kind: NetworkPolicy", inventory_manifest)
+        self.assertIn("automountServiceAccountToken: false", inventory_manifest)
+        self.assertIn("readOnlyRootFilesystem: true", inventory_manifest)
+        self.assertNotIn("MEMPALACE_QDRANT_API_KEY", operator.read_text())
+        self.assertNotIn("exec deployment/mempalace", operator.read_text())
+        successful_events = events.read_text()
+        self.assertGreaterEqual(successful_events.count("inventory:pod-cleanup"), 4)
+        self.assertGreaterEqual(successful_events.count("inventory:policy-cleanup"), 4)
+        inventory_output.write_text("0" * 64 + " 2 1\nextra\n", encoding="ascii")
+        cleanup_before = events.read_text().count("inventory:pod-cleanup")
+        malformed = run("verify-retained-collections")
+        self.assertNotEqual(0, malformed.returncode)
+        self.assertGreater(events.read_text().count("inventory:pod-cleanup"), cleanup_before)
+        self.assertNotIn("QDRANT_API_KEY", malformed.stdout.decode())
+        inventory_output.write_text("0" * 64 + " 2 1\n", encoding="ascii")
 
         self.assertEqual(0, run("suspend-backup-schedule").returncode)
         self.assertEqual("true", backup_schedule.read_text().strip())
