@@ -2878,6 +2878,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn("policyTypes: [Egress]", inventory_manifest)
         self.assertIn("policyTypes: [Ingress]", inventory_manifest)
         self.assertIn("app.kubernetes.io/name: qdrant", inventory_manifest)
+        self.assertIn('get("/aliases")', inventory_manifest)
+        self.assertNotIn('get("/collections/aliases")', inventory_manifest)
         self.assertIn("automountServiceAccountToken: false", inventory_manifest)
         self.assertIn("readOnlyRootFilesystem: true", inventory_manifest)
         self.assertNotIn("MEMPALACE_QDRANT_API_KEY", operator.read_text())

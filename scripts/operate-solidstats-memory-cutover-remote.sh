@@ -321,7 +321,7 @@ qdrant_inventory() {
       '           request=urllib.request.Request("http://qdrant:6333"+path,headers=headers)' \
       '           with urllib.request.urlopen(request,timeout=20) as response:return json.load(response)' \
       '          collections=sorted(x["name"] for x in get("/collections")["result"]["collections"])' \
-      '          aliases=sorted((x["alias_name"],x["collection_name"]) for x in get("/collections/aliases")["result"]["aliases"])' \
+      '          aliases=sorted((x["alias_name"],x["collection_name"]) for x in get("/aliases")["result"]["aliases"])' \
       '          raw=json.dumps({"collections":collections,"aliases":aliases},separators=(",",":"),sort_keys=True).encode()' \
       '          print(hashlib.sha256(raw).hexdigest(),len(collections),len(aliases))' \
       '      env:' \
