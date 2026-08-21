@@ -710,6 +710,15 @@ prepare_backup_activation() {
   [[ -f "${rendered}" && ! -L "${rendered}" &&
     "$(grep -c '^  suspend: true$' "${rendered}")" -eq 1 ]] || return 1
   install -m 600 "${rendered}" "${BACKUP_RENDERED_PRESTATE}"
+  local derived
+  for derived in "${BACKUP_SOURCE_CANDIDATE}" "${BACKUP_RENDERED_CANDIDATE}" \
+    "${STATE_DIR}/backup-activation.provenance.json"; do
+    if [[ -e "${derived}" ]]; then
+      [[ -f "${derived}" && ! -L "${derived}" &&
+        "$(stat -c '%a:%u' "${derived}")" == "600:$(id -u)" ]] || return 1
+      rm -f -- "${derived}"
+    fi
+  done
   timeout "${LOCAL_TIMEOUT}" python3 "${ACTIVATION_RENDERER}" \
     "${source}" "${rendered}" "${BACKUP_SOURCE_CANDIDATE}" \
     "${BACKUP_RENDERED_CANDIDATE}" \

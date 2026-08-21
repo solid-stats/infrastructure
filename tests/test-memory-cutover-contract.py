@@ -3497,6 +3497,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "--reconnect-timeout",
         ):
             self.assertIn(command, source)
+        self.assertIn('stat -c \'%a:%u\' "${derived}"', source)
+        self.assertIn('rm -f -- "${derived}"', source)
         result = subprocess.run(
             ["bash", str(CUTOVER_PATH), "--self-test"],
             capture_output=True,
