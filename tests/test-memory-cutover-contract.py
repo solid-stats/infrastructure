@@ -2526,7 +2526,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         commands = probe.build_client_commands(
             name="solidstats_memory",
             url="https://memory.example/solidstats/mcp",
-            token_env="SOLIDSTATS_MEMORY_TOKEN",
+            token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
         )
         self.assertEqual(
             (
@@ -2537,7 +2537,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "--url",
                 "https://memory.example/solidstats/mcp",
                 "--bearer-token-env-var",
-                "SOLIDSTATS_MEMORY_TOKEN",
+                "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
             ),
             commands["add"],
         )
@@ -2549,17 +2549,28 @@ class MemoryCutoverContractTests(unittest.TestCase):
             commands["remove"],
         )
         self.assertNotIn("mempalace", " ".join(commands["add"]))
+        cutover_source = CUTOVER_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            'readonly REPLACEMENT_TOKEN_ENV="MEMPALACE_SOLIDSTATS_MCP_TOKEN"',
+            cutover_source,
+        )
+        self.assertIn(
+            '[[ "${SOLIDSTATS_MEMORY_TOKEN_ENV}" == "${REPLACEMENT_TOKEN_ENV}" ]]',
+            cutover_source,
+        )
 
         invalid = (
             {"name": "mempalace"},
             {"url": "https://memory.example/mcp"},
             {"token_env": "not-valid"},
+            {"token_env": "MEMPALACE_MCP_TOKEN"},
+            {"token_env": "MEMPALACE_PERSONAL_MCP_TOKEN"},
         )
         for mutation in invalid:
             arguments = {
                 "name": "solidstats_memory",
                 "url": "https://memory.example/solidstats/mcp",
-                "token_env": "SOLIDSTATS_MEMORY_TOKEN",
+                "token_env": "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
                 **mutation,
             }
             with self.subTest(mutation=mutation), self.assertRaises(
@@ -2600,7 +2611,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         registration = (
             b"\n[mcp_servers.solidstats_memory]\n"
             b'url = "https://memory.example/solidstats/mcp"\n'
-            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+            b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
         )
         config.write_bytes(original + registration)
         config.chmod(0o600)
@@ -2611,7 +2622,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "--url",
             "https://memory.example/solidstats/mcp",
             "--token-env",
-            "SOLIDSTATS_MEMORY_TOKEN",
+            "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
         )
         self.assertEqual(0, applied.returncode, applied.stderr)
         configured = config.read_bytes()
@@ -2634,7 +2645,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "--url",
             "https://memory.example/solidstats/mcp",
             "--token-env",
-            "SOLIDSTATS_MEMORY_TOKEN",
+            "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
         )
         self.assertEqual(0, validated.returncode, validated.stderr)
         probe_validated = subprocess.run(
@@ -2647,7 +2658,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "--url",
                 "https://memory.example/solidstats/mcp",
                 "--token-env",
-                "SOLIDSTATS_MEMORY_TOKEN",
+                "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
             ],
             capture_output=True,
             text=True,
@@ -2669,7 +2680,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         base = (
             b"[mcp_servers.solidstats_memory]\n"
             b'url = "https://memory.example/solidstats/mcp"\n'
-            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+            b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
         )
 
         def run(command: str, *extra: str) -> subprocess.CompletedProcess[str]:
@@ -2696,7 +2707,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     "--url",
                     "https://memory.example/solidstats/mcp",
                     "--token-env",
-                    "SOLIDSTATS_MEMORY_TOKEN",
+                    "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
                 )
                 self.assertNotEqual(0, result.returncode)
         config.write_bytes(b'model = "no target"\n')
@@ -2706,7 +2717,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "--url",
             "https://memory.example/solidstats/mcp",
             "--token-env",
-            "SOLIDSTATS_MEMORY_TOKEN",
+            "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
         )
         self.assertNotEqual(0, missing.returncode)
         config.write_bytes(base)
@@ -2714,13 +2725,15 @@ class MemoryCutoverContractTests(unittest.TestCase):
         for invalid in (
             ("--url", "http://memory.example/solidstats/mcp"),
             ("--token-env", "not-valid"),
+            ("--token-env", "MEMPALACE_MCP_TOKEN"),
+            ("--token-env", "MEMPALACE_PERSONAL_MCP_TOKEN"),
             ("--name", "mempalace"),
         ):
             arguments = [
                 "--url",
                 "https://memory.example/solidstats/mcp",
                 "--token-env",
-                "SOLIDSTATS_MEMORY_TOKEN",
+                "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
                 *invalid,
             ]
             with self.subTest(invalid=invalid):
@@ -2733,7 +2746,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "--url",
             "https://memory.example/solidstats/mcp",
             "--token-env",
-            "SOLIDSTATS_MEMORY_TOKEN",
+            "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
         )
         self.assertNotEqual(0, unsafe_mode.returncode)
         config.unlink()
@@ -2746,7 +2759,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "--url",
             "https://memory.example/solidstats/mcp",
             "--token-env",
-            "SOLIDSTATS_MEMORY_TOKEN",
+            "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
         )
         self.assertNotEqual(0, unsafe_link.returncode)
 
@@ -2769,7 +2782,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         registered = original + (
             b"\n[mcp_servers.solidstats_memory]\n"
             b'url = "https://memory.example/solidstats/mcp"\n'
-            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+            b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
         )
         config.write_bytes(registered)
         config.chmod(0o600)
@@ -2788,7 +2801,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "--url",
                 "https://memory.example/solidstats/mcp",
                 "--token-env",
-                "SOLIDSTATS_MEMORY_TOKEN",
+                "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
             ],
             capture_output=True,
             text=True,
@@ -2818,14 +2831,15 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'[mcp_servers.unrelated]\nurl = "https://other.example/mcp"\n\n'
         )
         legacy = (
-            b'[mcp_servers.mempalace]\ncommand = "legacy"\n\n'
+            b'[mcp_servers.mempalace]\ncommand = "legacy"\n'
+            b'bearer_token_env_var = "MEMPALACE_PERSONAL_MCP_TOKEN"\n\n'
             b'[mcp_servers.mempalace.tools.search]\nenabled = true\n\n'
             b'[mcp_servers.mempalace.tools.capture]\nenabled = false\n\n'
         )
         current = unrelated + legacy + (
             b'[mcp_servers.solidstats_memory]\n'
             b'url = "https://memory.example/solidstats/mcp"\n'
-            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+            b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
@@ -2833,6 +2847,16 @@ class MemoryCutoverContractTests(unittest.TestCase):
         )
         config.write_bytes(current)
         config.chmod(0o600)
+        parsed_current = tomllib.loads(current.decode("utf-8"))["mcp_servers"]
+        self.assertEqual(
+            "MEMPALACE_PERSONAL_MCP_TOKEN",
+            parsed_current["mempalace"]["bearer_token_env_var"],
+        )
+        self.assertEqual(
+            "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+            parsed_current["solidstats_memory"]["bearer_token_env_var"],
+        )
+        self.assertNotIn(b"MEMPALACE_MCP_TOKEN", current)
         prestate.write_bytes(unrelated)
         prestate.chmod(0o600)
         metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
@@ -2870,7 +2894,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                         prestate,
                         result,
                         url="https://memory.example/solidstats/mcp",
-                        token_env="SOLIDSTATS_MEMORY_TOKEN",
+                        token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
                         remove=remove,
                         stage=stage,
                     )
@@ -2886,7 +2910,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             CLIENT_POLICY.retire_transaction(
                 config, prestate, result,
                 url="https://memory.example/solidstats/mcp",
-                token_env="SOLIDSTATS_MEMORY_TOKEN",
+                token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
                 remove=partial_remove,
             )
         self.assertEqual(b"partial external mutation\n", config.read_bytes())
@@ -2898,7 +2922,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             prestate,
             result,
             url="https://memory.example/solidstats/mcp",
-            token_env="SOLIDSTATS_MEMORY_TOKEN",
+            token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
             remove=lambda expected: config.write_bytes(expected),
         )
         retired = config.read_bytes()
@@ -2906,6 +2930,12 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertNotIn(b"[mcp_servers.mempalace.tools.", retired)
         parsed_retired = tomllib.loads(retired.decode("utf-8"))
         self.assertNotIn("mempalace", parsed_retired["mcp_servers"])
+        self.assertEqual(
+            "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+            parsed_retired["mcp_servers"]["solidstats_memory"][
+                "bearer_token_env_var"
+            ],
+        )
         self.assertIn(unrelated, retired)
         self.assertEqual(1, retired.count(b"[mcp_servers.unrelated]"))
         fields = dict(
@@ -2927,6 +2957,17 @@ class MemoryCutoverContractTests(unittest.TestCase):
         config.write_bytes(retired)
         CLIENT_POLICY.restore_retirement(config, result)
         self.assertEqual(current, config.read_bytes())
+        restored_servers = tomllib.loads(config.read_text(encoding="utf-8"))[
+            "mcp_servers"
+        ]
+        self.assertEqual(
+            "MEMPALACE_PERSONAL_MCP_TOKEN",
+            restored_servers["mempalace"]["bearer_token_env_var"],
+        )
+        self.assertEqual(
+            "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+            restored_servers["solidstats_memory"]["bearer_token_env_var"],
+        )
 
     def test_client_rollback_preserves_unrelated_current_config(self) -> None:
         private = self.root / "client-rollback-current"
@@ -2935,19 +2976,21 @@ class MemoryCutoverContractTests(unittest.TestCase):
         prestate = private / "prestate.toml"
         result = private / "rollback.result"
         legacy = (
-            b'[mcp_servers.mempalace]\ncommand = "legacy"\ntimeout = 30\n\n'
+            b'[mcp_servers.mempalace]\ncommand = "legacy"\ntimeout = 30\n'
+            b'bearer_token_env_var = "MEMPALACE_PERSONAL_MCP_TOKEN"\n\n'
             b'[mcp_servers.mempalace.tools.search]\nenabled = true\n\n'
         )
         original = b'model = "gpt-5.6-sol"\n\n' + legacy
         current_legacy = (
-            b'[mcp_servers.mempalace]\ntimeout = 30\ncommand = "legacy"\n\n'
+            b'[mcp_servers.mempalace]\ntimeout = 30\ncommand = "legacy"\n'
+            b'bearer_token_env_var = "MEMPALACE_PERSONAL_MCP_TOKEN"\n\n'
             b'[mcp_servers.mempalace.tools.search]\nenabled = true\n\n'
         )
         drift = b'[plugins.current]\nenabled = true\n\n'
         replacement = (
             b'[mcp_servers.solidstats_memory]\n'
             b'url = "https://memory.example/solidstats/mcp"\n'
-            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+            b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
@@ -3002,7 +3045,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                         prestate,
                         result,
                         url="https://memory.example/solidstats/mcp",
-                        token_env="SOLIDSTATS_MEMORY_TOKEN",
+                        token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
                         remove=remove,
                         stage=stage,
                     )
@@ -3016,7 +3059,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             prestate,
             result,
             url="https://memory.example/solidstats/mcp",
-            token_env="SOLIDSTATS_MEMORY_TOKEN",
+            token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
             remove=lambda updated: config.write_bytes(updated),
         )
         self.assertEqual(expected, config.read_bytes())
@@ -3026,6 +3069,13 @@ class MemoryCutoverContractTests(unittest.TestCase):
             {"search": {"enabled": True}},
             parsed_expected["mcp_servers"]["mempalace"]["tools"],
         )
+        self.assertEqual(
+            "MEMPALACE_PERSONAL_MCP_TOKEN",
+            parsed_expected["mcp_servers"]["mempalace"][
+                "bearer_token_env_var"
+            ],
+        )
+        self.assertNotIn(b"MEMPALACE_MCP_TOKEN", config.read_bytes())
         self.assertEqual(expected, prestate.read_bytes())
         self.assertFalse(metadata.exists())
         self.assertIn(b"unrelated_current_bytes_preserved=true", result.read_bytes())
@@ -3049,7 +3099,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             CLIENT_POLICY.rollback_registration_transaction(
                 config, prestate, result,
                 url="https://memory.example/solidstats/mcp",
-                token_env="SOLIDSTATS_MEMORY_TOKEN",
+                token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
                 stage=late_stage,
             )
         self.assertEqual(current + external, config.read_bytes())
@@ -3062,11 +3112,14 @@ class MemoryCutoverContractTests(unittest.TestCase):
         config = private / "config.toml"
         prestate = private / "prestate.toml"
         result = private / "retirement.result"
-        legacy = b'[mcp_servers.mempalace]\ncommand = "legacy"\n\n'
+        legacy = (
+            b'[mcp_servers.mempalace]\ncommand = "legacy"\n'
+            b'bearer_token_env_var = "MEMPALACE_PERSONAL_MCP_TOKEN"\n\n'
+        )
         replacement = (
             b'[mcp_servers.solidstats_memory]\n'
             b'url = "https://memory.example/solidstats/mcp"\n'
-            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+            b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
@@ -3093,7 +3146,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         CLIENT_POLICY.retire_transaction(
             config, prestate, result,
             url="https://memory.example/solidstats/mcp",
-            token_env="SOLIDSTATS_MEMORY_TOKEN",
+            token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
             stage=stage,
         )
         observed = config.read_bytes()
@@ -3119,7 +3172,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             CLIENT_POLICY.retire_transaction(
                 config, prestate, result,
                 url="https://memory.example/solidstats/mcp",
-                token_env="SOLIDSTATS_MEMORY_TOKEN",
+                token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
                 stage=late_stage,
             )
         self.assertEqual(current + external, config.read_bytes())

@@ -24,10 +24,10 @@ from urllib import request as urllib_request
 PROTOCOL_VERSION = "2025-06-18"
 MAX_BODY_BYTES = 4 * 1024 * 1024
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 SAFE_CODE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 CLIENT_NAME = "solidstats_memory"
 PUBLIC_PATH = "/solidstats/mcp"
+TOKEN_ENV_NAME = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"
 REQUIRED_TOOLS = (
     "mempalace_search",
     "mempalace_list_rooms",
@@ -827,7 +827,7 @@ def build_client_commands(
     if name != CLIENT_NAME:
         raise ProbeError("client name is invalid")
     url = _validate_url(url)
-    if not isinstance(token_env, str) or not ENV_NAME.fullmatch(token_env):
+    if token_env != TOKEN_ENV_NAME:
         raise ProbeError("client token environment name is invalid")
     return {
         "add": (
@@ -990,7 +990,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print("PASS: client tool policy probe completed")
             return 0
-        if not ENV_NAME.fullmatch(args.token_env):
+        if args.token_env != TOKEN_ENV_NAME:
             raise ProbeError("token environment name is invalid")
         token = os.environ.get(args.token_env)
         if not token:

@@ -20,7 +20,7 @@ from typing import Callable
 
 CLIENT_NAME = "solidstats_memory"
 PUBLIC_PATH = "/solidstats/mcp"
-ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+TOKEN_ENV_NAME = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"
 ENABLED_TOOLS = (
     "mempalace_search",
     "mempalace_list_rooms",
@@ -285,7 +285,7 @@ def inspect_policy(
     raw: bytes, *, url: str, token_env: str, require_policy: bool
 ) -> tuple[int, int]:
     _validate_url(url)
-    if not ENV_NAME.fullmatch(token_env):
+    if token_env != TOKEN_ENV_NAME:
         raise PolicyError("target client token environment name is invalid")
     start, end = _section_bounds(raw)
     section = raw[start:end]

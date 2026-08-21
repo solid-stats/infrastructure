@@ -14,6 +14,7 @@ set -Eeuo pipefail
 
 STAGES=(PREPARED PRIVATE_LIVE DATA_SWITCHED PUBLIC_LIVE CLIENT_ADDED)
 ROLLBACK_ORDER="client nginx alias workload legacy"
+readonly REPLACEMENT_TOKEN_ENV="MEMPALACE_SOLIDSTATS_MCP_TOKEN"
 
 required() {
   local name="$1"
@@ -21,6 +22,14 @@ required() {
     echo "FATAL: ${name} is required" >&2
     exit 64
   fi
+}
+
+require_replacement_token_binding() {
+  required SOLIDSTATS_MEMORY_TOKEN_ENV
+  [[ "${SOLIDSTATS_MEMORY_TOKEN_ENV}" == "${REPLACEMENT_TOKEN_ENV}" ]] || {
+    echo "FATAL: replacement client token environment must be ${REPLACEMENT_TOKEN_ENV}" >&2
+    return 1
+  }
 }
 
 require_private_root() {
@@ -290,14 +299,10 @@ register_client() {
     return 0
   fi
   required SOLIDSTATS_MEMORY_PUBLIC_URL
-  required SOLIDSTATS_MEMORY_TOKEN_ENV
+  require_replacement_token_binding
   required SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH
   [[ "${SOLIDSTATS_MEMORY_PUBLIC_URL}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/solidstats/mcp$ ]] || {
     echo "FATAL: public MCP URL must end at exact /solidstats/mcp" >&2
-    return 1
-  }
-  [[ "${SOLIDSTATS_MEMORY_TOKEN_ENV}" =~ ^[A-Z][A-Z0-9_]{0,127}$ ]] || {
-    echo "FATAL: token environment name is invalid" >&2
     return 1
   }
   if timeout "${LOCAL_TIMEOUT}" codex mcp get solidstats_memory \
@@ -330,6 +335,7 @@ remove_new_client() {
     printf 'client ' >>"${EVENT_LOG}"
     return 0
   fi
+  require_replacement_token_binding
   required SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH
   if ! timeout "${LOCAL_TIMEOUT}" codex mcp get solidstats_memory \
     >/dev/null 2>&1; then
@@ -398,7 +404,7 @@ run_probe() {
     return 0
   fi
   required SOLIDSTATS_MEMORY_PUBLIC_URL
-  required SOLIDSTATS_MEMORY_TOKEN_ENV
+  require_replacement_token_binding
   required SOLIDSTATS_MEMORY_RUN_ID
   local evidence="${STATE_DIR}/probe-${label}.json"
   [[ "${label}" =~ ^[a-z0-9-]{1,48}$ ]] || return 1
@@ -674,6 +680,7 @@ collect_recovery_evidence() {
 }
 
 record_pre_retirement_client_evidence() {
+  require_replacement_token_binding
   required SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH
   timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" pre-retirement \
     --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
@@ -800,6 +807,7 @@ collect_cutover_seal() {
 }
 
 retire_legacy_client() {
+  require_replacement_token_binding
   required SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME
   required SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH
   [[ "${SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME}" == "mempalace" ]] || {
