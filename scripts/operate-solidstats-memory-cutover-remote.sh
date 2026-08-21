@@ -225,6 +225,54 @@ write_result() {
   } | private_write "$(operation_path "${operation}" result)"
 }
 
+canonical_backup_template_digest() {
+  local path="$1"
+  require_regular_private_file "${path}"
+  "${PYTHON_PATH}" -c '
+import hashlib,json,pathlib,sys
+raw=pathlib.Path(sys.argv[1]).read_text()
+decoder=json.JSONDecoder()
+values=[]
+index=0
+while index < len(raw):
+    while index < len(raw) and raw[index].isspace():
+        index += 1
+    if index < len(raw):
+        value,index=decoder.raw_decode(raw,index)
+        values.append(value)
+cronjobs=[value for value in values if value.get("kind")=="CronJob" and value.get("metadata",{}).get("name")=="solidstats-memory-backup"]
+if len(cronjobs)!=1:
+    raise SystemExit(1)
+template=cronjobs[0]["spec"]["jobTemplate"]
+pod_spec=template.get("spec",{}).get("template",{}).get("spec",{})
+if not isinstance(pod_spec,dict):
+    raise SystemExit(1)
+for key,default in (("dnsPolicy","ClusterFirst"),("schedulerName","default-scheduler")):
+    if pod_spec.get(key)==default:
+        pod_spec.pop(key)
+if pod_spec.get("serviceAccount")==pod_spec.get("serviceAccountName"):
+    pod_spec.pop("serviceAccount",None)
+for group in ("containers","initContainers"):
+    for container in pod_spec.get(group,[]):
+        if container.get("terminationMessagePath")=="/dev/termination-log": container.pop("terminationMessagePath")
+        if container.get("terminationMessagePolicy")=="File": container.pop("terminationMessagePolicy")
+        for environment in container.get("env",[]):
+            field_ref=environment.get("valueFrom",{}).get("fieldRef",{})
+            if field_ref.get("apiVersion")=="v1": field_ref.pop("apiVersion")
+        for probe_name in ("startupProbe","readinessProbe","livenessProbe"):
+            probe=container.get(probe_name,{})
+            if probe.get("successThreshold")==1: probe.pop("successThreshold")
+def prune(item):
+    if isinstance(item,dict):
+        result={key:prune(child) for key,child in item.items() if child is not None}
+        return {key:child for key,child in result.items() if child!={}}
+    if isinstance(item,list): return [prune(child) for child in item]
+    return item
+encoded=json.dumps(prune(template),separators=(",",":"),sort_keys=True).encode()
+print(hashlib.sha256(encoded).hexdigest())
+' "${path}"
+}
+
 require_operation_complete() {
   local path
   [[ "$(operation_status "$1")" == complete ]] || fatal
@@ -885,12 +933,7 @@ backup_template_digest() {
   local path="${RUN_ROOT}/backup-cronjob.json"
   capture_kube_json "${path}" -n "${MEMORY_NAMESPACE}" get cronjob \
     "${BACKUP_CRONJOB}" -o json
-  "${PYTHON_PATH}" -c '
-import hashlib,json,sys
-value=json.load(open(sys.argv[1]))["spec"]["jobTemplate"]
-raw=json.dumps(value,separators=(",",":"),sort_keys=True).encode()
-print(hashlib.sha256(raw).hexdigest())
-' "${path}"
+  canonical_backup_template_digest "${path}"
   rm -f "${path}"
 }
 
@@ -1149,25 +1192,7 @@ verify_guard_package() {
     -o json >"${rendered}.tmp" 2>/dev/null || fatal
   chmod 600 "${rendered}.tmp"
   mv -f "${rendered}.tmp" "${rendered}"
-  digest=$("${PYTHON_PATH}" -c '
-import hashlib,json,pathlib,sys
-raw=pathlib.Path(sys.argv[1]).read_text()
-decoder=json.JSONDecoder()
-values=[]
-index=0
-while index < len(raw):
-    while index < len(raw) and raw[index].isspace():
-        index += 1
-    if index < len(raw):
-        value,index=decoder.raw_decode(raw,index)
-        values.append(value)
-cronjobs=[value for value in values if value.get("kind")=="CronJob" and value.get("metadata",{}).get("name")=="solidstats-memory-backup"]
-if len(cronjobs)!=1:
-    raise SystemExit(1)
-value=cronjobs[0]["spec"]["jobTemplate"]
-raw=json.dumps(value,separators=(",",":"),sort_keys=True).encode()
-print(hashlib.sha256(raw).hexdigest())
-' "${rendered}")
+  digest=$(canonical_backup_template_digest "${rendered}")
   [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || fatal
   local candidate_sha provenance_status
   candidate_sha=$(sha256sum -- "${directory}/40-backup.active.yaml" | cut -d' ' -f1)

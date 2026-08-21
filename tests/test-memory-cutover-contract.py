@@ -52,6 +52,12 @@ REMOTE_CUTOVER_PATH = (
 BACKUP_GUARD_PATH = ROOT / "scripts" / "guard-solidstats-memory-backup.sh"
 BACKUP_SUSPEND_PATH = ROOT / "scripts" / "suspend-solidstats-memory-backup.sh"
 ACTIVATION_RENDERER_PATH = ROOT / "scripts" / "render-solidstats-memory-backup-activation.py"
+ACTIVATION_SPEC = importlib.util.spec_from_file_location(
+    "solidstats_memory_activation", ACTIVATION_RENDERER_PATH
+)
+assert ACTIVATION_SPEC and ACTIVATION_SPEC.loader
+ACTIVATION = importlib.util.module_from_spec(ACTIVATION_SPEC)
+ACTIVATION_SPEC.loader.exec_module(ACTIVATION)
 EVIDENCE_COLLECTOR_PATH = ROOT / "scripts" / "collect-phase-21-recovery-evidence.py"
 CLIENT_POLICY_PATH = ROOT / "scripts" / "configure-solidstats-memory-client.py"
 CLIENT_POLICY_SPEC = importlib.util.spec_from_file_location(
@@ -2735,7 +2741,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             'elif [[ " $* " == *" scale deployment/mempalace "* ]]; then [[ " $* " == *"--replicas=1"* ]] && printf "running\\n" >"$state" || printf "stopped\\n" >"$state"; printf "new:scale\\n" >>"$log"; '
             'elif [[ " $* " == *" rollout status deployment/mempalace "* ]]; then [[ "$(cat "$state")" == running ]]; '
             'elif [[ " $* " == *" rollout status statefulset/qdrant "* ]]; then true; '
-            'elif [[ " $* " == *" get cronjob solidstats-memory-backup "* && " $* " == *" -o json "* ]]; then printf "{\\"spec\\":{\\"jobTemplate\\":{\\"spec\\":{}}}}"; '
+            'elif [[ " $* " == *" get cronjob solidstats-memory-backup "* && " $* " == *" -o json "* ]]; then printf "{\\"kind\\":\\"CronJob\\",\\"metadata\\":{\\"name\\":\\"solidstats-memory-backup\\"},\\"spec\\":{\\"jobTemplate\\":{\\"spec\\":{}}}}"; '
             'elif [[ " $* " == *" get cronjob solidstats-memory-backup "* ]]; then printf "%s:Forbid" "$(cat "$schedule")"; '
             'elif [[ " $* " == *" patch cronjob solidstats-memory-backup "* ]]; then [[ " $* " == *"\\\"suspend\\\":false"* ]] && printf "false\\n" >"$schedule" || printf "true\\n" >"$schedule"; '
             'elif [[ " $* " == *" delete job solidstats-memory-backup-"* ]]; then true; '
@@ -2899,7 +2905,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual("true", backup_schedule.read_text().strip())
         package = run_root / "guard-package"
         package.mkdir(mode=0o700)
-        candidate_digest = hashlib.sha256(b'{"spec":{}}').hexdigest()
+        candidate_digest = hashlib.sha256(b'{}').hexdigest()
         (package / "candidate-template.sha256").write_text(
             candidate_digest + "\n", encoding="ascii"
         )
@@ -3869,6 +3875,48 @@ spec:
         )
         self.assertIn(mempalace_image.encode(), (self.root / "active-rendered-accepted.yaml").read_bytes())
         self.assertIn(b"MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST", (self.root / "active-source-accepted.yaml").read_bytes())
+        template = {
+            "spec": {
+                "template": {
+                    "spec": {
+                        "serviceAccountName": "backup",
+                        "containers": [
+                            {
+                                "env": [
+                                    {
+                                        "valueFrom": {
+                                            "fieldRef": {"fieldPath": "metadata.name"}
+                                        }
+                                    }
+                                ]
+                            }
+                        ],
+                        "initContainers": [{"startupProbe": {"exec": {"command": ["true"]}}}],
+                    }
+                }
+            }
+        }
+        defaulted = deepcopy(template)
+        defaulted_pod = defaulted["spec"]["template"]["spec"]
+        defaulted_pod.update(
+            {
+                "dnsPolicy": "ClusterFirst",
+                "schedulerName": "default-scheduler",
+                "serviceAccount": "backup",
+            }
+        )
+        defaulted_pod["containers"][0].update(
+            {
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+            }
+        )
+        defaulted_pod["containers"][0]["env"][0]["valueFrom"]["fieldRef"]["apiVersion"] = "v1"
+        defaulted_pod["initContainers"][0]["startupProbe"]["successThreshold"] = 1
+        self.assertEqual(
+            ACTIVATION.canonicalize_template(template),
+            ACTIVATION.canonicalize_template(defaulted),
+        )
         rendered.write_bytes(rendered_manifest + b"# render drift\n")
         self.assertNotEqual(0, invoke("render-drift").returncode)
         rendered.write_bytes(rendered_manifest)

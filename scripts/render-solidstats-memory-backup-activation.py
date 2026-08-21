@@ -39,9 +39,54 @@ def canonical_template(raw: bytes) -> str:
     cronjobs = [item for item in documents if item.get("kind") == "CronJob" and item.get("metadata", {}).get("name") == "solidstats-memory-backup"]
     if len(cronjobs) != 1:
         raise ValueError("activation CronJob is missing or ambiguous")
-    template = cronjobs[0].get("spec", {}).get("jobTemplate")
+    template = canonicalize_template(cronjobs[0].get("spec", {}).get("jobTemplate"))
     encoded = json.dumps(template, allow_nan=False, separators=(",", ":"), sort_keys=True).encode()
     return digest(encoded)
+
+
+def canonicalize_template(template: object) -> object:
+    if not isinstance(template, dict):
+        raise ValueError("activation Job template is invalid")
+    value = json.loads(json.dumps(template, allow_nan=False))
+    pod_spec = value.get("spec", {}).get("template", {}).get("spec", {})
+    if not isinstance(pod_spec, dict):
+        raise ValueError("activation Pod template is invalid")
+    for key, default in (
+        ("dnsPolicy", "ClusterFirst"),
+        ("schedulerName", "default-scheduler"),
+    ):
+        if pod_spec.get(key) == default:
+            pod_spec.pop(key)
+    if pod_spec.get("serviceAccount") == pod_spec.get("serviceAccountName"):
+        pod_spec.pop("serviceAccount", None)
+    for group in ("containers", "initContainers"):
+        for container in pod_spec.get(group, []):
+            if container.get("terminationMessagePath") == "/dev/termination-log":
+                container.pop("terminationMessagePath")
+            if container.get("terminationMessagePolicy") == "File":
+                container.pop("terminationMessagePolicy")
+            for environment in container.get("env", []):
+                field_ref = environment.get("valueFrom", {}).get("fieldRef", {})
+                if field_ref.get("apiVersion") == "v1":
+                    field_ref.pop("apiVersion")
+            for probe_name in ("startupProbe", "readinessProbe", "livenessProbe"):
+                probe = container.get(probe_name, {})
+                if probe.get("successThreshold") == 1:
+                    probe.pop("successThreshold")
+
+    def prune(item: object) -> object:
+        if isinstance(item, dict):
+            result = {
+                key: prune(child)
+                for key, child in item.items()
+                if child is not None
+            }
+            return {key: child for key, child in result.items() if child != {}}
+        if isinstance(item, list):
+            return [prune(child) for child in item]
+        return item
+
+    return prune(value)
 
 
 IMAGE = re.compile(r"^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$")
