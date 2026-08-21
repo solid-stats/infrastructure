@@ -3483,6 +3483,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "qdrant_ready": True,
                 "mempalace_available": True,
                 "nginx_active": True,
+                "freeze_lock_restored": True,
                 "behavior_passed": True,
             },
             "rollback_checks": {
@@ -3509,6 +3510,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         for section, key in (
             ("restart_checks", "mempalace_behavior_passed"),
             ("reboot_checks", "boot_identity_changed"),
+            ("reboot_checks", "freeze_lock_restored"),
             ("reboot_checks", "behavior_passed"),
             ("rollback_checks", "legacy_behavior_passed"),
             ("forward_checks", "behavior_passed"),

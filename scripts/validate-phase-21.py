@@ -204,6 +204,7 @@ RECOVERY_SECTION_FIELDS = {
         "qdrant_ready",
         "mempalace_available",
         "nginx_active",
+        "freeze_lock_restored",
         "behavior_passed",
     },
     "rollback_checks": {
