@@ -104,6 +104,22 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
             ],
         )
 
+    def test_qdrant_has_a_bounded_writable_snapshot_mount(self) -> None:
+        documents = list(
+            yaml.safe_load_all(
+                (ROOT / "k8s" / "memory" / "10-qdrant.yaml").read_text()
+            )
+        )
+        statefulset = next(
+            document for document in documents if document["kind"] == "StatefulSet"
+        )
+        pod = statefulset["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
+        volumes = {volume["name"]: volume for volume in pod["volumes"]}
+        self.assertEqual("/qdrant/snapshots", mounts["snapshots"]["mountPath"])
+        self.assertEqual({"sizeLimit": "1Gi"}, volumes["snapshots"]["emptyDir"])
+
 
 class MemorySecretRendererContractTests(unittest.TestCase):
     """Secret rendering accepts only the approved secret-input inventory."""

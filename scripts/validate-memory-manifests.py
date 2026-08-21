@@ -106,6 +106,13 @@ def require_workload_safety(docs: dict[str, str]) -> None:
     require("type: LoadBalancer" not in docs["Service/qdrant"] and "type: NodePort" not in docs["Service/qdrant"], "Qdrant is publicly exposed")
     require("type: ClusterIP" in docs["Service/mempalace"], "MemPalace must use an internal ClusterIP service")
     require("mountPath: /qdrant/storage" in docs["StatefulSet/qdrant"], "Qdrant storage mount is missing")
+    require(
+        "name: snapshots\n              mountPath: /qdrant/snapshots"
+        in docs["StatefulSet/qdrant"]
+        and "name: snapshots\n          emptyDir:\n            sizeLimit: 1Gi"
+        in docs["StatefulSet/qdrant"],
+        "Qdrant read-only root lacks a bounded writable snapshot mount",
+    )
     require("claimName: mempalace-data" in docs["Deployment/mempalace"], "MemPalace PVC is missing")
     require("persistentVolumeClaimRetentionPolicy:" in docs["StatefulSet/qdrant"], "Qdrant PVC Retain policy is missing")
     require("name: MEMPALACE_BACKEND\n              value: qdrant" in docs["Deployment/mempalace"], "MemPalace backend is not Qdrant")
