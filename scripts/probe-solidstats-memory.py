@@ -143,19 +143,15 @@ def _decode_payload(raw: bytes, *, expected_id: object | None) -> object | None:
         for line in raw.splitlines()
         if line.startswith(b"data:") and line[5:].strip()
     )
-    decoded: list[object] = []
     for candidate in candidates:
         try:
             value = json.loads(candidate)
         except (UnicodeDecodeError, json.JSONDecodeError):
             continue
-        decoded.append(value)
-        if not isinstance(value, Mapping):
+        if not isinstance(value, Mapping) or value.get("jsonrpc") != "2.0":
             continue
         if expected_id is None or value.get("id") == expected_id:
             return value
-    if expected_id is None and decoded:
-        return decoded[-1]
     raise ProbeError("MCP response is malformed")
 
 
@@ -252,7 +248,10 @@ class StreamableHttpTransport:
         except urllib_error.HTTPError as error:
             status = int(error.code)
             response_headers = dict(error.headers.items()) if error.headers else {}
-            raw = error.read(MAX_BODY_BYTES + 1)
+            try:
+                raw = error.read(MAX_BODY_BYTES + 1)
+            finally:
+                error.close()
         except (OSError, TimeoutError, socket.timeout, urllib_error.URLError) as error:
             raise ProbeError("public MCP request failed") from error
         if len(raw) > MAX_BODY_BYTES:
@@ -265,11 +264,11 @@ class StreamableHttpTransport:
             ),
             "",
         )
-        if status == 200 and raw and content_type not in {
-            "application/json",
-            "text/event-stream",
-        }:
-            raise ProbeError("public MCP response content type is invalid")
+        if status == 200:
+            if content_type not in {"application/json", "text/event-stream"}:
+                raise ProbeError("public MCP response content type is invalid")
+            if not raw:
+                raise ProbeError("MCP response is malformed")
         forbidden_echoes = (
             self.token.encode("utf-8"),
             b"phase21-invalid-probe",
@@ -296,7 +295,14 @@ class StreamableHttpTransport:
                 output.write(raw)
                 output.flush()
                 os.fsync(output.fileno())
-            payload = _decode_payload(raw_path.read_bytes(), expected_id=expected_id)
+            stored_raw = raw_path.read_bytes()
+            if status == 200:
+                payload = _decode_payload(stored_raw, expected_id=expected_id)
+            else:
+                try:
+                    payload = _decode_payload(stored_raw, expected_id=expected_id)
+                except ProbeError:
+                    payload = None
         return HttpProbeResult(status, response_headers, payload, body_sha256)
 
 

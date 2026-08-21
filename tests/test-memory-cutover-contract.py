@@ -6,6 +6,7 @@ from __future__ import annotations
 from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
 import hashlib
+from http import server as http_server
 import importlib.util
 import io
 import json
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -1901,6 +1903,173 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 {"jsonrpc": "2.0", "id": 9, "method": "ping"},
             )
         self.assertNotIn("private-fixture-token", str(caught.exception))
+
+    def test_http_transport_handles_real_auth_rejections_and_strict_successes(
+        self,
+    ) -> None:
+        probe = self.load_probe()
+        state: dict[str, object] = {"scenario": "auth"}
+
+        class Handler(http_server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, _format: str, *_args: object) -> None:
+                return None
+
+            def send_fixture(
+                self,
+                status: int,
+                body: bytes,
+                *,
+                content_type: str = "text/html;charset=utf-8",
+                extra_headers: dict[str, str] | None = None,
+            ) -> None:
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                for key, value in (extra_headers or {}).items():
+                    self.send_header(key, value)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                request_body = self.rfile.read(length)
+                request_id = json.loads(request_body).get("id")
+                scenario = state["scenario"]
+                authorization = self.headers.get("Authorization")
+                origin = self.headers.get("Origin")
+
+                if scenario == "auth":
+                    if authorization in {None, "Bearer phase21-invalid-probe"}:
+                        self.send_fixture(401, b"<html>Unauthorized</html>")
+                        return
+                    if origin == "https://phase21-untrusted.invalid":
+                        self.send_fixture(403, b"<html>Forbidden</html>")
+                        return
+                    body = json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "result": {
+                                "protocolVersion": "2025-06-18",
+                                "capabilities": {"tools": {}},
+                            },
+                        },
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                    self.send_fixture(200, body, content_type="application/json")
+                    return
+                if scenario == "notification":
+                    self.send_fixture(202, b"", content_type="application/json")
+                    return
+                if scenario == "sse":
+                    body = (
+                        b"event: message\n"
+                        + b"data: "
+                        + json.dumps(
+                            {"jsonrpc": "2.0", "id": request_id, "result": {"ok": True}},
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                        + b"\n\n"
+                    )
+                    self.send_fixture(200, body, content_type="text/event-stream")
+                    return
+                if scenario == "malformed-success":
+                    self.send_fixture(200, b"not-json", content_type="application/json")
+                    return
+                if scenario == "wrong-success-type":
+                    self.send_fixture(200, b"{}", content_type="text/plain")
+                    return
+                if scenario == "echo-body":
+                    self.send_fixture(401, b"phase21-invalid-probe")
+                    return
+                if scenario == "echo-header":
+                    self.send_fixture(
+                        403,
+                        b"forbidden",
+                        extra_headers={"X-Probe": "fixture-valid-token"},
+                    )
+                    return
+                if scenario == "oversized":
+                    self.send_fixture(401, b"x" * (probe.MAX_BODY_BYTES + 1))
+                    return
+                if scenario == "redirect":
+                    self.send_fixture(302, b"redirect")
+                    return
+                if scenario == "server-error":
+                    self.send_fixture(500, b"server error")
+                    return
+                raise AssertionError(scenario)
+
+        server = http_server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        raw_root = self.root / "real-http-probe"
+        raw_root.mkdir(mode=0o700)
+        transport = probe.StreamableHttpTransport(
+            f"http://127.0.0.1:{server.server_port}/solidstats/mcp",
+            "fixture-valid-token",
+            timeout=5,
+            raw_root=raw_root,
+        )
+
+        for mode, expected_status in (
+            ("missing", 401),
+            ("invalid", 401),
+            ("untrusted-origin", 403),
+        ):
+            with self.subTest(auth_mode=mode):
+                result = probe.http_probe(
+                    transport,
+                    probe._initialize_message(),
+                    token_mode=mode,
+                )
+                self.assertEqual(expected_status, result.status)
+                self.assertIsNone(result.payload)
+        initialized = probe.http_probe(transport, probe._initialize_message())
+        self.assertEqual(200, initialized.status)
+        self.assertEqual(1, initialized.payload["id"])
+
+        state["scenario"] = "notification"
+        notification = probe.http_probe(
+            transport,
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        )
+        self.assertEqual(202, notification.status)
+        self.assertIsNone(notification.payload)
+
+        state["scenario"] = "sse"
+        sse = probe.http_probe(
+            transport,
+            {"jsonrpc": "2.0", "id": 9, "method": "ping"},
+        )
+        self.assertEqual(9, sse.payload["id"])
+
+        for scenario, message in (
+            ("malformed-success", "malformed"),
+            ("wrong-success-type", "content type"),
+            ("echo-body", "authorization"),
+            ("echo-header", "authorization"),
+            ("oversized", "exceeds"),
+        ):
+            with self.subTest(rejection=scenario):
+                state["scenario"] = scenario
+                token_mode = "untrusted-origin" if scenario == "echo-header" else "invalid"
+                with self.assertRaisesRegex(probe.ProbeError, message):
+                    probe.http_probe(
+                        transport,
+                        {"jsonrpc": "2.0", "id": 9, "method": "ping"},
+                        token_mode=token_mode,
+                    )
+
+        for scenario in ("redirect", "server-error"):
+            with self.subTest(auth_status=scenario):
+                state["scenario"] = scenario
+                with self.assertRaisesRegex(probe.ProbeError, "auth rejection"):
+                    probe.probe_auth_matrix(transport)
 
     def test_client_command_builder_is_exact_and_preserves_legacy(self) -> None:
         probe = self.load_probe()
