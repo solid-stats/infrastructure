@@ -33,6 +33,7 @@ SCHEMA = "solidstats-memory-private-operator/v1"
 CONFIG_SCHEMA = "solidstats-memory-private-operator-config/v1"
 NAMESPACE = "solidstats-memory"
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+RUN_ID = re.compile(r"^[a-z0-9][a-z0-9-]{7,63}$")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 IMAGE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 OPERATIONS = {
@@ -109,18 +110,47 @@ class OperatorError(ValueError):
 
 
 @contextmanager
-def alias_writer_lease(private_root: Path):
+def alias_writer_lease(*, run_id: str):
+    private_root_value = os.environ.get("SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT")
+    if not private_root_value:
+        raise OperatorError("shared alias lease root is unavailable")
+    private_root = private_directory(Path(private_root_value))
+    path = private_root / ".solidstats-memory-alias.lock"
+    if not RUN_ID.fullmatch(run_id):
+        raise OperatorError("alias writer lease run binding is invalid")
+    run_digest = hashlib.sha256(run_id.encode("ascii")).hexdigest()
     inherited = os.environ.get("SOLIDSTATS_MEMORY_ALIAS_LOCK_FD")
     if inherited is not None:
         try:
-            details = os.fstat(int(inherited))
-        except (OSError, ValueError) as error:
+            descriptor = int(inherited)
+            details = os.fstat(descriptor)
+            descriptor_path = Path(f"/proc/self/fd/{descriptor}").resolve(strict=True)
+            path_details = path.stat()
+            raw_owner = os.pread(descriptor, 4097, 0)
+            owner = json.loads(raw_owner)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
             raise OperatorError("alias writer lease ownership is invalid") from error
-        if not stat.S_ISREG(details.st_mode):
+        if (
+            descriptor_path != path.resolve(strict=True)
+            or path.is_symlink()
+            or not stat.S_ISREG(details.st_mode)
+            or (details.st_dev, details.st_ino)
+            != (path_details.st_dev, path_details.st_ino)
+            or len(raw_owner) > 4096
+            or not isinstance(owner, Mapping)
+            or set(owner) != {"schema", "pid", "run_id_sha256"}
+            or owner.get("schema") != "solidstats-memory-alias-lock/v1"
+            or type(owner.get("pid")) is not int
+            or owner["pid"] < 1
+            or owner.get("run_id_sha256") != run_digest
+        ):
             raise OperatorError("alias writer lease ownership is invalid")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, BlockingIOError) as error:
+            raise OperatorError("alias writer lease is not held") from error
         yield
         return
-    path = private_root / ".solidstats-memory-alias.lock"
     descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
         details = os.fstat(descriptor)
@@ -131,7 +161,11 @@ def alias_writer_lease(private_root: Path):
         except BlockingIOError as error:
             raise OperatorError("alias writer lease is held") from error
         owner = json.dumps(
-            {"schema": "solidstats-memory-alias-lock/v1", "pid": os.getpid()},
+            {
+                "schema": "solidstats-memory-alias-lock/v1",
+                "pid": os.getpid(),
+                "run_id_sha256": run_digest,
+            },
             separators=(",", ":"), sort_keys=True,
         ).encode("ascii") + b"\n"
         os.ftruncate(descriptor, 0)
@@ -148,7 +182,10 @@ def alias_writer_lease(private_root: Path):
 def alias_locked_method(function):
     @functools.wraps(function)
     def wrapped(self, *args, **kwargs):
-        with alias_writer_lease(self.state_root.parent):
+        run_id = os.environ.get("SOLIDSTATS_MEMORY_RUN_ID")
+        if not run_id:
+            raise OperatorError("alias writer lease run binding is unavailable")
+        with alias_writer_lease(run_id=run_id):
             return function(self, *args, **kwargs)
     return wrapped
 
@@ -1441,6 +1478,50 @@ class Runtime:
             bindings[entry["alias_name"]] = entry["collection_name"]
         return bindings
 
+    def _restore_alias_prestate(
+        self, *, alias: str, prestate: Mapping[str, str]
+    ) -> None:
+        unrelated_expected = {
+            name: collection for name, collection in prestate.items() if name != alias
+        }
+        last_error: Exception | None = None
+        for _attempt in range(4):
+            current = self._alias_bindings(self._qdrant("GET", "/aliases"))
+            if current == prestate:
+                return
+            unrelated = {
+                name: collection for name, collection in current.items() if name != alias
+            }
+            if unrelated != unrelated_expected:
+                raise OperatorError("unrelated alias changed during bootstrap rollback")
+            actions: list[dict[str, object]] = []
+            if alias in current and current.get(alias) != prestate.get(alias):
+                actions.append({"delete_alias": {"alias_name": alias}})
+            if alias in prestate and current.get(alias) != prestate[alias]:
+                actions.append({"create_alias": {
+                    "alias_name": alias,
+                    "collection_name": prestate[alias],
+                }})
+            try:
+                self._qdrant("POST", "/collections/aliases", {"actions": actions})
+                last_error = None
+            except Exception as error:
+                last_error = error
+            try:
+                observed = self._alias_bindings(self._qdrant("GET", "/aliases"))
+            except Exception as error:
+                last_error = error
+                continue
+            if observed == prestate:
+                return
+            if {
+                name: collection
+                for name, collection in observed.items()
+                if name != alias
+            } != unrelated_expected:
+                raise OperatorError("unrelated alias changed during bootstrap rollback")
+        raise OperatorError("runtime bootstrap alias restoration failed") from last_error
+
     def _runtime_bootstrap_objects(self) -> tuple[dict[str, object], dict[str, object]]:
         script_path = self.repo_root / "scripts/bootstrap-solidstats-memory-palace.py"
         details = regular_file(script_path, max_bytes=256 * 1024)
@@ -1953,25 +2034,7 @@ class Runtime:
                 except Exception:
                     cleanup_failed = True
             try:
-                observed_aliases = self._alias_bindings(self._qdrant("GET", "/aliases"))
-                unrelated = {
-                    name: collection
-                    for name, collection in observed_aliases.items()
-                    if name != alias
-                }
-                if unrelated != prestate:
-                    cleanup_failed = True
-                elif alias in observed_aliases:
-                    self._qdrant(
-                        "POST",
-                        "/collections/aliases",
-                        {"actions": [{"delete_alias": {"alias_name": alias}}]},
-                    )
-            except Exception:
-                cleanup_failed = True
-            try:
-                if self._alias_bindings(self._qdrant("GET", "/aliases")) != prestate:
-                    cleanup_failed = True
+                self._restore_alias_prestate(alias=alias, prestate=prestate)
             except Exception:
                 cleanup_failed = True
             if scaled:

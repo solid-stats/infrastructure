@@ -83,19 +83,47 @@ class QdrantNotFound(RestoreControlError):
 
 @contextmanager
 def alias_writer_lease(*, run_id: str | None = None):
-    """Hold the process-wide alias writer lease or verify its inherited FD."""
+    """Hold the one canonical alias lease or validate its inherited authority."""
+    private_root = Path(
+        _required_environment("SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT")
+    ).resolve(strict=True)
+    path = private_root / ".solidstats-memory-alias.lock"
+    owner_run_id = _require_run_id(
+        run_id or _required_environment("SOLIDSTATS_MEMORY_RUN_ID")
+    )
+    run_digest = hashlib.sha256(owner_run_id.encode("ascii")).hexdigest()
     inherited = os.environ.get("SOLIDSTATS_MEMORY_ALIAS_LOCK_FD")
     if inherited is not None:
         try:
-            details = os.fstat(int(inherited))
-        except (OSError, ValueError) as error:
+            descriptor = int(inherited)
+            details = os.fstat(descriptor)
+            descriptor_path = Path(f"/proc/self/fd/{descriptor}").resolve(strict=True)
+            path_details = path.stat()
+            raw_owner = os.pread(descriptor, 4097, 0)
+            owner = json.loads(raw_owner)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
             raise RestoreControlError("alias writer lease ownership is invalid") from error
-        if not stat.S_ISREG(details.st_mode):
+        if (
+            descriptor_path != path.resolve(strict=True)
+            or path.is_symlink()
+            or not stat.S_ISREG(details.st_mode)
+            or (details.st_dev, details.st_ino)
+            != (path_details.st_dev, path_details.st_ino)
+            or len(raw_owner) > 4096
+            or not isinstance(owner, Mapping)
+            or set(owner) != {"schema", "pid", "run_id_sha256"}
+            or owner.get("schema") != "solidstats-memory-alias-lock/v1"
+            or type(owner.get("pid")) is not int
+            or owner["pid"] < 1
+            or owner.get("run_id_sha256") != run_digest
+        ):
             raise RestoreControlError("alias writer lease ownership is invalid")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, BlockingIOError) as error:
+            raise RestoreControlError("alias writer lease is not held") from error
         yield
         return
-    private_root = Path(_required_environment("SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT"))
-    path = private_root / ".solidstats-memory-alias.lock"
     descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
         details = os.fstat(descriptor)
@@ -105,12 +133,11 @@ def alias_writer_lease(*, run_id: str | None = None):
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise RestoreControlError("alias writer lease is held") from error
-        owner_run_id = run_id or _required_environment("SOLIDSTATS_MEMORY_RUN_ID")
         owner = canonical_json_bytes({
             "schema": "solidstats-memory-alias-lock/v1",
             "pid": os.getpid(),
             "run_id_sha256": hashlib.sha256(
-                _require_run_id(owner_run_id).encode("ascii")
+                owner_run_id.encode("ascii")
             ).hexdigest(),
         }) + b"\n"
         os.ftruncate(descriptor, 0)
@@ -1421,33 +1448,48 @@ def restore_alias_prestate(
         )
         for name, collection in prestate.items()
     }
-    current = _alias_map(_request(request, "GET", "/aliases"))
-    unrelated_current = {
-        name: collection for name, collection in current.items() if name != alias_name
-    }
     unrelated_expected = {
         name: collection for name, collection in expected.items() if name != alias_name
     }
-    if unrelated_current != unrelated_expected:
-        raise RestoreControlError("unrelated alias changed before rollback")
-    actions: list[Mapping[str, object]] = []
-    if alias_name in current and current.get(alias_name) != expected.get(alias_name):
-        actions.append({"delete_alias": {"alias_name": alias_name}})
-    if alias_name in expected and current.get(alias_name) != expected[alias_name]:
-        actions.append(
-            {
-                "create_alias": {
-                    "alias_name": alias_name,
-                    "collection_name": expected[alias_name],
-                }
-            }
-        )
-    if actions:
-        _alias_actions(request, actions)
-    final = _alias_map(_request(request, "GET", "/aliases"))
-    if final != expected:
-        raise RestoreControlError("alias prestate restoration failed")
-    return {"restored": True, "poststate_sha256": _digest(final)}
+    last_error: Exception | None = None
+    for _attempt in range(4):
+        current = _alias_map(_request(request, "GET", "/aliases"))
+        if current == expected:
+            return {"restored": True, "poststate_sha256": _digest(current)}
+        unrelated_current = {
+            name: collection
+            for name, collection in current.items()
+            if name != alias_name
+        }
+        if unrelated_current != unrelated_expected:
+            raise RestoreControlError("unrelated alias changed before rollback")
+        actions: list[Mapping[str, object]] = []
+        if alias_name in current and current.get(alias_name) != expected.get(alias_name):
+            actions.append({"delete_alias": {"alias_name": alias_name}})
+        if alias_name in expected and current.get(alias_name) != expected[alias_name]:
+            actions.append({"create_alias": {
+                "alias_name": alias_name,
+                "collection_name": expected[alias_name],
+            }})
+        try:
+            _alias_actions(request, actions)
+            last_error = None
+        except Exception as error:
+            last_error = error
+        try:
+            observed = _alias_map(_request(request, "GET", "/aliases"))
+        except Exception as error:
+            last_error = error
+            continue
+        if observed == expected:
+            return {"restored": True, "poststate_sha256": _digest(observed)}
+        if {
+            name: collection
+            for name, collection in observed.items()
+            if name != alias_name
+        } != unrelated_expected:
+            raise RestoreControlError("unrelated alias changed during rollback")
+    raise RestoreControlError("alias prestate restoration failed") from last_error
 
 
 def probe_alias_compatibility(

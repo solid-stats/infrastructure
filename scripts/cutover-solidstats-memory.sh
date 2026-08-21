@@ -1074,7 +1074,7 @@ main() {
     echo "FATAL: alias writer lease is held" >&2
     return 1
   }
-  printf '{"schema":"solidstats-memory-alias-lock/v1","pid":%d,"run_id_sha256":"%s"}\n' "$$" "${RUN_ID_SHA256}" >&9
+  printf '{"schema":"solidstats-memory-alias-lock/v1","pid":%d,"run_id_sha256":"%s"}\n' "$$" "${RUN_ID_SHA256}" >"${ALIAS_LOCK_PATH}"
   sync "${ALIAS_LOCK_PATH}"
   export SOLIDSTATS_MEMORY_ALIAS_LOCK_FD=9
   : "${SOLIDSTATS_MEMORY_ALIAS_PRESTATE:=${STATE_DIR}/alias-prestate.json}"

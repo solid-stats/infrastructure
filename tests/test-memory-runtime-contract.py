@@ -40,6 +40,13 @@ BOOTSTRAP_SPEC = importlib.util.spec_from_file_location(
 assert BOOTSTRAP_SPEC and BOOTSTRAP_SPEC.loader
 BOOTSTRAP = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
 BOOTSTRAP_SPEC.loader.exec_module(BOOTSTRAP)
+BACKUP_ORACLE_PATH = ROOT / "scripts" / "solidstats_memory_backup_oracle.py"
+BACKUP_ORACLE_SPEC = importlib.util.spec_from_file_location(
+    "solidstats_memory_backup_oracle", BACKUP_ORACLE_PATH
+)
+assert BACKUP_ORACLE_SPEC and BACKUP_ORACLE_SPEC.loader
+BACKUP_ORACLE = importlib.util.module_from_spec(BACKUP_ORACLE_SPEC)
+BACKUP_ORACLE_SPEC.loader.exec_module(BACKUP_ORACLE)
 
 
 def synthetic_environment(**values: str) -> dict[str, str]:
@@ -61,6 +68,38 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
             env=synthetic_environment(**environment), text=True,
             capture_output=True, check=False, timeout=10,
         )
+
+    def test_backup_oracle_exact_not_found_and_error_matrix(self) -> None:
+        drawer_id = "synthetic-drawer"
+        BACKUP_ORACLE.validate_not_found_result(
+            {"error": f"Drawer not found: {drawer_id}"}, drawer_id=drawer_id
+        )
+        for result in (
+            {"isError": True, "content": [{"type": "text", "text": "unauthorized"}]},
+            {"isError": True, "content": [{"type": "text", "text": "unavailable"}]},
+            {"structuredContent": {"error": "internal failure"}},
+            {"structuredContent": {"drawer_id": drawer_id, "content": "still present"}},
+            {"content": [{"type": "text", "text": "not-json"}]},
+        ):
+            with self.subTest(result=result):
+                with self.assertRaises(BACKUP_ORACLE.BackupOracleError):
+                    structured = BACKUP_ORACLE.tool_data(result)
+                    BACKUP_ORACLE.validate_not_found_result(
+                        structured, drawer_id=drawer_id
+                    )
+
+    def test_backup_oracle_configmap_matches_importable_source(self) -> None:
+        documents = list(
+            yaml.safe_load_all((ROOT / "k8s/memory/40-backup.yaml").read_text())
+        )
+        config_map = next(
+            item
+            for item in documents
+            if item.get("kind") == "ConfigMap"
+            and item["metadata"]["name"] == "solidstats-memory-backup-oracle"
+        )
+        encoded = config_map["binaryData"]["solidstats_memory_backup_oracle.py"]
+        self.assertEqual(BACKUP_ORACLE_PATH.read_bytes(), base64.b64decode(encoded))
 
     def test_renderer_copies_exact_source_bytes_without_environment_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1054,9 +1093,18 @@ class MemoryValidatorContractTests(unittest.TestCase):
 
     def test_validator_rejects_backup_oracle_cleanup_regressions(self) -> None:
         mutations = (
-            ('result.get("isError") is True', 'result.get("isError") is False'),
-            ('set(deleted) != {"success", "drawer_id", "deleted_ids", "chunks_deleted"}', 'set(deleted) != set(deleted)'),
-            ('if absent.get("isError") is not True', 'if absent.get("isError") is True'),
+            (
+                "name: solidstats-memory-backup-oracle",
+                "name: missing-backup-oracle",
+            ),
+            (
+                "validate_delete_result(deleted, drawer_id=drawer_id)",
+                "validate_delete_result({}, drawer_id=drawer_id)",
+            ),
+            (
+                "validate_not_found_result(absent, drawer_id=drawer_id)",
+                "validate_not_found_result({}, drawer_id=drawer_id)",
+            ),
         )
         for original, replacement in mutations:
             with self.subTest(original=original):

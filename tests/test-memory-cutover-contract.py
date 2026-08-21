@@ -7,6 +7,8 @@ from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
 import errno
 import hashlib
+import fcntl
+import inspect
 from http import server as http_server
 import importlib.util
 import io
@@ -1182,6 +1184,42 @@ class MemoryCutoverContractTests(unittest.TestCase):
             )
         self.assertEqual({}, aliases)
 
+    def test_alias_probe_retries_ambiguous_cleanup_until_observed_absent(self) -> None:
+        for apply_before_raise in (False, True):
+            with self.subTest(apply_before_raise=apply_before_raise):
+                aliases: dict[str, str] = {}
+                failed_cleanup = False
+
+                def request(method: str, path: str, body: object = None) -> object:
+                    nonlocal failed_cleanup
+                    if path == "/aliases":
+                        return {"result": {"aliases": [
+                            {"alias_name": name, "collection_name": collection}
+                            for name, collection in aliases.items()
+                        ]}}
+                    action = body["actions"][0]
+                    if "create_alias" in action:
+                        item = action["create_alias"]
+                        aliases[item["alias_name"]] = item["collection_name"]
+                    else:
+                        alias = action["delete_alias"]["alias_name"]
+                        if not failed_cleanup:
+                            failed_cleanup = True
+                            if apply_before_raise:
+                                aliases.pop(alias, None)
+                            raise TimeoutError("synthetic ambiguous cleanup")
+                        aliases.pop(alias, None)
+                    return {"status": "ok"}
+
+                result = RESTORE.probe_alias_compatibility(
+                    request,
+                    restored_collection="isolated",
+                    probe_alias="probe",
+                    exact_image_probe=lambda: True,
+                )
+                self.assertTrue(result["restored"])
+                self.assertEqual({}, aliases)
+
     def test_backup_restore_evidence_schema_is_strict_and_value_free(self) -> None:
         bindings = {"binding_sha256": "1" * 64}
         evidence = self.backup_evidence(bindings)
@@ -1723,6 +1761,49 @@ class MemoryCutoverContractTests(unittest.TestCase):
             owner["run_id_sha256"],
         )
 
+    def test_alias_writer_lease_rejects_arbitrary_inherited_regular_fd(self) -> None:
+        private = self.root / "alias-inherited"
+        private.mkdir(mode=0o700)
+        arbitrary = private / "arbitrary"
+        arbitrary.write_text('{"schema":"fake"}\n', encoding="ascii")
+        arbitrary.chmod(0o600)
+        descriptor = os.open(arbitrary, os.O_RDWR)
+        self.addCleanup(os.close, descriptor)
+        with mock.patch.dict(os.environ, {
+            "SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT": str(private),
+            "SOLIDSTATS_MEMORY_RUN_ID": "phase21-inherited-test",
+            "SOLIDSTATS_MEMORY_ALIAS_LOCK_FD": str(descriptor),
+        }, clear=False):
+            with self.assertRaisesRegex(
+                RESTORE.RestoreControlError, "ownership is invalid"
+            ):
+                with RESTORE.alias_writer_lease():
+                    self.fail("arbitrary inherited descriptor was accepted")
+
+    def test_alias_writer_lease_accepts_exact_inherited_owner(self) -> None:
+        private = self.root / "alias-valid-inherited"
+        private.mkdir(mode=0o700)
+        path = private / ".solidstats-memory-alias.lock"
+        descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, descriptor)
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        self.addCleanup(fcntl.flock, descriptor, fcntl.LOCK_UN)
+        run_id = "phase21-valid-inherited"
+        owner = json.dumps({
+            "schema": "solidstats-memory-alias-lock/v1",
+            "pid": os.getpid(),
+            "run_id_sha256": hashlib.sha256(run_id.encode("ascii")).hexdigest(),
+        }, separators=(",", ":"), sort_keys=True).encode("ascii") + b"\n"
+        os.write(descriptor, owner)
+        os.fsync(descriptor)
+        with mock.patch.dict(os.environ, {
+            "SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT": str(private),
+            "SOLIDSTATS_MEMORY_RUN_ID": run_id,
+            "SOLIDSTATS_MEMORY_ALIAS_LOCK_FD": str(descriptor),
+        }, clear=False):
+            with RESTORE.alias_writer_lease():
+                pass
+
     def test_alias_switch_blocks_writer_between_compare_and_post(self) -> None:
         private = self.root / "alias-interleaving"
         private.mkdir(mode=0o700)
@@ -1908,6 +1989,9 @@ class MemoryCutoverContractTests(unittest.TestCase):
                             {"drawer_id": "archive-fixture", "count": 1}
                         ],
                         "total": 1,
+                        "count": 1,
+                        "offset": int(arguments.get("offset", 0)),
+                        "limit": int(arguments.get("limit", 20)),
                     }
                 elif name == "mempalace_check_duplicate":
                     self.assertEqual(synthetic_content, arguments["content"])
@@ -2006,6 +2090,20 @@ class MemoryCutoverContractTests(unittest.TestCase):
         stored: dict[str, str] = {}
 
         def call(_session, name: str, arguments: dict[str, object]):
+            if name == "mempalace_list_drawers":
+                ids = sorted(stored)
+                offset = int(arguments["offset"])
+                limit = int(arguments["limit"])
+                return {"structuredContent": {
+                    "drawers": [
+                        {"drawer_id": drawer_id}
+                        for drawer_id in ids[offset : offset + limit]
+                    ],
+                    "total": len(ids),
+                    "count": len(ids[offset : offset + limit]),
+                    "offset": offset,
+                    "limit": limit,
+                }}
             if name == "mempalace_search":
                 return {"structuredContent": {"results": [
                     {"drawer_id": drawer_id}
@@ -2039,6 +2137,24 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     synthetic_content=content,
                 )
         self.assertEqual({}, stored)
+
+    def test_probe_cleanup_inventory_is_paginated_not_ann_derived(self) -> None:
+        probe = self.load_probe()
+        pages = {
+            0: {"drawers": [{"drawer_id": f"drawer-{index}"} for index in range(100)], "total": 101, "count": 100, "offset": 0, "limit": 100},
+            100: {"drawers": [{"drawer_id": "drawer-100"}], "total": 101, "count": 1, "offset": 100, "limit": 100},
+        }
+
+        def call(_session, name: str, arguments: dict[str, object]):
+            self.assertEqual("mempalace_list_drawers", name)
+            return {"structuredContent": pages[int(arguments["offset"])]}
+
+        with mock.patch.object(probe, "mcp_call", side_effect=call):
+            self.assertEqual(
+                101,
+                len(probe._listed_drawer_ids(object(), wing="infrastructure")),
+            )
+        self.assertNotIn("mempalace_search", inspect.getsource(probe._listed_drawer_ids))
 
     def test_probe_accepts_only_exact_v350_delete_success_schema(self) -> None:
         probe = self.load_probe()
@@ -2895,6 +3011,32 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertFalse(metadata.exists())
         self.assertIn(b"unrelated_current_bytes_preserved=true", result.read_bytes())
 
+        config.write_bytes(current)
+        config.chmod(0o600)
+        prestate.write_bytes(original)
+        prestate.chmod(0o600)
+        write_metadata()
+        result.unlink()
+        external = b'[plugins.rollback_late_edit]\nenabled = true\n\n'
+
+        def late_stage(name: str) -> None:
+            if name == "prepared_replace":
+                replacement_path = config.with_name("external-rollback-config")
+                replacement_path.write_bytes(current + external)
+                replacement_path.chmod(0o600)
+                os.replace(replacement_path, config)
+
+        with self.assertRaises(CLIENT_POLICY.PolicyError):
+            CLIENT_POLICY.rollback_registration_transaction(
+                config, prestate, result,
+                url="https://memory.example/solidstats/mcp",
+                token_env="SOLIDSTATS_MEMORY_TOKEN",
+                stage=late_stage,
+            )
+        self.assertEqual(current + external, config.read_bytes())
+        self.assertFalse(result.exists())
+        self.assertFalse(config.with_name(f".{config.name}.solidstats-memory.tmp").exists())
+
     def test_client_retirement_rebases_unrelated_edit_before_replace(self) -> None:
         private = self.root / "client-retirement-rebase"
         private.mkdir(mode=0o700)
@@ -2939,6 +3081,31 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn(concurrent, observed)
         self.assertNotIn(b"[mcp_servers.mempalace]", observed)
         self.assertIn(b"[mcp_servers.solidstats_memory]", observed)
+
+        config.write_bytes(current)
+        config.chmod(0o600)
+        result.unlink(missing_ok=True)
+        result.with_suffix(result.suffix + ".prestate").unlink(missing_ok=True)
+        (private / "client-pre-retirement.result").unlink(missing_ok=True)
+        external = b'[plugins.after_final_read]\nenabled = true\n\n'
+
+        def late_stage(name: str) -> None:
+            if name == "prepared_replace":
+                replacement_path = config.with_name("external-retirement-config")
+                replacement_path.write_bytes(current + external)
+                replacement_path.chmod(0o600)
+                os.replace(replacement_path, config)
+
+        with self.assertRaisesRegex(CLIENT_POLICY.PolicyError, "failed"):
+            CLIENT_POLICY.retire_transaction(
+                config, prestate, result,
+                url="https://memory.example/solidstats/mcp",
+                token_env="SOLIDSTATS_MEMORY_TOKEN",
+                stage=late_stage,
+            )
+        self.assertEqual(current + external, config.read_bytes())
+        self.assertFalse(result.exists())
+        self.assertFalse(config.with_name(f".{config.name}.solidstats-memory.tmp").exists())
 
     def test_cutover_self_test_exercises_reverse_order_rollback(self) -> None:
         result = subprocess.run(

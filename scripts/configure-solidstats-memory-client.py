@@ -177,7 +177,15 @@ def _exclusive_write(path: Path, raw: bytes) -> None:
         raise PolicyError("private client state could not be written") from error
 
 
-def _atomic_replace(path: Path, raw: bytes, mode: int) -> None:
+def _atomic_replace(
+    path: Path, raw: bytes, mode: int, *, expected_raw: bytes | None = None
+) -> None:
+    expected_identity: tuple[int, int] | None = None
+    if expected_raw is not None:
+        details = path.lstat()
+        expected_identity = (details.st_dev, details.st_ino)
+        if path.read_bytes() != expected_raw:
+            raise PolicyError("client config changed before replacement")
     temporary = path.with_name(f".{path.name}.solidstats-memory.tmp")
     if temporary.exists() or temporary.is_symlink():
         raise PolicyError("client config temporary path already exists")
@@ -190,12 +198,28 @@ def _atomic_replace(path: Path, raw: bytes, mode: int) -> None:
             output.write(raw)
             output.flush()
             os.fsync(output.fileno())
+        if expected_raw is not None:
+            current_details = path.lstat()
+            if (
+                path.is_symlink()
+                or (current_details.st_dev, current_details.st_ino)
+                != expected_identity
+                or path.read_bytes() != expected_raw
+            ):
+                raise PolicyError("client config changed before replacement")
         os.replace(temporary, path)
         directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory)
         finally:
             os.close(directory)
+    except PolicyError:
+        if created:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
+        raise
     except OSError as error:
         if created:
             try:
@@ -465,7 +489,7 @@ def rollback_registration_transaction(
     current, config_mode = _safe_file(config)
     original_prestate, prestate_mode = _safe_file(prestate)
     inspect_policy(current, url=url, token_env=token_env, require_policy=True)
-    updated = _remove_registration(current, CLIENT_NAME)
+    recorded_replacement = _registration_mapping(current, CLIENT_NAME)
     if _registration_mapping(current, legacy_name) != _registration_mapping(
         original_prestate, legacy_name
     ):
@@ -477,11 +501,24 @@ def rollback_registration_transaction(
         metadata_before, metadata_mode = _safe_file(metadata)
     stage_hook = stage or (lambda _name: None)
 
-    def exact_remove(expected: bytes) -> None:
-        _atomic_replace(config, expected, config_mode)
-
-    remove_callback = remove or exact_remove
     try:
+        latest, latest_mode = _safe_file(config)
+        if (
+            _registration_mapping(latest, legacy_name)
+            != _registration_mapping(original_prestate, legacy_name)
+            or _registration_mapping(latest, CLIENT_NAME) != recorded_replacement
+        ):
+            raise PolicyError("client registration drift prevents rollback")
+        current, config_mode = latest, latest_mode
+        updated = _remove_registration(current, CLIENT_NAME)
+
+        def exact_remove(expected: bytes) -> None:
+            _atomic_replace(
+                config, expected, config_mode, expected_raw=current
+            )
+
+        remove_callback = remove or exact_remove
+        stage_hook("prepared_replace")
         remove_callback(updated)
         stage_hook("removed")
         observed, _ = _safe_file(config)
@@ -505,12 +542,25 @@ def rollback_registration_transaction(
         try:
             observed, _ = _safe_file(config)
             if observed != current:
-                compensated = (
-                    current
-                    if observed == updated
-                    else _restore_registration(observed, current, CLIENT_NAME)
-                )
-                _atomic_replace(config, compensated, config_mode)
+                if observed == updated:
+                    compensated = current
+                else:
+                    try:
+                        target_present = (
+                            _registration_mapping(observed, CLIENT_NAME)
+                            == recorded_replacement
+                        )
+                    except PolicyError:
+                        target_present = False
+                    compensated = (
+                        observed
+                        if target_present
+                        else _restore_registration(observed, current, CLIENT_NAME)
+                    )
+                if compensated != observed:
+                    _atomic_replace(
+                        config, compensated, config_mode, expected_raw=observed
+                    )
                 if compensated != current:
                     raise PolicyError(
                         "unrelated client drift preserved; exact compensation refused"
@@ -618,8 +668,15 @@ def retire_transaction(
     )
     _authorize_exact_states(prestate, (current, retired))
 
+    final_current, final_mode = _safe_file(config)
+    stage_hook("prepared_replace")
+    if final_current != current:
+        raise PolicyError("client config changed during retirement preparation")
+    current, mode = final_current, final_mode
+    retired = _remove_registration(current, legacy_name)
+
     def exact_remove(expected: bytes) -> None:
-        _atomic_replace(config, expected, mode)
+        _atomic_replace(config, expected, mode, expected_raw=current)
 
     remove_callback = remove or exact_remove
     try:
@@ -651,12 +708,23 @@ def retire_transaction(
         try:
             observed, _ = _safe_file(config)
             if observed != current:
-                compensated = (
-                    current
-                    if observed == retired
-                    else _restore_registration(observed, current, legacy_name)
-                )
-                _atomic_replace(config, compensated, mode)
+                if observed == retired:
+                    compensated = current
+                else:
+                    try:
+                        target_present = (
+                            _registration_mapping(observed, legacy_name)
+                            == recorded_legacy
+                        )
+                    except PolicyError:
+                        target_present = False
+                    compensated = (
+                        observed
+                        if target_present
+                        else _restore_registration(observed, current, legacy_name)
+                    )
+                if compensated != observed:
+                    _atomic_replace(config, compensated, mode, expected_raw=observed)
                 if compensated != current:
                     raise PolicyError(
                         "unrelated client drift preserved; exact compensation refused"

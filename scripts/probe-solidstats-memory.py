@@ -492,38 +492,53 @@ def _first_drawer_id(value: object) -> str | None:
     return None
 
 
-def _drawer_ids(value: object) -> set[str]:
+def _listed_drawer_ids(session: McpSession, *, wing: str) -> set[str]:
+    """Enumerate one wing deterministically; never infer completeness from ANN.
+
+    Source: MemPalace v3.5.0 mcp_server.py lines 2551-2590 and 3750-3770.
+    """
     found: set[str] = set()
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            if key in {"drawer_id", "id"} and isinstance(item, str) and item:
-                found.add(item)
-            else:
-                found.update(_drawer_ids(item))
-    elif isinstance(value, list):
-        for item in value:
-            found.update(_drawer_ids(item))
-    return found
-
-
-def _exact_content_ids(
-    session: McpSession, *, wing: str, content: str
-) -> set[str]:
-    searched = _tool_data(
-        mcp_call(
-            session,
-            "mempalace_search",
-            {"query": content, "wing": wing, "limit": 10},
+    offset = 0
+    for _page in range(100):
+        data = _tool_data(
+            mcp_call(
+                session,
+                "mempalace_list_drawers",
+                {"wing": wing, "limit": 100, "offset": offset},
+            )
         )
-    )
-    matches: set[str] = set()
-    for drawer_id in sorted(_drawer_ids(searched)):
-        drawer = _tool_data(
-            mcp_call(session, "mempalace_get_drawer", {"drawer_id": drawer_id})
-        )
-        if drawer.get("content") == content:
-            matches.add(drawer_id)
-    return matches
+        drawers = data.get("drawers")
+        total = data.get("total")
+        count = data.get("count")
+        page_offset = data.get("offset")
+        page_limit = data.get("limit")
+        if (
+            set(data) != {"drawers", "total", "count", "offset", "limit"}
+            or not isinstance(drawers, list)
+            or type(total) is not int
+            or type(count) is not int
+            or type(page_offset) is not int
+            or type(page_limit) is not int
+            or count != len(drawers)
+            or page_offset != offset
+            or page_limit != 100
+            or total < 0
+            or total > 10_000
+        ):
+            raise ProbeError("deterministic drawer inventory is invalid")
+        page_ids: list[str] = []
+        for drawer in drawers:
+            drawer_id = _first_drawer_id(drawer)
+            if drawer_id is None or drawer_id in found or drawer_id in page_ids:
+                raise ProbeError("deterministic drawer inventory is invalid")
+            page_ids.append(drawer_id)
+        found.update(page_ids)
+        offset += len(page_ids)
+        if offset == total:
+            return found
+        if not page_ids or offset > total:
+            raise ProbeError("deterministic drawer inventory is incomplete")
+    raise ProbeError("deterministic drawer inventory exceeded its bound")
 
 
 def _capture_shape(content: str) -> bool:
@@ -733,9 +748,7 @@ def probe_behavior_matrix(
             {"content": synthetic_content, "threshold": 0.9},
         )
     )
-    preexisting = _exact_content_ids(
-        session, wing=wing, content=synthetic_content
-    )
+    preexisting = _listed_drawer_ids(session, wing=wing)
     drawer_id: str | None = None
     probe_error: Exception | None = None
     cleanup_error: Exception | None = None
@@ -764,26 +777,26 @@ def probe_behavior_matrix(
         probe_error = error
     finally:
         try:
-            observed = _exact_content_ids(
-                session, wing=wing, content=synthetic_content
-            )
+            observed = _listed_drawer_ids(session, wing=wing)
             created_ids = observed - preexisting
             if drawer_id is not None:
                 created_ids.add(drawer_id)
-            if len(created_ids) != 1:
+            if not created_ids and probe_error is not None:
+                cleanup_id = None
+            elif len(created_ids) == 1:
+                cleanup_id = next(iter(created_ids))
+            else:
                 raise ProbeError("synthetic capture cleanup target is ambiguous")
-            cleanup_id = next(iter(created_ids))
-            deleted = _tool_data(
-                mcp_call(
-                    session,
-                    "mempalace_delete_drawer",
-                    {"drawer_id": cleanup_id},
+            if cleanup_id is not None:
+                deleted = _tool_data(
+                    mcp_call(
+                        session,
+                        "mempalace_delete_drawer",
+                        {"drawer_id": cleanup_id},
+                    )
                 )
-            )
-            _validate_delete_result(deleted, drawer_id=cleanup_id)
-            if _exact_content_ids(
-                session, wing=wing, content=synthetic_content
-            ) != preexisting:
+                _validate_delete_result(deleted, drawer_id=cleanup_id)
+            if _listed_drawer_ids(session, wing=wing) != preexisting:
                 raise ProbeError("synthetic capture cleanup failed")
         except Exception as error:
             cleanup_error = error

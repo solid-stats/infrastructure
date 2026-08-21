@@ -8,6 +8,17 @@ metadata:
     app.kubernetes.io/part-of: solidstats-memory
 automountServiceAccountToken: false
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: solidstats-memory-backup-oracle
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-backup
+    app.kubernetes.io/part-of: solidstats-memory
+binaryData:
+  solidstats_memory_backup_oracle.py: IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiJFeGFjdCBNZW1QYWxhY2UgdjMuNS4wIGJhY2t1cCBiZWhhdmlvci1vcmFjbGUgcmVzcG9uc2UgY2hlY2tzLgoKUGlubmVkIHNvdXJjZToKaHR0cHM6Ly9naXRodWIuY29tL01lbVBhbGFjZS9tZW1wYWxhY2UvYmxvYi92My41LjAvbWVtcGFsYWNlL21jcF9zZXJ2ZXIucHkjTDI1MzctTDI1OTAKIiIiCgpmcm9tIF9fZnV0dXJlX18gaW1wb3J0IGFubm90YXRpb25zCgppbXBvcnQganNvbgpmcm9tIHR5cGluZyBpbXBvcnQgSXRlcmFibGUsIE1hcHBpbmcKCgpjbGFzcyBCYWNrdXBPcmFjbGVFcnJvcihWYWx1ZUVycm9yKToKICAgICIiIkEgdmFsdWUtZnJlZSBiZWhhdmlvci1vcmFjbGUgY29udHJhY3QgZmFpbHVyZS4iIiIKCgpkZWYgdG9vbF9kYXRhKHJlc3VsdDogTWFwcGluZ1tzdHIsIG9iamVjdF0pIC0+IE1hcHBpbmdbc3RyLCBvYmplY3RdOgogICAgIiIiUmVqZWN0IGV2ZXJ5IHRvb2wgZXJyb3IgYW5kIHJldHVybiBvbmUgc3RydWN0dXJlZCBtYXBwaW5nLiIiIgogICAgaWYgcmVzdWx0LmdldCgiaXNFcnJvciIpIGlzIFRydWU6CiAgICAgICAgcmFpc2UgQmFja3VwT3JhY2xlRXJyb3IoImJlaGF2aW9yIG9yYWNsZSBNQ1AgdG9vbCBjYWxsIGZhaWxlZCIpCiAgICBzdHJ1Y3R1cmVkID0gcmVzdWx0LmdldCgic3RydWN0dXJlZENvbnRlbnQiKQogICAgaWYgaXNpbnN0YW5jZShzdHJ1Y3R1cmVkLCBNYXBwaW5nKToKICAgICAgICByZXR1cm4gc3RydWN0dXJlZAogICAgY29udGVudCA9IHJlc3VsdC5nZXQoImNvbnRlbnQiKQogICAgaWYgaXNpbnN0YW5jZShjb250ZW50LCBsaXN0KToKICAgICAgICBmb3IgaXRlbSBpbiBjb250ZW50OgogICAgICAgICAgICBpZiBub3QgaXNpbnN0YW5jZShpdGVtLCBNYXBwaW5nKSBvciBpdGVtLmdldCgidHlwZSIpICE9ICJ0ZXh0IjoKICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgIHRleHQgPSBpdGVtLmdldCgidGV4dCIpCiAgICAgICAgICAgIGlmIG5vdCBpc2luc3RhbmNlKHRleHQsIHN0cik6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICBkZWNvZGVkID0ganNvbi5sb2Fkcyh0ZXh0KQogICAgICAgICAgICBleGNlcHQganNvbi5KU09ORGVjb2RlRXJyb3I6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICBpZiBpc2luc3RhbmNlKGRlY29kZWQsIE1hcHBpbmcpOgogICAgICAgICAgICAgICAgcmV0dXJuIGRlY29kZWQKICAgIHJhaXNlIEJhY2t1cE9yYWNsZUVycm9yKCJiZWhhdmlvciBvcmFjbGUgcmVzdWx0IGlzIHVuc3RydWN0dXJlZCIpCgoKZGVmIHZhbGlkYXRlX2RlbGV0ZV9yZXN1bHQoCiAgICByZXN1bHQ6IE1hcHBpbmdbc3RyLCBvYmplY3RdLCAqLCBkcmF3ZXJfaWQ6IHN0cgopIC0+IE5vbmU6CiAgICAiIiJSZXF1aXJlIHRoZSBleGFjdCBzdWNjZXNzZnVsIE1lbVBhbGFjZSB2My41LjAgZGVsZXRlIHJlc3VsdC4iIiIKICAgIGRlbGV0ZWRfaWRzID0gcmVzdWx0LmdldCgiZGVsZXRlZF9pZHMiKQogICAgY2h1bmtzX2RlbGV0ZWQgPSByZXN1bHQuZ2V0KCJjaHVua3NfZGVsZXRlZCIpCiAgICBpZiAoCiAgICAgICAgc2V0KHJlc3VsdCkKICAgICAgICAhPSB7InN1Y2Nlc3MiLCAiZHJhd2VyX2lkIiwgImRlbGV0ZWRfaWRzIiwgImNodW5rc19kZWxldGVkIn0KICAgICAgICBvciByZXN1bHQuZ2V0KCJzdWNjZXNzIikgaXMgbm90IFRydWUKICAgICAgICBvciByZXN1bHQuZ2V0KCJkcmF3ZXJfaWQiKSAhPSBkcmF3ZXJfaWQKICAgICAgICBvciBub3QgaXNpbnN0YW5jZShkZWxldGVkX2lkcywgbGlzdCkKICAgICAgICBvciBub3QgZGVsZXRlZF9pZHMKICAgICAgICBvciBub3QgYWxsKGlzaW5zdGFuY2UodmFsdWUsIHN0cikgYW5kIHZhbHVlIGZvciB2YWx1ZSBpbiBkZWxldGVkX2lkcykKICAgICAgICBvciB0eXBlKGNodW5rc19kZWxldGVkKSBpcyBub3QgaW50CiAgICAgICAgb3IgY2h1bmtzX2RlbGV0ZWQgIT0gbGVuKGRlbGV0ZWRfaWRzKQogICAgKToKICAgICAgICByYWlzZSBCYWNrdXBPcmFjbGVFcnJvcigiYmVoYXZpb3Igb3JhY2xlIGNsZWFudXAgY29udHJhY3QgZmFpbGVkIikKCgpkZWYgdmFsaWRhdGVfbm90X2ZvdW5kX3Jlc3VsdCgKICAgIHJlc3VsdDogTWFwcGluZ1tzdHIsIG9iamVjdF0sICosIGRyYXdlcl9pZDogc3RyCikgLT4gTm9uZToKICAgICIiIlJlcXVpcmUgdGhlIGV4YWN0IHYzLjUuMCBnZXQtZHJhd2VyIG5vdC1mb3VuZCBtYXBwaW5nLiIiIgogICAgaWYgcmVzdWx0ICE9IHsiZXJyb3IiOiBmIkRyYXdlciBub3QgZm91bmQ6IHtkcmF3ZXJfaWR9In06CiAgICAgICAgcmFpc2UgQmFja3VwT3JhY2xlRXJyb3IoImJlaGF2aW9yIG9yYWNsZSBjbGVhbnVwIGFic2VuY2UgZmFpbGVkIikKCgpkZWYgcmVxdWlyZV9leGFjdF9hYnNlbmNlKAogICAgZHJhd2VyX2lkOiBzdHIsIHBhZ2VzOiBJdGVyYWJsZVtNYXBwaW5nW3N0ciwgb2JqZWN0XV0KKSAtPiBOb25lOgogICAgIiIiUHJvdmUgZXhhY3QtSUQgYWJzZW5jZSBmcm9tIG9uZSBjb21wbGV0ZSBib3VuZGVkIGxpc3QgdHJhdmVyc2FsLiIiIgogICAgZm91bmQ6IHNldFtzdHJdID0gc2V0KCkKICAgIGV4cGVjdGVkX3RvdGFsOiBpbnQgfCBOb25lID0gTm9uZQogICAgZXhwZWN0ZWRfb2Zmc2V0ID0gMAogICAgZm9yIHBhZ2VfbnVtYmVyLCBwYWdlIGluIGVudW1lcmF0ZShwYWdlcyk6CiAgICAgICAgZHJhd2VycyA9IHBhZ2UuZ2V0KCJkcmF3ZXJzIikKICAgICAgICB0b3RhbCA9IHBhZ2UuZ2V0KCJ0b3RhbCIpCiAgICAgICAgY291bnQgPSBwYWdlLmdldCgiY291bnQiKQogICAgICAgIG9mZnNldCA9IHBhZ2UuZ2V0KCJvZmZzZXQiKQogICAgICAgIGxpbWl0ID0gcGFnZS5nZXQoImxpbWl0IikKICAgICAgICBpZiAoCiAgICAgICAgICAgIHNldChwYWdlKSAhPSB7ImRyYXdlcnMiLCAidG90YWwiLCAiY291bnQiLCAib2Zmc2V0IiwgImxpbWl0In0KICAgICAgICAgICAgb3Igbm90IGlzaW5zdGFuY2UoZHJhd2VycywgbGlzdCkKICAgICAgICAgICAgb3IgdHlwZSh0b3RhbCkgaXMgbm90IGludAogICAgICAgICAgICBvciB0eXBlKGNvdW50KSBpcyBub3QgaW50CiAgICAgICAgICAgIG9yIHR5cGUob2Zmc2V0KSBpcyBub3QgaW50CiAgICAgICAgICAgIG9yIHR5cGUobGltaXQpIGlzIG5vdCBpbnQKICAgICAgICAgICAgb3IgY291bnQgIT0gbGVuKGRyYXdlcnMpCiAgICAgICAgICAgIG9yIG9mZnNldCAhPSBleHBlY3RlZF9vZmZzZXQKICAgICAgICAgICAgb3IgbGltaXQgPCAxCiAgICAgICAgICAgIG9yIGxpbWl0ID4gMTAwCiAgICAgICAgICAgIG9yIHRvdGFsIDwgMAogICAgICAgICAgICBvciB0b3RhbCA+IDEwXzAwMAogICAgICAgICAgICBvciAoZXhwZWN0ZWRfdG90YWwgaXMgbm90IE5vbmUgYW5kIHRvdGFsICE9IGV4cGVjdGVkX3RvdGFsKQogICAgICAgICk6CiAgICAgICAgICAgIHJhaXNlIEJhY2t1cE9yYWNsZUVycm9yKCJiZWhhdmlvciBvcmFjbGUgaW52ZW50b3J5IGlzIGludmFsaWQiKQogICAgICAgIGV4cGVjdGVkX3RvdGFsID0gdG90YWwKICAgICAgICBleHBlY3RlZF9vZmZzZXQgKz0gY291bnQKICAgICAgICBmb3IgaXRlbSBpbiBkcmF3ZXJzOgogICAgICAgICAgICBpZiBub3QgaXNpbnN0YW5jZShpdGVtLCBNYXBwaW5nKToKICAgICAgICAgICAgICAgIHJhaXNlIEJhY2t1cE9yYWNsZUVycm9yKCJiZWhhdmlvciBvcmFjbGUgaW52ZW50b3J5IGlzIGludmFsaWQiKQogICAgICAgICAgICBjYW5kaWRhdGUgPSBpdGVtLmdldCgiZHJhd2VyX2lkIikgb3IgaXRlbS5nZXQoImlkIikKICAgICAgICAgICAgaWYgbm90IGlzaW5zdGFuY2UoY2FuZGlkYXRlLCBzdHIpIG9yIG5vdCBjYW5kaWRhdGUgb3IgY2FuZGlkYXRlIGluIGZvdW5kOgogICAgICAgICAgICAgICAgcmFpc2UgQmFja3VwT3JhY2xlRXJyb3IoImJlaGF2aW9yIG9yYWNsZSBpbnZlbnRvcnkgaXMgaW52YWxpZCIpCiAgICAgICAgICAgIGZvdW5kLmFkZChjYW5kaWRhdGUpCiAgICAgICAgaWYgcGFnZV9udW1iZXIgPj0gOTk6CiAgICAgICAgICAgIHJhaXNlIEJhY2t1cE9yYWNsZUVycm9yKCJiZWhhdmlvciBvcmFjbGUgaW52ZW50b3J5IGV4Y2VlZGVkIGl0cyBib3VuZCIpCiAgICBpZiBleHBlY3RlZF90b3RhbCBpcyBOb25lIG9yIGxlbihmb3VuZCkgIT0gZXhwZWN0ZWRfdG90YWw6CiAgICAgICAgcmFpc2UgQmFja3VwT3JhY2xlRXJyb3IoImJlaGF2aW9yIG9yYWNsZSBpbnZlbnRvcnkgaXMgaW5jb21wbGV0ZSIpCiAgICBpZiBkcmF3ZXJfaWQgaW4gZm91bmQ6CiAgICAgICAgcmFpc2UgQmFja3VwT3JhY2xlRXJyb3IoImJlaGF2aW9yIG9yYWNsZSBjbGVhbnVwIGFic2VuY2UgZmFpbGVkIikK
+---
 # The native sidecar owns writer quiescence and restoration across both
 # AWS-only transfer stages. Keep this schedule suspended until live proof.
 apiVersion: batch/v1
@@ -485,9 +496,17 @@ spec:
                   import os
                   from pathlib import Path
                   import shutil
+                  import sys
                   import tarfile
                   import time
                   from urllib import request
+
+                  sys.path.insert(0, "/opt/solidstats-memory-oracle")
+                  from solidstats_memory_backup_oracle import (
+                      tool_data,
+                      validate_delete_result,
+                      validate_not_found_result,
+                  )
 
                   work = Path("/work")
                   downloaded = work / "download"
@@ -632,19 +651,6 @@ spec:
                   })
                   if initialized.get("protocolVersion") != "2025-06-18":
                       raise RuntimeError("behavior oracle negotiation failed")
-                  def tool_data(result):
-                      if result.get("isError") is True:
-                          raise RuntimeError("behavior oracle MCP tool call failed")
-                      structured = result.get("structuredContent")
-                      if isinstance(structured, dict):
-                          return structured
-                      for item in result.get("content", []):
-                          if item.get("type") == "text":
-                              decoded = json.loads(item.get("text", "null"))
-                              if isinstance(decoded, dict):
-                                  return decoded
-                      raise RuntimeError("behavior oracle result is unstructured")
-
                   marker = "phase21-backup-oracle:" + os.environ["POD_NAME"]
                   created = mcp("tools/call", {"name": "mempalace_add_drawer", "arguments": {
                       "wing": "infrastructure", "room": "migrations",
@@ -658,15 +664,12 @@ spec:
                   if read_back.get("content") != marker:
                       raise RuntimeError("behavior oracle read-after-write failed")
                   deleted = tool_data(mcp("tools/call", {"name": "mempalace_delete_drawer", "arguments": {"drawer_id": drawer_id}}))
-                  deleted_ids = deleted.get("deleted_ids")
-                  if set(deleted) != {"success", "drawer_id", "deleted_ids", "chunks_deleted"} or deleted.get("success") is not True or deleted.get("drawer_id") != drawer_id or not isinstance(deleted_ids, list) or not deleted_ids or not all(isinstance(value, str) and value for value in deleted_ids) or type(deleted.get("chunks_deleted")) is not int or deleted["chunks_deleted"] != len(deleted_ids):
-                      raise RuntimeError("behavior oracle cleanup contract failed")
-                  absent = mcp("tools/call", {
+                  validate_delete_result(deleted, drawer_id=drawer_id)
+                  absent = tool_data(mcp("tools/call", {
                       "name": "mempalace_get_drawer",
                       "arguments": {"drawer_id": drawer_id},
-                  }, allow_tool_error=True)
-                  if absent.get("isError") is not True:
-                      raise RuntimeError("behavior oracle cleanup absence failed")
+                  }))
+                  validate_not_found_result(absent, drawer_id=drawer_id)
                   print("PASS: writer-restored=pass", flush=True)
                   print("PASS: behavior-oracle=pass", flush=True)
                   print("PASS: metadata-sha256=" + archive_digest, flush=True)
@@ -699,12 +702,19 @@ spec:
               volumeMounts:
                 - name: work
                   mountPath: /work
+                - name: backup-oracle
+                  mountPath: /opt/solidstats-memory-oracle
+                  readOnly: true
           volumes:
             - name: mempalace-data
               persistentVolumeClaim:
                 claimName: mempalace-data
             - name: work
               emptyDir: {}
+            - name: backup-oracle
+              configMap:
+                name: solidstats-memory-backup-oracle
+                defaultMode: 0444
             - name: kubernetes-api-access
               projected:
                 defaultMode: 0400

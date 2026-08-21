@@ -31,6 +31,14 @@ class MemoryOperatorContractTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         os.chmod(self.root, 0o700)
+        self.alias_root = self.root / "shared-alias-root"
+        self.alias_root.mkdir(mode=0o700)
+        environment = mock.patch.dict(os.environ, {
+            "SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT": str(self.alias_root),
+            "SOLIDSTATS_MEMORY_RUN_ID": "phase21-operator-test",
+        }, clear=False)
+        environment.start()
+        self.addCleanup(environment.stop)
         self.rendered = {
             "schema": OPERATOR.SCHEMA,
             "files": [{"name": "10-qdrant.yaml", "sha256": "1" * 64}],
@@ -96,6 +104,44 @@ class MemoryOperatorContractTests(unittest.TestCase):
                 collection_name="mempalace_drawers",
             ),
         )
+
+    def test_operator_alias_lease_uses_one_shared_root_across_runs(self) -> None:
+        first = object.__new__(OPERATOR.Runtime)
+        first.state_root = self.root / "run-one" / "state"
+        first.state_root.mkdir(parents=True, mode=0o700)
+        second = object.__new__(OPERATOR.Runtime)
+        second.state_root = self.root / "run-two" / "state"
+        second.state_root.mkdir(parents=True, mode=0o700)
+
+        @OPERATOR.alias_locked_method
+        def second_writer(_runtime):
+            return True
+
+        @OPERATOR.alias_locked_method
+        def first_writer(_runtime):
+            with self.assertRaisesRegex(OPERATOR.OperatorError, "lease is held"):
+                second_writer(second)
+
+        first_writer(first)
+        self.assertEqual(
+            self.alias_root / ".solidstats-memory-alias.lock",
+            next(self.alias_root.glob(".solidstats-memory-alias.lock")),
+        )
+
+    def test_operator_alias_lease_rejects_arbitrary_inherited_fd(self) -> None:
+        arbitrary = self.alias_root / "arbitrary"
+        arbitrary.write_text('{"schema":"fake"}\n', encoding="ascii")
+        arbitrary.chmod(0o600)
+        descriptor = os.open(arbitrary, os.O_RDWR)
+        self.addCleanup(os.close, descriptor)
+        with mock.patch.dict(
+            os.environ,
+            {"SOLIDSTATS_MEMORY_ALIAS_LOCK_FD": str(descriptor)},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(OPERATOR.OperatorError, "ownership is invalid"):
+                with OPERATOR.alias_writer_lease(run_id="phase21-operator-test"):
+                    self.fail("arbitrary inherited descriptor was accepted")
 
     def test_every_adapter_operation_has_one_exact_accepted_shape(self) -> None:
         self.assertEqual(OPERATOR.OPERATIONS, set(self.valid))
@@ -861,6 +907,35 @@ class MemoryOperatorContractTests(unittest.TestCase):
             with self.assertRaisesRegex(OPERATOR.OperatorError, "bootstrap failed"):
                 runtime.bootstrap_runtime_palace({})
         self.assertEqual({}, aliases)
+
+    def test_runtime_bootstrap_alias_cleanup_retries_both_timeout_orders(self) -> None:
+        for apply_before_raise in (False, True):
+            with self.subTest(apply_before_raise=apply_before_raise):
+                runtime = object.__new__(OPERATOR.Runtime)
+                aliases = {"synthetic-logical-alias": "synthetic-physical"}
+                failed_cleanup = False
+
+                def qdrant(method, _path, body=None):
+                    nonlocal failed_cleanup
+                    if method == "GET":
+                        return {"result": {"aliases": [
+                            {"alias_name": name, "collection_name": collection}
+                            for name, collection in aliases.items()
+                        ]}}
+                    alias = body["actions"][0]["delete_alias"]["alias_name"]
+                    if not failed_cleanup:
+                        failed_cleanup = True
+                        if apply_before_raise:
+                            aliases.pop(alias, None)
+                        raise TimeoutError("synthetic ambiguous cleanup")
+                    aliases.pop(alias, None)
+                    return {"status": "ok"}
+
+                with mock.patch.object(runtime, "_qdrant", side_effect=qdrant):
+                    runtime._restore_alias_prestate(
+                        alias="synthetic-logical-alias", prestate={}
+                    )
+                self.assertEqual({}, aliases)
 
     def test_runtime_bootstrap_failure_restores_alias_and_workload(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
