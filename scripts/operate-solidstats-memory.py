@@ -1594,14 +1594,14 @@ class Runtime:
         exact_mapping(payload, set(), "parity request is invalid")
         target = str(self.config["target_collection"])
         protected = str(self.config["protected_collection"])
-        expected: dict[str, str] = {}
+        expected: dict[str, dict[str, object]] = {}
         ann_vectors: list[list[float]] = []
         with (self.bundle_dir / "points.jsonl").open(encoding="utf-8") as source:
             for line in source:
                 point = json.loads(line)
                 if not isinstance(point, dict) or not isinstance(point.get("id"), str):
                     raise OperatorError("private bundle parity input is invalid")
-                expected[point["id"]] = digest(point)
+                expected[point["id"]] = point
                 vector = point.get("vector")
                 if len(ann_vectors) < 24:
                     if (
@@ -1629,8 +1629,38 @@ class Runtime:
             points = result.get("points") if isinstance(result, Mapping) else None
             if not isinstance(points, list):
                 raise OperatorError("restored parity response is invalid")
+            point_ids = [point.get("id") for point in points if isinstance(point, Mapping)]
+            if len(point_ids) != len(points):
+                raise OperatorError("restored parity response is invalid")
+            baseline = self._qdrant(
+                "POST",
+                f"/collections/{urllib_parse.quote(protected, safe='')}/points",
+                {"ids": point_ids, "with_payload": True, "with_vector": True},
+            )
+            baseline_result = baseline.get("result") if isinstance(baseline, Mapping) else None
+            if not isinstance(baseline_result, list):
+                raise OperatorError("protected parity response is invalid")
+            baseline_by_id = {
+                str(point.get("id")): point
+                for point in baseline_result
+                if isinstance(point, dict)
+            }
+            if len(baseline_by_id) != len(points):
+                raise OperatorError("protected parity response is invalid")
             for point in points:
-                if not isinstance(point, dict) or expected.pop(str(point.get("id")), None) != digest(point):
+                if not isinstance(point, dict):
+                    raise OperatorError("restored exact parity failed")
+                point_id = str(point.get("id"))
+                source = expected.pop(point_id, None)
+                if (
+                    not isinstance(source, dict)
+                    or set(source) != {"id", "payload", "vector"}
+                    or set(point) != {"id", "payload", "vector"}
+                    or source.get("id") != point.get("id")
+                    or source.get("payload") != point.get("payload")
+                ):
+                    raise OperatorError("restored exact parity failed")
+                if baseline_by_id.get(point_id) != point:
                     raise OperatorError("restored exact parity failed")
                 observed += 1
             offset = result.get("next_page_offset")

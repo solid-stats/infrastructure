@@ -358,6 +358,62 @@ class MemoryOperatorContractTests(unittest.TestCase):
             with self.assertRaisesRegex(OPERATOR.OperatorError, "failed"):
                 runtime.wait_backup_job({})
 
+    def test_restore_parity_uses_the_protected_stored_vectors(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.bundle_dir = self.root
+        runtime.config = {
+            "target_collection": "restored",
+            "protected_collection": "protected",
+            "expected_count": 24,
+            "expected_vector_config": {"size": 2},
+        }
+        source_points = [
+            {
+                "id": f"point-{index}",
+                "payload": {"index": index},
+                "vector": [0.123456789 + index, 0.2],
+            }
+            for index in range(24)
+        ]
+        stored_points = [
+            {**point, "vector": [round(point["vector"][0], 7), 0.2]}
+            for point in source_points
+        ]
+        (self.root / "points.jsonl").write_text(
+            "".join(json.dumps(point) + "\n" for point in source_points),
+            encoding="utf-8",
+        )
+
+        def qdrant(_method: str, path: str, body: object = None) -> object:
+            if path.endswith("/points/scroll"):
+                return {"result": {"points": stored_points, "next_page_offset": None}}
+            if path.endswith("/points"):
+                ids = set(body["ids"])
+                return {
+                    "result": [point for point in stored_points if point["id"] in ids]
+                }
+            if path.endswith("/points/query"):
+                return {"result": {"points": [{"id": "point-0", "score": 1.0}]}}
+            raise AssertionError(path)
+
+        runtime._qdrant = qdrant
+        result = runtime.run_phase20_parity({})
+        self.assertTrue(result["vector_exact"])
+        self.assertTrue(result["ann_exact"])
+
+        baseline = [dict(point) for point in stored_points]
+        baseline[0] = {**baseline[0], "vector": [9.0, 9.0]}
+
+        def changed_qdrant(method: str, path: str, body: object = None) -> object:
+            if path == "/collections/protected/points":
+                ids = set(body["ids"])
+                return {"result": [point for point in baseline if point["id"] in ids]}
+            return qdrant(method, path, body)
+
+        runtime._qdrant = changed_qdrant
+        with self.assertRaisesRegex(OPERATOR.OperatorError, "exact parity"):
+            runtime.run_phase20_parity({})
+
     def test_client_state_matches_only_exact_solidstats_registrations(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
         entries = [
@@ -657,6 +713,8 @@ class MemoryOperatorContractTests(unittest.TestCase):
         def qdrant(_method, path, _body=None):
             if path.endswith("/points/scroll"):
                 return {"result": {"points": points, "next_page_offset": None}}
+            if path == "/collections/protected/points":
+                return {"result": points}
             if path.endswith("/points/query"):
                 return ann
             raise AssertionError(path)
