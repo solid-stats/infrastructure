@@ -3012,6 +3012,183 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertNotEqual(0, result.returncode)
         self.assertIn("SSH binding is unavailable or unsafe", result.stderr)
 
+    def recovery_evidence(self) -> dict[str, object]:
+        digest = "a" * 64
+        return {
+            "schema": "solidstats-memory-recovery-evidence/v1",
+            "run_id": "phase21-recovery-fixture",
+            "cutover_evidence_sha256": digest,
+            "restart_checks": {
+                "mempalace_identity_changed": True,
+                "mempalace_behavior_passed": True,
+                "qdrant_identity_changed": True,
+                "qdrant_behavior_passed": True,
+                "ordered": True,
+            },
+            "backup_api_control_checks": {
+                "measured": True,
+                "binding_current": True,
+                "single_candidate": True,
+                "positive_get": True,
+                "network_negative": True,
+                "rbac_negative": True,
+                "policy_sha256": digest,
+            },
+            "steady_state_backup_consistency": {
+                "writer_prestate_recorded": True,
+                "zero_writers": True,
+                "zero_pvc_consumers": True,
+                "source_before_sha256": digest,
+                "source_after_sha256": digest,
+                "archive_sha256": digest,
+            },
+            "fresh_backup_checks": {
+                "exact_template": True,
+                "upload_inventory_exact": True,
+                "downloaded": True,
+                "checksums_rechecked": True,
+            },
+            "writer_resumption_checks": {
+                "replicas_restored": True,
+                "available": True,
+                "capture_passed": True,
+                "read_after_write_passed": True,
+                "schedules_suspended_on_failure": True,
+            },
+            "reboot_checks": {
+                "boot_identity_changed": True,
+                "reconnected_within_deadline": True,
+                "node_ready": True,
+                "pvc_bound": True,
+                "qdrant_ready": True,
+                "mempalace_available": True,
+                "nginx_active": True,
+                "behavior_passed": True,
+            },
+            "rollback_checks": {
+                "reverse_order": True,
+                "legacy_behavior_passed": True,
+                "retained_data_preserved": True,
+            },
+            "forward_checks": {
+                "exact_replay": True,
+                "behavior_passed": True,
+                "retained_data_preserved": True,
+            },
+            "client_checks": {
+                "legacy_retained_until_recovery": True,
+                "unrelated_unchanged": True,
+                "new_client_live": True,
+            },
+            "verdict": "pass",
+        }
+
+    def test_recovery_evidence_requires_behavior_not_readiness(self) -> None:
+        evidence = self.recovery_evidence()
+        VALIDATOR.validate_recovery_evidence(evidence)
+        for section, key in (
+            ("restart_checks", "mempalace_behavior_passed"),
+            ("reboot_checks", "boot_identity_changed"),
+            ("reboot_checks", "behavior_passed"),
+            ("rollback_checks", "legacy_behavior_passed"),
+            ("forward_checks", "behavior_passed"),
+            ("writer_resumption_checks", "capture_passed"),
+        ):
+            with self.subTest(section=section, key=key):
+                invalid = deepcopy(evidence)
+                invalid[section][key] = False
+                with self.assertRaises(VALIDATOR.Phase21ValidationError):
+                    VALIDATOR.validate_recovery_evidence(invalid)
+
+    def test_recovery_evidence_rejects_api_and_metadata_false_positives(self) -> None:
+        evidence = self.recovery_evidence()
+        mutations = (
+            ("backup_api_control_checks", "measured", False),
+            ("backup_api_control_checks", "network_negative", False),
+            ("backup_api_control_checks", "rbac_negative", False),
+            ("steady_state_backup_consistency", "zero_writers", False),
+            ("steady_state_backup_consistency", "source_after_sha256", "b" * 64),
+            ("steady_state_backup_consistency", "archive_sha256", "c" * 64),
+            ("writer_resumption_checks", "replicas_restored", False),
+        )
+        for section, key, value in mutations:
+            with self.subTest(section=section, key=key):
+                invalid = deepcopy(evidence)
+                invalid[section][key] = value
+                with self.assertRaises(VALIDATOR.Phase21ValidationError):
+                    VALIDATOR.validate_recovery_evidence(invalid)
+
+    def test_cutover_seal_is_predecessor_bound_and_all_green(self) -> None:
+        recovery = self.recovery_evidence()
+        digest = hashlib.sha256(
+            VALIDATOR.canonical_json_bytes(recovery)
+        ).hexdigest()
+        seal = {
+            "schema": "solidstats-memory-cutover-seal/v1",
+            "run_id": recovery["run_id"],
+            "recovery_evidence_sha256": digest,
+            "requirements": {
+                "iso_01": True,
+                "iso_03": True,
+                "ops_02": True,
+                "ops_03": True,
+                "ops_05": True,
+            },
+            "prohibitions": {
+                "no_early_legacy_removal": True,
+                "no_public_qdrant": True,
+                "no_retained_data_deletion": True,
+            },
+            "legacy_client_absent": True,
+            "new_client_live": True,
+            "backup_schedule_live": True,
+            "verdict": "pass",
+        }
+        VALIDATOR.validate_cutover_seal(seal, recovery_payload=recovery)
+        for key in ("legacy_client_absent", "new_client_live", "backup_schedule_live"):
+            invalid = deepcopy(seal)
+            invalid[key] = False
+            with self.subTest(key=key), self.assertRaises(
+                VALIDATOR.Phase21ValidationError
+            ):
+                VALIDATOR.validate_cutover_seal(
+                    invalid, recovery_payload=recovery
+                )
+
+    def test_recovery_cli_surface_is_fail_closed_and_self_tested(self) -> None:
+        source = CUTOVER_PATH.read_text(encoding="utf-8")
+        for function in (
+            "restart_recovery()",
+            "reboot_recovery()",
+            "measure_backup_api_egress()",
+            "prove_backup_api_access()",
+            "prove_backup_consistency()",
+            "activate_backup_schedule()",
+            "exercise_live_rollback()",
+            "seal_cutover()",
+        ):
+            self.assertIn(function, source)
+        for command in (
+            "restart-recovery",
+            "reboot-recovery",
+            "prove-backup-api-access",
+            "prove-backup-consistency",
+            "exercise-rollback",
+            "activate-backup-schedule",
+            "seal",
+            "--reconnect-timeout",
+        ):
+            self.assertIn(command, source)
+        result = subprocess.run(
+            ["bash", str(CUTOVER_PATH), "--self-test"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("RECOVERY_SELF_TEST PASSED", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
