@@ -1346,7 +1346,7 @@ render_api_bootstrap() {
       '  policyTypes: [Egress]' \
       '  egress:' \
       '    - to:' \
-      '        - ipBlock:' \
+      '        - ipBlock:'
     printf '            cidr: %s\n' "${cidr}"
     printf '%s\n' \
       '      ports:' \

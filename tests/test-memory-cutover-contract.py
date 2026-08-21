@@ -3513,6 +3513,11 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn('command: ["python3", "-c"]', operator)
         self.assertIn("urllib.request.urlopen(request,timeout=8", operator)
         self.assertNotIn("curl --config", operator)
+        self.assertIn(
+            "'        - ipBlock:'\n    printf '            cidr:",
+            operator,
+        )
+        self.assertNotIn("'        - ipBlock:' \\\n    printf", operator)
         emitted = set(
             re.findall(r"run_remote_batch\s+([a-z0-9-]+)", controller)
         )
