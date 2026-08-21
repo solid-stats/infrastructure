@@ -2492,10 +2492,16 @@ class MemoryCutoverContractTests(unittest.TestCase):
         legacy_state = fixture / "legacy.state"
         freeze_state = fixture / "freeze.state"
         new_state = fixture / "new.state"
+        mempalace_uid = fixture / "mempalace.uid"
+        qdrant_uid = fixture / "qdrant.uid"
+        backup_schedule = fixture / "backup.schedule"
         events = fixture / "events"
         legacy_state.write_text("running\n", encoding="ascii")
         freeze_state.write_text("running\n", encoding="ascii")
         new_state.write_text("stopped\n", encoding="ascii")
+        mempalace_uid.write_text("mempalace-before\n", encoding="ascii")
+        qdrant_uid.write_text("qdrant-before\n", encoding="ascii")
+        backup_schedule.write_text("true\n", encoding="ascii")
 
         runuser_path = fixture / "runuser"
         runuser_path.write_text(
@@ -2519,11 +2525,22 @@ class MemoryCutoverContractTests(unittest.TestCase):
         kubectl_path = fixture / "kubectl"
         kubectl_path.write_text(
             "#!/usr/bin/env bash\nset -eu\n"
-            f"state={new_state}\nlog={events}\n"
+            f"state={new_state}\nmem_uid={mempalace_uid}\nqdrant_uid={qdrant_uid}\nschedule={backup_schedule}\nlog={events}\n"
             '[[ " $* " == *" --context fixture-context "* && " $* " == *" -n solidstats-memory "* ]] || exit 9\n'
             'if [[ " $* " == *" get deployment mempalace "* ]]; then replicas=$(cat "$state"); [[ "$replicas" == running ]] && replicas=1 || replicas=0; echo -n "$replicas"; '
+            'elif [[ " $* " == *" get pods -l app.kubernetes.io/name=mempalace "* ]]; then cat "$mem_uid"; '
+            'elif [[ " $* " == *" get pods -l app.kubernetes.io/name=qdrant "* ]]; then cat "$qdrant_uid"; '
+            'elif [[ " $* " == *" rollout restart deployment/mempalace "* ]]; then printf "mempalace-after\\n" >"$mem_uid"; printf "mempalace:restart\\n" >>"$log"; '
+            'elif [[ " $* " == *" rollout restart statefulset/qdrant "* ]]; then printf "qdrant-after\\n" >"$qdrant_uid"; printf "qdrant:restart\\n" >>"$log"; '
             'elif [[ " $* " == *" scale deployment/mempalace "* ]]; then [[ " $* " == *"--replicas=1"* ]] && printf "running\\n" >"$state" || printf "stopped\\n" >"$state"; printf "new:scale\\n" >>"$log"; '
-            'elif [[ " $* " == *" rollout status deployment/mempalace "* ]]; then [[ "$(cat "$state")" == running ]]; else exit 9; fi\n',
+            'elif [[ " $* " == *" rollout status deployment/mempalace "* ]]; then [[ "$(cat "$state")" == running ]]; '
+            'elif [[ " $* " == *" rollout status statefulset/qdrant "* ]]; then true; '
+            'elif [[ " $* " == *" get cronjob solidstats-memory-backup "* ]]; then printf "%s:Forbid" "$(cat "$schedule")"; '
+            'elif [[ " $* " == *" patch cronjob solidstats-memory-backup "* ]]; then [[ " $* " == *"\\\"suspend\\\":false"* ]] && printf "false\\n" >"$schedule" || printf "true\\n" >"$schedule"; '
+            'elif [[ " $* " == *" delete job solidstats-memory-backup-"* ]]; then true; '
+            'elif [[ " $* " == *" create job solidstats-memory-backup-"* ]]; then printf "stopped\\n" >"$state"; printf "backup:job-started\\n" >>"$log"; '
+            'elif [[ " $* " == *" wait --for=condition=Complete job/solidstats-memory-backup-"* ]]; then exit 7; '
+            'else exit 9; fi\n',
             encoding="utf-8",
         )
         curl_path = fixture / "curl"
@@ -2639,6 +2656,50 @@ class MemoryCutoverContractTests(unittest.TestCase):
         before_idempotent = events.read_bytes()
         self.assertEqual(0, run("stop-legacy-start-new").returncode)
         self.assertEqual(before_idempotent, events.read_bytes())
+
+        for operation in ("restart-mempalace", "restart-qdrant"):
+            result = run(operation)
+            self.assertEqual(0, result.returncode, result.stderr.decode())
+            result_path = run_root / f"{operation}.result"
+            self.assertEqual(0o600, result_path.stat().st_mode & 0o777)
+            public_result = result_path.read_text(encoding="ascii")
+            self.assertNotIn("10.23.45.67", public_result)
+            self.assertNotIn("Bearer", public_result)
+            self.assertNotIn("/private/", public_result)
+
+        self.assertEqual(0, run("suspend-backup-schedule").returncode)
+        self.assertEqual("true", backup_schedule.read_text().strip())
+
+        config_sha = hashlib.sha256(config.read_bytes()).hexdigest()
+        (run_root / "recheck-backup-api-access.state").write_text(
+            "complete\n", encoding="ascii"
+        )
+        (run_root / "recheck-backup-api-access.result").write_text(
+            "\n".join(
+                (
+                    "schema=solidstats-memory-remote-operation-result/v1",
+                    "operation=recheck-backup-api-access",
+                    f"config_sha256={config_sha}",
+                    "binding_current=true",
+                )
+            )
+            + "\n",
+            encoding="ascii",
+        )
+        for path in (
+            run_root / "recheck-backup-api-access.state",
+            run_root / "recheck-backup-api-access.result",
+        ):
+            path.chmod(0o600)
+        consistency = run("prove-backup-consistency")
+        self.assertNotEqual(0, consistency.returncode)
+        self.assertEqual("running", new_state.read_text().strip())
+        self.assertIn(
+            "backup:job-started",
+            events.read_text(),
+            (consistency.stderr.decode(), sorted(path.name for path in run_root.iterdir())),
+        )
+        self.assertIn("new:scale", events.read_text())
 
         self.assertNotEqual(0, run("install-nginx").returncode)
         self.assertEqual(original, available.read_bytes())
@@ -3228,12 +3289,18 @@ class MemoryCutoverContractTests(unittest.TestCase):
         )
         for operation in emitted:
             with self.subTest(operation=operation):
-                self.assertRegex(
-                    operator,
-                    rf"(?:^|[|]){re.escape(operation)}(?:[|)])",
+                self.assertIsNotNone(
+                    re.search(
+                        rf"(?:^|[|\s]){re.escape(operation)}(?:[|)])",
+                        operator,
+                        re.MULTILINE,
+                    ),
                 )
 
     def test_remote_operator_reboot_payload_schema_is_exact(self) -> None:
+        operator_source = REMOTE_CUTOVER_PATH.read_text(encoding="utf-8")
+        self.assertNotIn('-H "Authorization: Bearer $(cat', operator_source)
+
         valid = subprocess.run(
             [
                 "bash",

@@ -156,9 +156,18 @@ run_remote_batch() {
       return 1
     }
   fi
-  local attempt
-  for attempt in 1 2 3; do
-    if timeout "${REMOTE_TIMEOUT}" ssh \
+  local attempt max_attempts=3 retry_delay=0 call_timeout="${REMOTE_TIMEOUT}"
+  if [[ "${operation}" == "verify-reboot-recovery" ]]; then
+    [[ "${1:-}" =~ ^[1-9][0-9]{0,3}$ ]] || {
+      echo "FATAL: reboot reconnect payload is invalid" >&2
+      return 1
+    }
+    max_attempts=$((($1 + 24) / 25))
+    retry_delay=5
+    call_timeout=20s
+  fi
+  for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
+    if timeout "${call_timeout}" ssh \
       -F /dev/null \
       -i "${SOLIDSTATS_MEMORY_SSH_IDENTITY_FILE}" \
       -o IdentitiesOnly=yes \
@@ -173,6 +182,9 @@ run_remote_batch() {
       "${operation}" "${RUN_ID_SHA256}" "$@" \
       <"${input_path}" >/dev/null 2>&1; then
       return 0
+    fi
+    if [[ "${attempt}" -lt "${max_attempts}" && "${retry_delay}" -gt 0 ]]; then
+      sleep "${retry_delay}"
     fi
   done
   return 1
