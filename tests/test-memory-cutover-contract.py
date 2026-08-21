@@ -23,6 +23,7 @@ import sys
 import tarfile
 import tempfile
 import threading
+import tomllib
 import unittest
 from unittest import mock
 
@@ -2816,7 +2817,11 @@ class MemoryCutoverContractTests(unittest.TestCase):
         unrelated = (
             b'[mcp_servers.unrelated]\nurl = "https://other.example/mcp"\n\n'
         )
-        legacy = b'[mcp_servers.mempalace]\ncommand = "legacy"\n\n'
+        legacy = (
+            b'[mcp_servers.mempalace]\ncommand = "legacy"\n\n'
+            b'[mcp_servers.mempalace.tools.search]\nenabled = true\n\n'
+            b'[mcp_servers.mempalace.tools.capture]\nenabled = false\n\n'
+        )
         current = unrelated + legacy + (
             b'[mcp_servers.solidstats_memory]\n'
             b'url = "https://memory.example/solidstats/mcp"\n'
@@ -2898,6 +2903,9 @@ class MemoryCutoverContractTests(unittest.TestCase):
         )
         retired = config.read_bytes()
         self.assertNotIn(b"[mcp_servers.mempalace]", retired)
+        self.assertNotIn(b"[mcp_servers.mempalace.tools.", retired)
+        parsed_retired = tomllib.loads(retired.decode("utf-8"))
+        self.assertNotIn("mempalace", parsed_retired["mcp_servers"])
         self.assertIn(unrelated, retired)
         self.assertEqual(1, retired.count(b"[mcp_servers.unrelated]"))
         fields = dict(
@@ -2926,10 +2934,14 @@ class MemoryCutoverContractTests(unittest.TestCase):
         config = private / "config.toml"
         prestate = private / "prestate.toml"
         result = private / "rollback.result"
-        legacy = b'[mcp_servers.mempalace]\ncommand = "legacy"\ntimeout = 30\n\n'
+        legacy = (
+            b'[mcp_servers.mempalace]\ncommand = "legacy"\ntimeout = 30\n\n'
+            b'[mcp_servers.mempalace.tools.search]\nenabled = true\n\n'
+        )
         original = b'model = "gpt-5.6-sol"\n\n' + legacy
         current_legacy = (
             b'[mcp_servers.mempalace]\ntimeout = 30\ncommand = "legacy"\n\n'
+            b'[mcp_servers.mempalace.tools.search]\nenabled = true\n\n'
         )
         drift = b'[plugins.current]\nenabled = true\n\n'
         replacement = (
@@ -2940,6 +2952,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
             b'"mempalace_delete_drawer"]\n'
+            b'\n[mcp_servers.solidstats_memory.tools.search]\nenabled = true\n'
         )
         current = b'model = "gpt-5.6-sol"\n\n' + current_legacy + drift + replacement
         expected = b'model = "gpt-5.6-sol"\n\n' + current_legacy + drift
@@ -3007,6 +3020,12 @@ class MemoryCutoverContractTests(unittest.TestCase):
             remove=lambda updated: config.write_bytes(updated),
         )
         self.assertEqual(expected, config.read_bytes())
+        parsed_expected = tomllib.loads(config.read_text(encoding="utf-8"))
+        self.assertNotIn("solidstats_memory", parsed_expected["mcp_servers"])
+        self.assertEqual(
+            {"search": {"enabled": True}},
+            parsed_expected["mcp_servers"]["mempalace"]["tools"],
+        )
         self.assertEqual(expected, prestate.read_bytes())
         self.assertFalse(metadata.exists())
         self.assertIn(b"unrelated_current_bytes_preserved=true", result.read_bytes())

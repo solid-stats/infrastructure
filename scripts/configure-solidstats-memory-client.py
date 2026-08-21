@@ -236,14 +236,7 @@ def _section_bounds(raw: bytes) -> tuple[int, int]:
             raw,
         )
     )
-    mentions = list(
-        re.finditer(
-            rb"(?m)^\[[^\]\r\n]*solidstats_memory[^\]\r\n]*\]"
-            rb"[ \t]*(?:#.*)?$",
-            raw,
-        )
-    )
-    if len(exact) != 1 or len(mentions) != 1:
+    if len(exact) != 1:
         raise PolicyError("target client registration is missing or ambiguous")
     start = exact[0].start()
     following = re.search(rb"(?m)^\[", raw[exact[0].end() :])
@@ -421,30 +414,54 @@ def authorize_current(config: Path, prestate: Path) -> None:
     _atomic_replace(metadata, updated, mode)
 
 
-def _registration_bounds(raw: bytes, name: str) -> tuple[int, int]:
+def _registration_ranges(raw: bytes, name: str) -> tuple[tuple[int, int], ...]:
+    """Locate every table that belongs to one MCP registration subtree."""
     if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name) is None:
         raise PolicyError("legacy client name is invalid")
-    heading = re.compile(
-        rb"(?m)^\[mcp_servers\." + re.escape(name.encode("ascii")) + rb"\][ \t]*(?:#.*)?$"
+    headings = tuple(
+        re.finditer(
+            rb"(?m)^\[{1,2}[^\]\r\n]+\]{1,2}[ \t]*(?:#.*)?$",
+            raw,
+        )
     )
-    matches = list(heading.finditer(raw))
-    if len(matches) != 1:
+    target = re.compile(
+        rb"^\[{1,2}mcp_servers\."
+        + re.escape(name.encode("ascii"))
+        + rb"(?:\.[^\]\r\n]+)?\]{1,2}[ \t]*(?:#.*)?$"
+    )
+    ranges = tuple(
+        (
+            heading.start(),
+            headings[index + 1].start() if index + 1 < len(headings) else len(raw),
+        )
+        for index, heading in enumerate(headings)
+        if target.fullmatch(heading.group(0)) is not None
+    )
+    parent = re.compile(
+        rb"^\[mcp_servers\."
+        + re.escape(name.encode("ascii"))
+        + rb"\][ \t]*(?:#.*)?$"
+    )
+    if sum(parent.fullmatch(heading.group(0)) is not None for heading in headings) != 1:
         raise PolicyError("legacy client registration is missing or ambiguous")
-    start = matches[0].start()
-    following = re.search(rb"(?m)^\[", raw[matches[0].end() :])
-    end = len(raw) if following is None else matches[0].end() + following.start()
-    return start, end
+    return ranges
+
+
+def _registration_subtree(raw: bytes, name: str) -> bytes:
+    """Return the exact serialized tables owned by one registration."""
+    return b"".join(raw[start:end] for start, end in _registration_ranges(raw, name))
 
 
 def _remove_registration(raw: bytes, name: str) -> bytes:
-    start, end = _registration_bounds(raw, name)
-    return raw[:start] + raw[end:]
+    updated = raw
+    for start, end in reversed(_registration_ranges(raw, name)):
+        updated = updated[:start] + updated[end:]
+    return updated
 
 
 def _restore_registration(raw: bytes, recorded: bytes, name: str) -> bytes:
-    """Reinsert only one recorded registration into otherwise-current bytes."""
-    start, end = _registration_bounds(recorded, name)
-    section = recorded[start:end]
+    """Reinsert one complete recorded subtree into otherwise-current bytes."""
+    subtree = _registration_subtree(recorded, name)
     try:
         current = _registration_mapping(raw, name)
     except PolicyError:
@@ -454,7 +471,7 @@ def _restore_registration(raw: bytes, recorded: bytes, name: str) -> bytes:
             raise PolicyError("client registration drift prevents compensation")
         return raw
     separator = b"" if not raw or raw.endswith((b"\n", b"\r")) else b"\n"
-    restored = raw + separator + section
+    restored = raw + separator + subtree
     if _registration_mapping(restored, name) != _registration_mapping(recorded, name):
         raise PolicyError("client registration compensation differs")
     return restored
