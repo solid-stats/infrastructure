@@ -386,22 +386,10 @@ def rollback_registration_transaction(
         metadata_before, metadata_mode = _safe_file(metadata)
     stage_hook = stage or (lambda _name: None)
 
-    def external_remove(_expected: bytes) -> None:
-        try:
-            completed = subprocess.run(
-                ["codex", "mcp", "remove", CLIENT_NAME],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=timeout_seconds,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as error:
-            raise PolicyError("replacement client removal command failed") from error
-        if completed.returncode != 0:
-            raise PolicyError("replacement client removal command failed")
+    def exact_remove(expected: bytes) -> None:
+        _atomic_replace(config, expected, config_mode)
 
-    remove_callback = remove or external_remove
+    remove_callback = remove or exact_remove
     try:
         remove_callback(updated)
         stage_hook("removed")
