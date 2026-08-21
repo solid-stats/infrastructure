@@ -1468,6 +1468,7 @@ render_api_probe_pod() {
 
 run_api_control() {
   local mode="$1" suffix image pod_name service_account label status=0
+  local attempt phase poll
   suffix=$(printf '%s' "${mode}" | tr -cd 'a-z-' | cut -c1-18)
   pod_name="memory-api-${suffix}-${RUN_ID_SHA256:0:8}"
   service_account="${BACKUP_SERVICE_ACCOUNT}"
@@ -1513,21 +1514,40 @@ run_api_control() {
       fatal
     fi
   fi
-  timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
-    "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
-    delete pod "${pod_name}" --ignore-not-found=true --wait=true \
-    </dev/null >/dev/null 2>&1 || status=1
-  if [[ "${status}" == 0 ]]; then
-    timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
-      "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" create \
-      -f "${RUN_ROOT}/api-probe-pod.yaml" </dev/null >/dev/null 2>&1 || status=1
-  fi
-  if [[ "${status}" == 0 ]]; then
+  for ((attempt = 1; attempt <= 3; attempt += 1)); do
+    status=0
     timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
       "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
-      wait --for=jsonpath='{.status.phase}'=Succeeded "pod/${pod_name}" \
-      "--timeout=${COMMAND_TIMEOUT_SECONDS}s" </dev/null >/dev/null 2>&1 || status=1
-  fi
+      delete pod "${pod_name}" --ignore-not-found=true --wait=true \
+      </dev/null >/dev/null 2>&1 || status=1
+    if [[ "${status}" == 0 ]]; then
+      timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
+        "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" create \
+        -f "${RUN_ROOT}/api-probe-pod.yaml" </dev/null >/dev/null 2>&1 || status=1
+    fi
+    phase=""
+    if [[ "${status}" == 0 ]]; then
+      for ((poll = 1; poll <= 30; poll += 1)); do
+        phase=$(timeout --signal=TERM --kill-after=5s \
+          "${COMMAND_TIMEOUT_SECONDS}s" "${KUBECTL_PATH}" \
+          --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
+          get pod "${pod_name}" -o 'jsonpath={.status.phase}' \
+          </dev/null 2>/dev/null) || {
+          status=1
+          break
+        }
+        case "${phase}" in
+          Succeeded) status=0; break ;;
+          Failed) status=1; break ;;
+          ""|Pending|Running) sleep 1 ;;
+          *) status=1; break ;;
+        esac
+      done
+      [[ "${phase}" == Succeeded ]] || status=1
+    fi
+    [[ "${status}" == 0 ]] && break
+    [[ "${attempt}" -eq 3 ]] || sleep 2
+  done
   cleanup_api_control
   return "${status}"
 }
