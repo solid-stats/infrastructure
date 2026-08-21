@@ -3510,6 +3510,9 @@ class MemoryCutoverContractTests(unittest.TestCase):
     def test_remote_operator_allowlists_every_controller_operation(self) -> None:
         controller = CUTOVER_PATH.read_text(encoding="utf-8")
         operator = REMOTE_CUTOVER_PATH.read_text(encoding="utf-8")
+        self.assertIn('command: ["python3", "-c"]', operator)
+        self.assertIn("urllib.request.urlopen(request,timeout=8", operator)
+        self.assertNotIn("curl --config", operator)
         emitted = set(
             re.findall(r"run_remote_batch\s+([a-z0-9-]+)", controller)
         )

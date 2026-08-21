@@ -1382,11 +1382,11 @@ render_api_probe_pod() {
   [[ "${service_account}" == "${BACKUP_SERVICE_ACCOUNT}" || \
     "${service_account}" == "${DENIED_SERVICE_ACCOUNT}" ]] || fatal
   [[ "${label}" == "${BACKUP_CRONJOB}" || "${label}" == "${DENIED_SERVICE_ACCOUNT}" ]] || fatal
-  local check
+  local expected_status
   case "${mode}" in
-    positive) check='test "${status}" = 200' ;;
-    rbac-negative) check='test "${status}" = 403' ;;
-    network-negative) check='test "${status}" = 000' ;;
+    positive) expected_status=200 ;;
+    rbac-negative) expected_status=403 ;;
+    network-negative) expected_status=0 ;;
   esac
   {
     printf '%s\n' \
@@ -1407,12 +1407,24 @@ render_api_probe_pod() {
       '    - name: probe'
     printf '      image: %s\n' "${image}"
     printf '%s\n' \
-      '      command: ["/bin/sh", "-ec"]' \
+      '      command: ["python3", "-c"]' \
       '      args:' \
       '        - |' \
-      '          api="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT_HTTPS}/apis/apps/v1/namespaces/solidstats-memory/deployments/mempalace/scale"' \
-      '          status="$({ printf '\''header = "Authorization: Bearer '\''; cat /var/run/secrets/solidstats-memory/token; printf '\''"\n'\''; } | curl --config - --silent --show-error --output /dev/null --write-out "%{http_code}" --connect-timeout 3 --max-time 8 --cacert /var/run/secrets/solidstats-memory/ca.crt "${api}" || true)"'
-    printf '          %s\n' "${check}"
+      '          import os,pathlib,ssl,urllib.error,urllib.request' \
+      '          token=pathlib.Path("/var/run/secrets/solidstats-memory/token").read_text(encoding="ascii").strip()' \
+      '          if not token or any(character.isspace() for character in token):raise SystemExit(1)' \
+      '          host=os.environ["KUBERNETES_SERVICE_HOST"]' \
+      '          port=os.environ["KUBERNETES_SERVICE_PORT_HTTPS"]' \
+      '          url=f"https://{host}:{port}/apis/apps/v1/namespaces/solidstats-memory/deployments/mempalace/scale"' \
+      '          request=urllib.request.Request(url,headers={"Authorization":f"Bearer {token}"})' \
+      '          context=ssl.create_default_context(cafile="/var/run/secrets/solidstats-memory/ca.crt")' \
+      '          try:' \
+      '           with urllib.request.urlopen(request,timeout=8,context=context) as response:status=response.status' \
+      '          except urllib.error.HTTPError as error:' \
+      '           status=error.code' \
+      '           error.close()' \
+      '          except (OSError,TimeoutError):status=0'
+    printf '          if status != %s:raise SystemExit(1)\n' "${expected_status}"
     printf '%s\n' \
       '      securityContext:' \
       '        allowPrivilegeEscalation: false' \
