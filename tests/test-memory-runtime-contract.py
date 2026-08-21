@@ -1061,8 +1061,9 @@ class MemoryValidatorContractTests(unittest.TestCase):
                 self.addCleanup(temporary.cleanup)
                 path = manifest_dir / "40-backup.yaml"
                 source = path.read_text()
-                self.assertEqual(1, source.count("  suspend: true"))
-                path.write_text(source.replace("  suspend: true", replacement, 1))
+                current = re.findall(r"(?m)^  suspend: (?:true|false)$", source)
+                self.assertEqual(1, len(current))
+                path.write_text(source.replace(current[0], replacement, 1))
                 result = self.validate(manifest_dir, placeholders=True)
                 self.assertEqual(expected, int(result.returncode != 0), result.stderr)
 
