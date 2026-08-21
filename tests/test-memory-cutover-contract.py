@@ -2665,8 +2665,11 @@ class MemoryCutoverContractTests(unittest.TestCase):
         config = private / "config.toml"
         prestate = private / "prestate.toml"
         result = private / "rollback.result"
-        legacy = b'[mcp_servers.mempalace]\ncommand = "legacy"\n\n'
+        legacy = b'[mcp_servers.mempalace]\ncommand = "legacy"\ntimeout = 30\n\n'
         original = b'model = "gpt-5.6-sol"\n\n' + legacy
+        current_legacy = (
+            b'[mcp_servers.mempalace]\ntimeout = 30\ncommand = "legacy"\n\n'
+        )
         drift = b'[plugins.current]\nenabled = true\n\n'
         replacement = (
             b'[mcp_servers.solidstats_memory]\n'
@@ -2677,8 +2680,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
             b'"mempalace_delete_drawer"]\n'
         )
-        current = original + drift + replacement
-        expected = original + drift
+        current = b'model = "gpt-5.6-sol"\n\n' + current_legacy + drift + replacement
+        expected = b'model = "gpt-5.6-sol"\n\n' + current_legacy + drift
         config.write_bytes(current)
         config.chmod(0o600)
         prestate.write_bytes(original)

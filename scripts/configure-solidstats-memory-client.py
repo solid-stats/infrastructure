@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import tomllib
 from typing import Callable
 
 
@@ -345,6 +346,18 @@ def _remove_registration(raw: bytes, name: str) -> bytes:
     return raw[:start] + raw[end:]
 
 
+def _registration_mapping(raw: bytes, name: str) -> dict[str, object]:
+    try:
+        decoded = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise PolicyError("client config TOML is malformed") from error
+    servers = decoded.get("mcp_servers")
+    registration = servers.get(name) if isinstance(servers, dict) else None
+    if not isinstance(registration, dict):
+        raise PolicyError("client registration is missing or malformed")
+    return registration
+
+
 def rollback_registration_transaction(
     config: Path,
     prestate: Path,
@@ -362,9 +375,9 @@ def rollback_registration_transaction(
     original_prestate, prestate_mode = _safe_file(prestate)
     inspect_policy(current, url=url, token_env=token_env, require_policy=True)
     updated = _remove_registration(current, CLIENT_NAME)
-    legacy_start, legacy_end = _registration_bounds(current, legacy_name)
-    original_start, original_end = _registration_bounds(original_prestate, legacy_name)
-    if current[legacy_start:legacy_end] != original_prestate[original_start:original_end]:
+    if _registration_mapping(current, legacy_name) != _registration_mapping(
+        original_prestate, legacy_name
+    ):
         raise PolicyError("legacy client registration drift prevents rollback")
     metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
     metadata_before = None
