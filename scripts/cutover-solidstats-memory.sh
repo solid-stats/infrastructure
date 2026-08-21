@@ -316,14 +316,6 @@ register_client() {
     --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
     --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
     --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" >/dev/null
-  {
-    printf 'schema=solidstats-memory-client-retirement/v1\n'
-    printf 'legacy_client_absent=true\n'
-    printf 'new_client_live=true\n'
-    printf 'unrelated_unchanged=true\n'
-  } >"${STATE_DIR}/client-retired.result.tmp"
-  chmod 600 "${STATE_DIR}/client-retired.result.tmp"
-  mv -f "${STATE_DIR}/client-retired.result.tmp" "${STATE_DIR}/client-retired.result"
 }
 
 remove_new_client() {
@@ -539,7 +531,12 @@ activate_backup_schedule() {
   fi
   ACTIVATION_SOURCE_PROMOTED=0
   ACTIVATION_CLIENT_CHANGED=0
-  trap 'activation_compensate $?' ERR INT TERM
+  on_activation_error() { local status=$?; trap - ERR INT TERM; activation_compensate "${status}" || exit 1; exit "${status}"; }
+  on_activation_int() { trap - ERR INT TERM; activation_compensate 130 || exit 1; exit 130; }
+  on_activation_term() { trap - ERR INT TERM; activation_compensate 143 || exit 1; exit 143; }
+  trap on_activation_error ERR
+  trap on_activation_int INT
+  trap on_activation_term TERM
   stage_guard_package
   run_remote_batch install-backup-guard
   run_remote_batch verify-backup-guard
@@ -569,8 +566,9 @@ stage_guard_package() {
   fi
   required SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT
   required SOLIDSTATS_MEMORY_BACKUP_GUARD_CONFIG
-  [[ "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" == /* &&
-    "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" != *..* ]] || return 1
+  [[ "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" =~ ^/[A-Za-z0-9._/-]+$ &&
+    "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" != *..* &&
+    "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" != *//* ]] || return 1
   local -a sources=(
     "${SCRIPT_DIR}/guard-solidstats-memory-backup.sh"
     "${SCRIPT_DIR}/solidstats-memory-backup-guard.service"
@@ -703,6 +701,17 @@ retire_legacy_client() {
     --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
     --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
     --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" >/dev/null
+  timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" authorize-current \
+    --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
+    --prestate "${CLIENT_CONFIG_PRESTATE}" >/dev/null
+  {
+    printf 'schema=solidstats-memory-client-retirement/v1\n'
+    printf 'legacy_client_absent=true\n'
+    printf 'new_client_live=true\n'
+    printf 'unrelated_unchanged=true\n'
+  } >"${STATE_DIR}/client-retired.result.tmp"
+  chmod 600 "${STATE_DIR}/client-retired.result.tmp"
+  mv -f "${STATE_DIR}/client-retired.result.tmp" "${STATE_DIR}/client-retired.result"
 }
 
 seal_cutover() {

@@ -308,9 +308,24 @@ def rollback(config: Path, prestate: Path) -> None:
         raise PolicyError("client config exact rollback failed")
 
 
+def authorize_current(config: Path, prestate: Path) -> None:
+    raw, _ = _safe_file(config)
+    metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
+    current, mode = _safe_file(metadata)
+    decoded = json.loads(current)
+    accepted = decoded.get("accepted_sha256")
+    if not isinstance(accepted, list) or not all(isinstance(item, str) for item in accepted):
+        raise PolicyError("client policy rollback metadata is malformed")
+    digest = _sha256(raw)
+    if digest not in accepted:
+        accepted.append(digest)
+    updated = json.dumps(decoded, separators=(",", ":"), sort_keys=True).encode("ascii") + b"\n"
+    _atomic_replace(metadata, updated, mode)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback"))
+    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback", "authorize-current"))
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--prestate", type=Path)
     parser.add_argument("--name", default=CLIENT_NAME)
@@ -324,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.name != CLIENT_NAME:
             raise PolicyError("target client name is invalid")
-        if args.command in {"capture", "apply", "rollback"} and args.prestate is None:
+        if args.command in {"capture", "apply", "rollback", "authorize-current"} and args.prestate is None:
             raise PolicyError("client config prestate path is required")
         if args.command in {"apply", "validate"} and (
             args.url is None or args.token_env is None
@@ -332,6 +347,8 @@ def main(argv: list[str] | None = None) -> int:
             raise PolicyError("target client binding is required")
         if args.command == "capture":
             capture(args.config, args.prestate)
+        elif args.command == "authorize-current":
+            authorize_current(args.config, args.prestate)
         elif args.command == "apply":
             apply(args.config, args.prestate, url=args.url, token_env=args.token_env)
         elif args.command == "validate":

@@ -12,6 +12,11 @@ fallback_suspend() {
   else
     fallback_kubectl=/usr/bin/kubectl
   fi
+  [[ -x "${fallback_kubectl}" && ! -L "${fallback_kubectl}" &&
+    "$(stat -c '%u:%a' "${fallback_kubectl}")" =~ ^0:(755|750)$ &&
+    -f /etc/rancher/k3s/k3s.yaml && ! -L /etc/rancher/k3s/k3s.yaml &&
+    "$(stat -c '%u:%a' /etc/rancher/k3s/k3s.yaml)" =~ ^0:(600|640)$ ]] || exit 1
+  ! grep -Eq '(^|[[:space:]])(exec:|auth-provider:)|(^|[[:space:]])(certificate-authority|client-certificate|client-key):[[:space:]]*[^/[:space:]]' /etc/rancher/k3s/k3s.yaml || exit 1
   timeout 30s "${fallback_kubectl}" --kubeconfig /etc/rancher/k3s/k3s.yaml \
     -n solidstats-memory patch cronjob solidstats-memory-backup --type=merge \
     -p '{"spec":{"suspend":true}}' >/dev/null 2>&1 || status=1
