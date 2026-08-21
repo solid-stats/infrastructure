@@ -255,7 +255,7 @@ qdrant_inventory() {
       'apiVersion: networking.k8s.io/v1' \
       'kind: NetworkPolicy' \
       'metadata:' \
-      "  name: ${policy}" \
+      "  name: ${policy}-egress" \
       "  namespace: ${MEMORY_NAMESPACE}" \
       'spec:' \
       '  podSelector:' \
@@ -267,6 +267,25 @@ qdrant_inventory() {
       '        - podSelector:' \
       '            matchLabels:' \
       '              app.kubernetes.io/name: qdrant' \
+      '      ports:' \
+      '        - protocol: TCP' \
+      '          port: 6333' \
+      '---' \
+      'apiVersion: networking.k8s.io/v1' \
+      'kind: NetworkPolicy' \
+      'metadata:' \
+      "  name: ${policy}-ingress" \
+      "  namespace: ${MEMORY_NAMESPACE}" \
+      'spec:' \
+      '  podSelector:' \
+      '    matchLabels:' \
+      '      app.kubernetes.io/name: qdrant' \
+      '  policyTypes: [Ingress]' \
+      '  ingress:' \
+      '    - from:' \
+      '        - podSelector:' \
+      '            matchLabels:' \
+      '              solidstats.memory/role: qdrant-admin-inventory' \
       '      ports:' \
       '        - protocol: TCP' \
       '          port: 6333' \
@@ -332,7 +351,8 @@ qdrant_inventory() {
       "--timeout=${COMMAND_TIMEOUT_SECONDS}s" </dev/null >/dev/null 2>&1 || failed=1
     timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
       "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
-      delete networkpolicy "${policy}" --ignore-not-found=true --wait=true \
+      delete networkpolicy "${policy}-egress" "${policy}-ingress" \
+      --ignore-not-found=true --wait=true \
       "--timeout=${COMMAND_TIMEOUT_SECONDS}s" </dev/null >/dev/null 2>&1 || failed=1
     return "${failed}"
   }
