@@ -3532,6 +3532,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn("Failed) status=1; break", operator)
         self.assertIn("decoder.raw_decode(raw,index)", operator)
         self.assertIn('value.get("kind")=="CronJob"', operator)
+        self.assertIn("install -d -o 0 -g 0 -m 0755 /usr/local/libexec", operator)
+        self.assertIn("rmdir /usr/local/libexec || fatal", operator)
         self.assertIn("'    runAsNonRoot: true'", operator)
         self.assertIn("'    fsGroup: 1000'", operator)
         self.assertIn("'    fsGroupChangePolicy: OnRootMismatch'", operator)

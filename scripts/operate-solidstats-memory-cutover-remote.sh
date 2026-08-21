@@ -1107,6 +1107,17 @@ install_backup_guard() {
     -f "${timer_source}" && ! -L "${timer_source}" ]] || fatal
   local destination backup name
   mkdir -p -m 700 "${RUN_ROOT}/guard-prestate"
+  if [[ -e /usr/local/libexec ]]; then
+    [[ -d /usr/local/libexec && ! -L /usr/local/libexec &&
+      "$(stat -c '%u' /usr/local/libexec)" == 0 &&
+      $((8#$(stat -c '%a' /usr/local/libexec) & 8#022)) -eq 0 ]] || fatal
+    printf 'present\n' | private_write "${RUN_ROOT}/guard-prestate/libexec.state"
+  else
+    printf 'absent\n' | private_write "${RUN_ROOT}/guard-prestate/libexec.state"
+    install -d -o 0 -g 0 -m 0755 /usr/local/libexec
+  fi
+  [[ -d /usr/local/libexec && ! -L /usr/local/libexec &&
+    "$(stat -c '%u:%a' /usr/local/libexec)" == 0:755 ]] || fatal
   if "${SYSTEMCTL_PATH}" is-enabled --quiet solidstats-memory-backup-guard.timer 2>/dev/null; then
     printf 'true\n' | private_write "${RUN_ROOT}/guard-prestate/enabled"
   else
@@ -1242,6 +1253,12 @@ rollback_backup_guard() {
       rm -f "${destination}"
     fi
   done
+  require_regular_private_file "${RUN_ROOT}/guard-prestate/libexec.state"
+  if [[ "$(<"${RUN_ROOT}/guard-prestate/libexec.state")" == absent ]]; then
+    rmdir /usr/local/libexec || fatal
+  else
+    [[ "$(<"${RUN_ROOT}/guard-prestate/libexec.state")" == present ]] || fatal
+  fi
   run_quiet "${SYSTEMCTL_PATH}" daemon-reload
   if [[ "$(<"${RUN_ROOT}/guard-prestate/enabled")" == true ]]; then
     run_quiet "${SYSTEMCTL_PATH}" enable solidstats-memory-backup-guard.timer
