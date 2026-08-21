@@ -1078,14 +1078,150 @@ verify_reboot_recovery() {
   record_operation verify-reboot-recovery complete
 }
 
+legacy_behavior_probe() {
+  local source result
+  source=$(cat <<'PY'
+import hashlib
+import json
+import os
+import sys
+from urllib import request
+
+token = os.environ["MEMPALACE_MCP_HTTP_TOKEN"]
+run_id = sys.argv[1]
+url = "http://127.0.0.1:8765/mcp"
+next_id = 1
+session = None
+
+def mcp(method, params):
+    global next_id, session
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": next_id,
+        "method": method, "params": params,
+    }, separators=(",", ":")).encode()
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if session:
+        headers["Mcp-Session-Id"] = session
+        headers["MCP-Protocol-Version"] = "2025-06-18"
+    operation = request.Request(url, body, headers, method="POST")
+    with request.urlopen(operation, timeout=30) as response:
+        raw = response.read(1024 * 1024)
+        session = session or response.headers.get("Mcp-Session-Id")
+    if raw.startswith(b"data:"):
+        raw = next(
+            line[5:].strip()
+            for line in raw.splitlines()
+            if line.startswith(b"data:")
+        )
+    payload = json.loads(raw)
+    if payload.get("id") != next_id or "error" in payload:
+        raise RuntimeError("legacy MCP call failed")
+    next_id += 1
+    return payload["result"]
+
+def tool_data(result):
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        return structured
+    for item in result.get("content", []):
+        if item.get("type") == "text":
+            decoded = json.loads(item.get("text", "null"))
+            if isinstance(decoded, dict):
+                return decoded
+    raise RuntimeError("legacy MCP result is unstructured")
+
+initialized = mcp("initialize", {
+    "protocolVersion": "2025-06-18", "capabilities": {},
+    "clientInfo": {"name": "rollback-oracle", "version": "1"},
+})
+if initialized.get("protocolVersion") != "2025-06-18":
+    raise RuntimeError("legacy MCP negotiation failed")
+tools = mcp("tools/list", {}).get("tools", [])
+names = {item.get("name") for item in tools}
+required = {
+    "mempalace_add_drawer",
+    "mempalace_get_drawer",
+    "mempalace_delete_drawer",
+}
+if not required.issubset(names):
+    raise RuntimeError("legacy MCP tools are incomplete")
+
+marker = "phase21-rollback-oracle:" + run_id
+drawer_id = None
+deleted = False
+try:
+    created = tool_data(mcp("tools/call", {
+        "name": "mempalace_add_drawer",
+        "arguments": {
+            "wing": "infrastructure", "room": "migrations",
+            "content": marker, "added_by": "rollback-oracle",
+        },
+    }))
+    drawer_id = created.get("drawer_id") or created.get("id")
+    if not isinstance(drawer_id, str) or not drawer_id:
+        raise RuntimeError("legacy MCP capture failed")
+    read_back = tool_data(mcp("tools/call", {
+        "name": "mempalace_get_drawer",
+        "arguments": {"drawer_id": drawer_id},
+    }))
+    if read_back.get("content") != marker:
+        raise RuntimeError("legacy MCP read-after-write failed")
+    removed = tool_data(mcp("tools/call", {
+        "name": "mempalace_delete_drawer",
+        "arguments": {"drawer_id": drawer_id},
+    }))
+    if not (
+        set(removed) == {"success", "drawer_id", "deleted_ids", "chunks_deleted"}
+        and removed.get("success") is True
+        and removed.get("drawer_id") == drawer_id
+        and isinstance(removed.get("deleted_ids"), list)
+        and removed.get("deleted_ids")
+        and all(isinstance(item, str) and item for item in removed["deleted_ids"])
+        and isinstance(removed.get("chunks_deleted"), int)
+        and not isinstance(removed.get("chunks_deleted"), bool)
+        and removed["chunks_deleted"] == len(removed["deleted_ids"])
+    ):
+        raise RuntimeError("legacy MCP cleanup failed")
+    deleted = True
+finally:
+    if drawer_id and not deleted:
+        try:
+            mcp("tools/call", {
+                "name": "mempalace_delete_drawer",
+                "arguments": {"drawer_id": drawer_id},
+            })
+        except BaseException:
+            pass
+
+evidence = json.dumps(
+    {"drawer_id": drawer_id, "tool_count": len(tools)},
+    separators=(",", ":"), sort_keys=True,
+).encode()
+print(hashlib.sha256(evidence).hexdigest())
+PY
+)
+  result=$(capture_command "${RUNUSER_PATH}" -u "${LEGACY_USER}" -- \
+    "${DOCKER_PATH}" --host "unix://${LEGACY_SOCKET}" exec \
+    "${LEGACY_CONTAINER}" python3 -c "${source}" "${RUN_ID_SHA256}")
+  [[ "${result}" =~ ^[0-9a-f]{64}$ ]] || fatal
+  printf '%s\n' "${result}"
+}
+
 verify_legacy_behavior() {
+  local probe_sha
   [[ "$(legacy_state)" == running ]] || fatal
   [[ "$(new_replicas)" == "$(field new_replicas)" ]] || fatal
   current_available_matches_prestate || fatal
   current_enabled_matches_prestate || fatal
+  probe_sha=$(legacy_behavior_probe)
   write_result verify-legacy-behavior \
     "legacy_running=true" "new_prestate_restored=true" \
-    "nginx_prestate_restored=true"
+    "nginx_prestate_restored=true" "legacy_mcp_behavior=true" \
+    "legacy_probe_sha256=${probe_sha}"
   record_operation verify-legacy-behavior complete
 }
 

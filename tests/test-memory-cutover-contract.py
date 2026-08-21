@@ -2807,7 +2807,9 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "set -eu\n"
             f"legacy={legacy_state}\nfreeze={freeze_state}\nlog={events}\n"
             '[[ "$1" == --host && "$2" == unix:///run/user/1001/docker.sock ]] || exit 9\n'
-            'shift 2\naction=$1\nshift\ncontainer=${@: -1}\n'
+            'shift 2\naction=$1\nshift\n'
+            'if [[ "$action" == exec ]]; then [[ "$1" == solidstats-container ]] || exit 9; printf "%064d\\n" 0; exit 0; fi\n'
+            'container=${@: -1}\n'
             'case "$container" in solidstats-container) state="$legacy" ;; freeze-lock-container) state="$freeze" ;; *) exit 9 ;; esac\n'
             'case "$action" in inspect) [[ "$(cat "$state")" == running ]] && echo true || echo false ;; start) printf "running\\n" >"$state"; printf "%s:start\\n" "$container" >>"$log" ;; stop) printf "stopped\\n" >"$state"; printf "%s:stop\\n" "$container" >>"$log" ;; *) exit 9 ;; esac\n',
             encoding="utf-8",
@@ -3076,6 +3078,9 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual(str(available), os.readlink(enabled))
         self.assertEqual(0, run("stop-new").returncode)
         self.assertEqual(0, run("start-legacy").returncode)
+        legacy_probe = run("verify-legacy-behavior")
+        self.assertEqual(0, legacy_probe.returncode, legacy_probe.stderr.decode())
+        self.assertIn(b"legacy_mcp_behavior=true", legacy_probe.stdout)
         self.assertEqual("running", legacy_state.read_text().strip())
         self.assertEqual("stopped", new_state.read_text().strip())
         self.assertEqual("running", freeze_state.read_text().strip())
