@@ -656,20 +656,35 @@ record_pre_retirement_client_evidence() {
 
 record_public_boundary_evidence() {
   required SOLIDSTATS_MEMORY_PUBLIC_URL
-  local host forward_probe api_result policy_sha
+  local host forward_probe api_result policy_sha boundary_result address_sha address_count port_6333_sha port_6334_sha
   forward_probe="${STATE_DIR}/probe-forward.json"
   api_result="${STATE_DIR}/remote-recheck-backup-api-access.result"
   [[ -f "${forward_probe}" && ! -L "${forward_probe}" &&
     -f "${api_result}" && ! -L "${api_result}" ]] || return 1
   host=$(python3 -c 'from urllib.parse import urlsplit; import sys; value=urlsplit(sys.argv[1]).hostname; print(value or "")' "${SOLIDSTATS_MEMORY_PUBLIC_URL}")
   [[ "${host}" =~ ^[A-Za-z0-9.-]+$ ]] || return 1
-  timeout "${PROBE_TIMEOUT}" python3 "${PROBE_SCRIPT}" private-boundary \
-    --host "${host}" >/dev/null
+  boundary_result=$(timeout "${PROBE_TIMEOUT}" python3 "${PROBE_SCRIPT}" private-boundary \
+    --host "${host}") || return 1
+  [[ "$(printf '%s\n' "${boundary_result}" | wc -l)" -eq 6 &&
+    "$(printf '%s\n' "${boundary_result}" | grep -c '^address_set_sha256=')" -eq 1 &&
+    "$(printf '%s\n' "${boundary_result}" | grep -c '^address_count=')" -eq 1 &&
+    "$(printf '%s\n' "${boundary_result}" | grep -c '^port_6333_all_addresses_blocked=true$')" -eq 1 &&
+    "$(printf '%s\n' "${boundary_result}" | grep -c '^port_6333_result_sha256=')" -eq 1 &&
+    "$(printf '%s\n' "${boundary_result}" | grep -c '^port_6334_all_addresses_blocked=true$')" -eq 1 &&
+    "$(printf '%s\n' "${boundary_result}" | grep -c '^port_6334_result_sha256=')" -eq 1 ]] || return 1
+  address_sha=$(printf '%s\n' "${boundary_result}" | sed -n 's/^address_set_sha256=//p')
+  address_count=$(printf '%s\n' "${boundary_result}" | sed -n 's/^address_count=//p')
+  port_6333_sha=$(printf '%s\n' "${boundary_result}" | sed -n 's/^port_6333_result_sha256=//p')
+  port_6334_sha=$(printf '%s\n' "${boundary_result}" | sed -n 's/^port_6334_result_sha256=//p')
+  [[ "${address_sha}" =~ ^[0-9a-f]{64}$ && "${address_count}" =~ ^[1-9][0-9]?$ &&
+    "${port_6333_sha}" =~ ^[0-9a-f]{64}$ && "${port_6334_sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
   policy_sha=$(sed -n 's/^policy_sha256=//p' "${api_result}")
   [[ "${policy_sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
   {
     printf 'schema=solidstats-memory-public-boundary-evidence/v1\n'
-    printf 'sequence=620\nqdrant_6333_blocked=true\nqdrant_6334_blocked=true\n'
+    printf 'sequence=620\naddress_set_sha256=%s\naddress_count=%s\n' "${address_sha}" "${address_count}"
+    printf 'port_6333_all_addresses_blocked=true\nport_6333_result_sha256=%s\n' "${port_6333_sha}"
+    printf 'port_6334_all_addresses_blocked=true\nport_6334_result_sha256=%s\n' "${port_6334_sha}"
     printf 'authenticated_mcp_boundary=true\n'
     printf 'authenticated_mcp_probe_sha256=%s\n' "$(sha256sum "${forward_probe}" | cut -d' ' -f1)"
     printf 'api_policy_sha256=%s\n' "${policy_sha}"

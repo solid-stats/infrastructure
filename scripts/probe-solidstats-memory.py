@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import math
@@ -556,31 +557,87 @@ def probe_auth_matrix(transport: Transport) -> tuple[dict[str, object], McpSessi
 def probe_private_boundary(
     hostname: str,
     *,
-    connector: Callable[..., object] = socket.create_connection,
+    resolver: Callable[..., object] = socket.getaddrinfo,
+    socket_factory: Callable[..., object] = socket.socket,
     timeout: float = 2.0,
 ) -> dict[str, object]:
-    """Require both public Qdrant ports to reject TCP connections."""
+    """Require every resolved public address to block both Qdrant ports."""
     if not isinstance(hostname, str) or not hostname or any(
         character.isspace() for character in hostname
     ):
         raise ProbeError("public boundary host is invalid")
-    blocked: dict[int, bool] = {}
-    for port in (6333, 6334):
-        try:
-            connection = connector((hostname, port), timeout=timeout)
-        except OSError:
-            blocked[port] = True
-        else:
-            blocked[port] = False
+    if not isinstance(timeout, (int, float)) or timeout <= 0 or not math.isfinite(timeout):
+        raise ProbeError("public boundary timeout is invalid")
+    try:
+        resolved = resolver(
+            hostname,
+            None,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP,
+        )
+    except OSError as error:
+        raise ProbeError("public boundary DNS resolution failed") from error
+    addresses: set[tuple[int, int, int, str, int, int]] = set()
+    for item in resolved:
+        if not isinstance(item, tuple) or len(item) != 5:
+            raise ProbeError("public boundary address is malformed")
+        family, socktype, protocol, _, sockaddr = item
+        if family == socket.AF_INET and socktype == socket.SOCK_STREAM and protocol in {0, socket.IPPROTO_TCP} and isinstance(sockaddr, tuple) and len(sockaddr) == 2:
+            address, _ = sockaddr
             try:
-                connection.close()
-            except OSError:
-                pass
-    if not all(blocked.values()):
-        raise ProbeError("Qdrant is publicly reachable")
+                canonical = socket.inet_ntop(socket.AF_INET, socket.inet_pton(socket.AF_INET, address))
+            except (OSError, TypeError) as error:
+                raise ProbeError("public boundary address is malformed") from error
+            addresses.add((family, socktype, socket.IPPROTO_TCP, canonical, 0, 0))
+        elif family == socket.AF_INET6 and socktype == socket.SOCK_STREAM and protocol in {0, socket.IPPROTO_TCP} and isinstance(sockaddr, tuple) and len(sockaddr) == 4:
+            address, _, flowinfo, scopeid = sockaddr
+            try:
+                canonical = socket.inet_ntop(socket.AF_INET6, socket.inet_pton(socket.AF_INET6, address))
+            except (OSError, TypeError) as error:
+                raise ProbeError("public boundary address is malformed") from error
+            addresses.add((family, socktype, socket.IPPROTO_TCP, canonical, int(flowinfo), int(scopeid)))
+        else:
+            raise ProbeError("public boundary address family differs")
+    ordered = sorted(addresses)
+    if not ordered or len(ordered) > 16:
+        raise ProbeError("public boundary address set is invalid")
+    address_set_sha256 = _digest(
+        [{"family": item[0], "address": item[3], "flowinfo": item[4], "scopeid": item[5]} for item in ordered]
+    )
+    port_results: dict[int, list[bool]] = {}
+    for port in (6333, 6334):
+        port_results[port] = []
+        for family, socktype, protocol, address, flowinfo, scopeid in ordered:
+            connection = socket_factory(family, socktype, protocol)
+            try:
+                connection.settimeout(float(timeout))
+                sockaddr = (address, port) if family == socket.AF_INET else (address, port, flowinfo, scopeid)
+                try:
+                    connection.connect(sockaddr)
+                except (socket.timeout, TimeoutError):
+                    port_results[port].append(True)
+                except OSError as error:
+                    if error.errno in {errno.ECONNREFUSED, errno.ETIMEDOUT}:
+                        port_results[port].append(True)
+                    else:
+                        raise ProbeError("public boundary route is inconclusive") from error
+                else:
+                    raise ProbeError("Qdrant is publicly reachable")
+            finally:
+                try:
+                    connection.close()
+                except OSError:
+                    pass
+    if any(len(results) != len(ordered) or not all(results) for results in port_results.values()):
+        raise ProbeError("public boundary coverage is incomplete")
     return {
-        "qdrant_6333_blocked": True,
-        "qdrant_6334_blocked": True,
+        "address_set_sha256": address_set_sha256,
+        "address_count": len(ordered),
+        "port_6333_all_addresses_blocked": True,
+        "port_6333_result_sha256": _digest(port_results[6333]),
+        "port_6334_all_addresses_blocked": True,
+        "port_6334_result_sha256": _digest(port_results[6334]),
     }
 
 
@@ -842,8 +899,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         if args.command == "private-boundary":
-            probe_private_boundary(args.host)
-            print("PASS: private boundary probe completed")
+            result = probe_private_boundary(args.host)
+            for key in sorted(result):
+                print(f"{key}={str(result[key]).lower() if isinstance(result[key], bool) else result[key]}")
             return 0
         if args.command == "client-policy":
             probe_client_policy(

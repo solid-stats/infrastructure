@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
+import errno
 import hashlib
 from http import server as http_server
 import importlib.util
@@ -14,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -39,6 +41,10 @@ RESTORE = importlib.util.module_from_spec(RESTORE_SPEC)
 RESTORE_SPEC.loader.exec_module(RESTORE)
 
 PROBE_PATH = ROOT / "scripts" / "probe-solidstats-memory.py"
+PROBE_SPEC = importlib.util.spec_from_file_location("solidstats_memory_probe", PROBE_PATH)
+assert PROBE_SPEC and PROBE_SPEC.loader
+PROBE = importlib.util.module_from_spec(PROBE_SPEC)
+PROBE_SPEC.loader.exec_module(PROBE)
 CUTOVER_PATH = ROOT / "scripts" / "cutover-solidstats-memory.sh"
 REMOTE_CUTOVER_PATH = (
     ROOT / "scripts" / "operate-solidstats-memory-cutover-remote.sh"
@@ -115,6 +121,71 @@ class MemoryCutoverContractTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_public_qdrant_boundary_requires_complete_conclusive_address_coverage(self) -> None:
+        addresses = [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.2.1", 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.2.2", 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.2.1", 0)),
+        ]
+
+        class FakeSocket:
+            def __init__(self, outcome: object, calls: list[tuple[object, ...]]) -> None:
+                self.outcome = outcome
+                self.calls = calls
+
+            def settimeout(self, timeout: float) -> None:
+                self.calls.append(("timeout", timeout))
+
+            def connect(self, address: tuple[object, ...]) -> None:
+                self.calls.append(("connect", *address))
+                if isinstance(self.outcome, BaseException):
+                    raise self.outcome
+
+            def close(self) -> None:
+                self.calls.append(("close",))
+
+        def invoke(outcomes: list[object], resolved: object = addresses) -> tuple[dict[str, object], list[tuple[object, ...]]]:
+            calls: list[tuple[object, ...]] = []
+            iterator = iter(outcomes)
+            result = PROBE.probe_private_boundary(
+                "memory.example.test",
+                resolver=lambda *args, **kwargs: resolved,
+                socket_factory=lambda *args: FakeSocket(next(iterator), calls),
+                timeout=0.25,
+            )
+            return result, calls
+
+        refused = OSError(errno.ECONNREFUSED, "refused")
+        timeout = socket.timeout("bounded timeout")
+        result, calls = invoke([refused, refused, refused, refused])
+        self.assertEqual(2, result["address_count"])
+        self.assertTrue(result["port_6333_all_addresses_blocked"])
+        self.assertTrue(result["port_6334_all_addresses_blocked"])
+        self.assertEqual(4, sum(call[0] == "connect" for call in calls))
+        self.assertNotIn("192.0.2", json.dumps(result))
+        self.assertEqual(2, invoke([timeout, timeout, timeout, timeout])[0]["address_count"])
+
+        with self.assertRaises(PROBE.ProbeError):
+            PROBE.probe_private_boundary(
+                "memory.example.test",
+                resolver=lambda *args, **kwargs: (_ for _ in ()).throw(socket.gaierror()),
+            )
+        for outcomes in (
+            [refused, None],
+            [OSError(errno.ENETUNREACH, "unreachable")],
+            [OSError(errno.EPERM, "denied")],
+        ):
+            with self.subTest(outcomes=outcomes):
+                with self.assertRaises(PROBE.ProbeError):
+                    invoke(outcomes)
+        collector_source = COLLECTOR_PATH.read_text(encoding="utf-8")
+        cutover_source = CUTOVER_PATH.read_text(encoding="utf-8")
+        self.assertIn('"address_set_sha256"', collector_source)
+        self.assertIn('public["port_6333_all_addresses_blocked"]', collector_source)
+        self.assertIn('"no_public_qdrant": public_qdrant_private', collector_source)
+        self.assertNotIn('public["qdrant_6333_blocked"]', collector_source)
+        self.assertIn("address_set_sha256=%s", cutover_source)
 
     def test_preflight_bootstraps_runtime_before_capturing_final_alias_state(self) -> None:
         source = CUTOVER_PATH.read_text(encoding="utf-8")
@@ -3619,20 +3690,22 @@ class MemoryCutoverContractTests(unittest.TestCase):
             'remote-verify-retained-collections.result',
             'backup-activation.provenance.json',
             '"requirements": {"iso_01": iso_01, "iso_03": iso_03, "ops_02": ops_02, "ops_03": ops_03, "ops_05": ops_05}',
-            '"prohibitions": {"no_early_legacy_removal": no_early, "no_public_qdrant": iso_03, "no_retained_data_deletion": no_retained}',
+            '"prohibitions": {"no_early_legacy_removal": no_early, "no_public_qdrant": public_qdrant_private, "no_retained_data_deletion": no_retained}',
         ):
             self.assertIn(required, source)
 
         dedicated = self.root / "dedicated.result"
         dedicated.write_text(
             "schema=solidstats-memory-public-boundary-evidence/v1\n"
-            "sequence=620\nqdrant_6333_blocked=true\nqdrant_6334_blocked=true\n"
+            f"sequence=620\naddress_set_sha256={'c' * 64}\naddress_count=2\n"
+            f"port_6333_all_addresses_blocked=true\nport_6333_result_sha256={'d' * 64}\n"
+            f"port_6334_all_addresses_blocked=true\nport_6334_result_sha256={'e' * 64}\n"
             "authenticated_mcp_boundary=true\n"
             f"authenticated_mcp_probe_sha256={'a' * 64}\napi_policy_sha256={'b' * 64}\n",
             encoding="ascii",
         )
         dedicated.chmod(0o600)
-        fields = {"sequence", "qdrant_6333_blocked", "qdrant_6334_blocked", "authenticated_mcp_boundary", "authenticated_mcp_probe_sha256", "api_policy_sha256"}
+        fields = {"sequence", "address_set_sha256", "address_count", "port_6333_all_addresses_blocked", "port_6333_result_sha256", "port_6334_all_addresses_blocked", "port_6334_result_sha256", "authenticated_mcp_boundary", "authenticated_mcp_probe_sha256", "api_policy_sha256"}
         self.assertEqual("620", COLLECTOR.parse_exact_result(dedicated, "solidstats-memory-public-boundary-evidence/v1", fields)["sequence"])
         dedicated.unlink()
         with self.assertRaises(FileNotFoundError):
@@ -3641,7 +3714,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         for schema, source_fields in (
             ("solidstats-memory-client-pre-retirement/v1", {"sequence", "legacy_client_present"}),
             ("solidstats-memory-client-retirement/v3", {"sequence", "legacy_client_absent"}),
-            ("solidstats-memory-public-boundary-evidence/v1", {"sequence", "qdrant_6333_blocked"}),
+            ("solidstats-memory-public-boundary-evidence/v1", {"sequence", "address_set_sha256"}),
         ):
             dedicated.write_text(
                 f"schema={schema}\n" + "\n".join(f"{key}=true" for key in source_fields) + "\n",
