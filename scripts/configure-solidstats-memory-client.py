@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import ctypes
+import errno
 import fcntl
 import functools
 import hashlib
@@ -14,6 +16,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import sys
 import tomllib
 from typing import Callable
 
@@ -21,6 +24,7 @@ from typing import Callable
 CLIENT_NAME = "solidstats_memory"
 PUBLIC_PATH = "/solidstats/mcp"
 TOKEN_ENV_NAME = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"
+PERSONAL_TOKEN_ENV_NAME = "MEMPALACE_PERSONAL_MCP_TOKEN"
 ENABLED_TOOLS = (
     "mempalace_search",
     "mempalace_list_rooms",
@@ -177,20 +181,72 @@ def _exclusive_write(path: Path, raw: bytes) -> None:
         raise PolicyError("private client state could not be written") from error
 
 
+def _rename_exchange(left: Path, right: Path) -> None:
+    """Atomically exchange two existing Linux directory entries."""
+    if sys.platform != "linux":
+        raise OSError(errno.ENOTSUP, "rename exchange is unsupported")
+    library = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(library, "renameat2", None)
+    if renameat2 is None:
+        raise OSError(errno.ENOTSUP, "rename exchange is unsupported")
+    renameat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    renameat2.restype = ctypes.c_int
+    at_fdcwd = -100
+    rename_exchange = 2
+    if renameat2(
+        at_fdcwd,
+        os.fsencode(left),
+        at_fdcwd,
+        os.fsencode(right),
+        rename_exchange,
+    ) != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+
+
+def _path_snapshot(path: Path) -> tuple[bytes, tuple[int, int]]:
+    """Read bytes and identity from one non-symlink regular file."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode):
+            raise PolicyError("client config exchange path is unsafe")
+        with os.fdopen(descriptor, "rb", closefd=False) as source:
+            raw = source.read()
+    finally:
+        os.close(descriptor)
+    path_details = path.lstat()
+    identity = (details.st_dev, details.st_ino)
+    if stat.S_ISLNK(path_details.st_mode) or (
+        path_details.st_dev,
+        path_details.st_ino,
+    ) != identity:
+        raise PolicyError("client config exchange identity changed")
+    return raw, identity
+
+
 def _atomic_replace(
     path: Path, raw: bytes, mode: int, *, expected_raw: bytes | None = None
 ) -> None:
-    expected_identity: tuple[int, int] | None = None
-    if expected_raw is not None:
-        details = path.lstat()
-        expected_identity = (details.st_dev, details.st_ino)
-        if path.read_bytes() != expected_raw:
-            raise PolicyError("client config changed before replacement")
+    observed_raw, expected_identity = _path_snapshot(path)
+    if expected_raw is None:
+        expected_raw = observed_raw
+    elif observed_raw != expected_raw:
+        raise PolicyError("client config changed before replacement")
     temporary = path.with_name(f".{path.name}.solidstats-memory.tmp")
     if temporary.exists() or temporary.is_symlink():
         raise PolicyError("client config temporary path already exists")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     created = False
+    exchanged = False
+    cleanup_safe = True
     try:
         descriptor = os.open(temporary, flags, mode)
         created = True
@@ -198,30 +254,56 @@ def _atomic_replace(
             output.write(raw)
             output.flush()
             os.fsync(output.fileno())
-        if expected_raw is not None:
-            current_details = path.lstat()
+        candidate_raw, candidate_identity = _path_snapshot(temporary)
+        current_raw, current_identity = _path_snapshot(path)
+        if current_identity != expected_identity or current_raw != expected_raw:
+            raise PolicyError("client config changed before replacement")
+        _rename_exchange(temporary, path)
+        exchanged = True
+        cleanup_safe = False
+        displaced_raw, displaced_identity = _path_snapshot(temporary)
+        published_raw, published_identity = _path_snapshot(path)
+        if displaced_identity != expected_identity or displaced_raw != expected_raw:
+            if published_identity != candidate_identity or published_raw != candidate_raw:
+                raise PolicyError("client config publication ownership changed")
+            _rename_exchange(temporary, path)
+            exchanged = False
+            restored_raw, restored_identity = _path_snapshot(path)
+            returned_raw, returned_identity = _path_snapshot(temporary)
             if (
-                path.is_symlink()
-                or (current_details.st_dev, current_details.st_ino)
-                != expected_identity
-                or path.read_bytes() != expected_raw
+                restored_identity != displaced_identity
+                or restored_raw != displaced_raw
+                or returned_identity != candidate_identity
+                or returned_raw != candidate_raw
             ):
-                raise PolicyError("client config changed before replacement")
-        os.replace(temporary, path)
+                raise PolicyError("client config exchange rollback could not be verified")
+            cleanup_safe = True
+            temporary.unlink()
+            created = False
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            raise PolicyError("client config changed at atomic publication")
+        if published_identity != candidate_identity or published_raw != candidate_raw:
+            raise PolicyError("client config publication could not be verified")
+        temporary.unlink()
+        created = False
         directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(directory)
         finally:
             os.close(directory)
     except PolicyError:
-        if created:
+        if created and not exchanged and cleanup_safe:
             try:
                 temporary.unlink()
             except OSError:
                 pass
         raise
     except OSError as error:
-        if created:
+        if created and not exchanged and cleanup_safe:
             try:
                 temporary.unlink()
             except OSError:
@@ -316,6 +398,9 @@ def inspect_policy(
 @_locked_config_writer
 def capture(config: Path, prestate: Path) -> None:
     raw, _ = _safe_file(config)
+    _validate_client_token_bindings(
+        raw, personal_required=True, replacement_required=False
+    )
     if prestate.exists() and not prestate.is_symlink():
         previous, _ = _safe_file(prestate)
         if previous != raw:
@@ -328,6 +413,9 @@ def capture(config: Path, prestate: Path) -> None:
 def apply(config: Path, prestate: Path, *, url: str, token_env: str) -> None:
     raw, mode = _safe_file(config)
     _safe_file(prestate)
+    _validate_client_token_bindings(
+        raw, personal_required=True, replacement_required=True
+    )
     start, end = inspect_policy(raw, url=url, token_env=token_env, require_policy=False)
     section = raw[start:end]
     newline = b"\r\n" if b"\r\n" in section else b"\n"
@@ -363,6 +451,9 @@ def apply(config: Path, prestate: Path, *, url: str, token_env: str) -> None:
 
 def validate(config: Path, *, url: str, token_env: str) -> None:
     raw, _ = _safe_file(config)
+    _validate_client_token_bindings(
+        raw, personal_required=False, replacement_required=True
+    )
     inspect_policy(raw, url=url, token_env=token_env, require_policy=True)
 
 
@@ -370,6 +461,12 @@ def validate(config: Path, *, url: str, token_env: str) -> None:
 def rollback(config: Path, prestate: Path) -> None:
     current, mode = _safe_file(config)
     original, _ = _safe_file(prestate)
+    _validate_client_token_bindings(
+        current, personal_required=True, replacement_required=True
+    )
+    _validate_client_token_bindings(
+        original, personal_required=True, replacement_required=False
+    )
     accepted = {_sha256(original)}
     metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
     if metadata.exists() and not metadata.is_symlink():
@@ -401,6 +498,9 @@ def rollback(config: Path, prestate: Path) -> None:
 @_locked_config_writer
 def authorize_current(config: Path, prestate: Path) -> None:
     raw, _ = _safe_file(config)
+    _validate_client_token_bindings(
+        raw, personal_required=True, replacement_required=True
+    )
     metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
     current, mode = _safe_file(metadata)
     decoded = json.loads(current)
@@ -489,6 +589,54 @@ def _registration_mapping(raw: bytes, name: str) -> dict[str, object]:
     return registration
 
 
+def _validate_registration_token_binding(
+    raw: bytes, name: str, expected: str, *, required: bool
+) -> None:
+    """Validate the sole token binding across one complete TOML subtree."""
+    try:
+        decoded = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise PolicyError("client config TOML is malformed") from error
+    servers = decoded.get("mcp_servers")
+    registration = servers.get(name) if isinstance(servers, dict) else None
+    if registration is None and not required:
+        return
+    if not isinstance(registration, dict):
+        raise PolicyError("client registration is missing or malformed")
+    observed: list[object] = []
+
+    def collect(value: object) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key == "bearer_token_env_var":
+                    observed.append(item)
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    collect(registration)
+    if registration.get("bearer_token_env_var") != expected or observed != [expected]:
+        raise PolicyError("client registration token binding is invalid")
+
+
+def _validate_client_token_bindings(
+    raw: bytes, *, personal_required: bool, replacement_required: bool
+) -> None:
+    _validate_registration_token_binding(
+        raw,
+        "mempalace",
+        PERSONAL_TOKEN_ENV_NAME,
+        required=personal_required,
+    )
+    _validate_registration_token_binding(
+        raw,
+        CLIENT_NAME,
+        TOKEN_ENV_NAME,
+        required=replacement_required,
+    )
+
+
 @_locked_config_writer
 def rollback_registration_transaction(
     config: Path,
@@ -505,6 +653,12 @@ def rollback_registration_transaction(
     """Remove the replacement registration without overwriting unrelated drift."""
     current, config_mode = _safe_file(config)
     original_prestate, prestate_mode = _safe_file(prestate)
+    _validate_client_token_bindings(
+        current, personal_required=True, replacement_required=True
+    )
+    _validate_client_token_bindings(
+        original_prestate, personal_required=True, replacement_required=False
+    )
     inspect_policy(current, url=url, token_env=token_env, require_policy=True)
     recorded_replacement = _registration_mapping(current, CLIENT_NAME)
     if _registration_mapping(current, legacy_name) != _registration_mapping(
@@ -528,6 +682,9 @@ def rollback_registration_transaction(
             raise PolicyError("client registration drift prevents rollback")
         current, config_mode = latest, latest_mode
         updated = _remove_registration(current, CLIENT_NAME)
+        _validate_client_token_bindings(
+            updated, personal_required=True, replacement_required=False
+        )
 
         def exact_remove(expected: bytes) -> None:
             _atomic_replace(
@@ -574,20 +731,23 @@ def rollback_registration_transaction(
                         if target_present
                         else _restore_registration(observed, current, CLIENT_NAME)
                     )
-                if compensated != observed:
-                    _atomic_replace(
-                        config, compensated, config_mode, expected_raw=observed
-                    )
                 if compensated != current:
                     raise PolicyError(
                         "unrelated client drift preserved; exact compensation refused"
+                    )
+                if compensated != observed:
+                    _atomic_replace(
+                        config, compensated, config_mode, expected_raw=observed
                     )
             _atomic_replace(prestate, original_prestate, prestate_mode)
             if metadata_before is None:
                 if metadata.exists() and not metadata.is_symlink():
                     metadata.unlink()
             else:
-                _atomic_replace(metadata, metadata_before, metadata_mode)
+                if metadata.exists() and not metadata.is_symlink():
+                    _atomic_replace(metadata, metadata_before, metadata_mode)
+                else:
+                    _exclusive_write(metadata, metadata_before)
             if result.exists() and not result.is_symlink():
                 result.unlink()
         except (OSError, PolicyError) as rollback_error:
@@ -623,6 +783,9 @@ def capture_pre_retirement(
     config: Path, result: Path, *, url: str, token_env: str, legacy_name: str = "mempalace"
 ) -> bytes:
     current, _ = _safe_file(config)
+    _validate_client_token_bindings(
+        current, personal_required=True, replacement_required=True
+    )
     inspect_policy(current, url=url, token_env=token_env, require_policy=True)
     without_legacy = _remove_registration(current, legacy_name)
     unrelated = _remove_registration(without_legacy, CLIENT_NAME)
@@ -656,7 +819,13 @@ def retire_transaction(
 ) -> None:
     """Retire one exact registration with pre-authorized exact rollback."""
     current, mode = _safe_file(config)
-    _safe_file(prestate)
+    original_prestate, _ = _safe_file(prestate)
+    _validate_client_token_bindings(
+        current, personal_required=True, replacement_required=True
+    )
+    _validate_client_token_bindings(
+        original_prestate, personal_required=True, replacement_required=False
+    )
     inspect_policy(current, url=url, token_env=token_env, require_policy=True)
     recorded_legacy = _registration_mapping(current, legacy_name)
     recorded_target = _registration_mapping(current, CLIENT_NAME)
@@ -671,6 +840,9 @@ def retire_transaction(
     inspect_policy(latest, url=url, token_env=token_env, require_policy=True)
     current, mode = latest, latest_mode
     retired = _remove_registration(current, legacy_name)
+    _validate_client_token_bindings(
+        retired, personal_required=False, replacement_required=True
+    )
     inspect_policy(retired, url=url, token_env=token_env, require_policy=True)
     retirement_prestate = result.with_suffix(result.suffix + ".prestate")
     if retirement_prestate.exists() and not retirement_prestate.is_symlink():
@@ -691,6 +863,9 @@ def retire_transaction(
         raise PolicyError("client config changed during retirement preparation")
     current, mode = final_current, final_mode
     retired = _remove_registration(current, legacy_name)
+    _validate_client_token_bindings(
+        retired, personal_required=False, replacement_required=True
+    )
 
     def exact_remove(expected: bytes) -> None:
         _atomic_replace(config, expected, mode, expected_raw=current)
@@ -740,12 +915,12 @@ def retire_transaction(
                         if target_present
                         else _restore_registration(observed, current, legacy_name)
                     )
-                if compensated != observed:
-                    _atomic_replace(config, compensated, mode, expected_raw=observed)
                 if compensated != current:
                     raise PolicyError(
                         "unrelated client drift preserved; exact compensation refused"
                     )
+                if compensated != observed:
+                    _atomic_replace(config, compensated, mode, expected_raw=observed)
             restored, _ = _safe_file(config)
             if restored != current:
                 raise PolicyError("client retirement rollback read-back failed")
@@ -768,6 +943,12 @@ def restore_retirement(
     current, mode = _safe_file(config)
     retirement_prestate = result.with_suffix(result.suffix + ".prestate")
     original, _ = _safe_file(retirement_prestate)
+    _validate_client_token_bindings(
+        current, personal_required=False, replacement_required=True
+    )
+    _validate_client_token_bindings(
+        original, personal_required=True, replacement_required=True
+    )
     expected = _remove_registration(original, legacy_name)
     if current != expected:
         raise PolicyError("retired client state drift prevents compensation")
@@ -775,6 +956,9 @@ def restore_retirement(
     restored, _ = _safe_file(config)
     if restored != original:
         raise PolicyError("legacy client compensation read-back failed")
+    _validate_client_token_bindings(
+        restored, personal_required=True, replacement_required=True
+    )
 
 
 def _parser() -> argparse.ArgumentParser:

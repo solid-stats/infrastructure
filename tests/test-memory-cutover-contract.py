@@ -2141,20 +2141,56 @@ class MemoryCutoverContractTests(unittest.TestCase):
 
     def test_probe_cleanup_inventory_is_paginated_not_ann_derived(self) -> None:
         probe = self.load_probe()
-        pages = {
-            0: {"drawers": [{"drawer_id": f"drawer-{index}"} for index in range(100)], "total": 101, "count": 100, "offset": 0, "limit": 100},
-            100: {"drawers": [{"drawer_id": "drawer-100"}], "total": 101, "count": 1, "offset": 100, "limit": 100},
-        }
+        accepted_total = probe.DRAWER_INVENTORY_MAX
+        self.assertEqual(19_555, probe.PHASE20_ACCEPTED_SOURCE_DRAWERS)
+        self.assertGreater(probe.DRAWER_INVENTORY_HEADROOM, 0)
 
         def call(_session, name: str, arguments: dict[str, object]):
             self.assertEqual("mempalace_list_drawers", name)
-            return {"structuredContent": pages[int(arguments["offset"])]}
+            offset = int(arguments["offset"])
+            limit = int(arguments["limit"])
+            count = min(limit, accepted_total - offset)
+            return {"structuredContent": {
+                "drawers": [
+                    {"drawer_id": f"drawer-{index}"}
+                    for index in range(offset, offset + count)
+                ],
+                "total": accepted_total,
+                "count": count,
+                "offset": offset,
+                "limit": limit,
+            }}
 
         with mock.patch.object(probe, "mcp_call", side_effect=call):
             self.assertEqual(
-                101,
+                accepted_total,
                 len(probe._listed_drawer_ids(object(), wing="infrastructure")),
             )
+        over_bound = {
+            "drawers": [],
+            "total": accepted_total + 1,
+            "count": 0,
+            "offset": 0,
+            "limit": probe.DRAWER_PAGE_LIMIT,
+        }
+        with (
+            mock.patch.object(
+                probe,
+                "mcp_call",
+                return_value={"structuredContent": over_bound},
+            ),
+            self.assertRaisesRegex(probe.ProbeError, "inventory is invalid"),
+        ):
+            probe._listed_drawer_ids(object(), wing="infrastructure")
+        with (
+            mock.patch.object(
+                probe.time,
+                "monotonic",
+                side_effect=[0.0, probe.DRAWER_INVENTORY_DEADLINE_SECONDS + 1],
+            ),
+            self.assertRaisesRegex(probe.ProbeError, "deadline"),
+        ):
+            probe._listed_drawer_ids(object(), wing="infrastructure")
         self.assertNotIn("mempalace_search", inspect.getsource(probe._listed_drawer_ids))
 
     def test_probe_accepts_only_exact_v350_delete_success_schema(self) -> None:
@@ -2586,6 +2622,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
         original = (
             b'# unrelated bytes stay byte-identical\nmodel = "gpt-5.6-sol"\n'
             b"\n[mcp_servers.unrelated]\nurl = \"https://other.example/mcp\"\n"
+            b"\n[mcp_servers.mempalace]\ncommand = \"legacy\"\n"
+            b'bearer_token_env_var = "MEMPALACE_PERSONAL_MCP_TOKEN"\n'
         )
         config.write_bytes(original)
         config.chmod(0o600)
@@ -2677,7 +2715,11 @@ class MemoryCutoverContractTests(unittest.TestCase):
         prestate = private / "prestate.toml"
         prestate.write_bytes(b'model = "prestate"\n')
         prestate.chmod(0o600)
-        base = (
+        personal = (
+            b"[mcp_servers.mempalace]\ncommand = \"legacy\"\n"
+            b'bearer_token_env_var = "MEMPALACE_PERSONAL_MCP_TOKEN"\n\n'
+        )
+        base = personal + (
             b"[mcp_servers.solidstats_memory]\n"
             b'url = "https://memory.example/solidstats/mcp"\n'
             b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
@@ -2768,7 +2810,11 @@ class MemoryCutoverContractTests(unittest.TestCase):
         private.mkdir(mode=0o700)
         config = private / "config.toml"
         prestate = private / "prestate.toml"
-        original = b'model = "gpt-5.6-sol"\n'
+        original = (
+            b'model = "gpt-5.6-sol"\n\n'
+            b'[mcp_servers.mempalace]\ncommand = "legacy"\n'
+            b'bearer_token_env_var = "MEMPALACE_PERSONAL_MCP_TOKEN"\n'
+        )
         config.write_bytes(original)
         config.chmod(0o600)
         capture = subprocess.run(
@@ -2821,6 +2867,207 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual(0, rollback.returncode, rollback.stderr)
         self.assertEqual(original, config.read_bytes())
 
+    def test_client_atomic_exchange_preserves_boundary_writer(self) -> None:
+        private = self.root / "client-exchange-race"
+        private.mkdir(mode=0o700)
+        config = private / "config.toml"
+        original = b'model = "before"\n'
+        candidate = b'model = "candidate"\n'
+        external = b'model = "external"\n'
+        config.write_bytes(original)
+        config.chmod(0o600)
+        real_exchange = CLIENT_POLICY._rename_exchange
+        calls = 0
+
+        def inject_at_exchange(left: Path, right: Path) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                writer = config.with_name("nonparticipating-writer.toml")
+                writer.write_bytes(external)
+                writer.chmod(0o600)
+                os.replace(writer, config)
+            real_exchange(left, right)
+
+        with (
+            mock.patch.object(
+                CLIENT_POLICY, "_rename_exchange", side_effect=inject_at_exchange
+            ),
+            self.assertRaisesRegex(CLIENT_POLICY.PolicyError, "atomic publication"),
+        ):
+            CLIENT_POLICY._atomic_replace(
+                config, candidate, 0o600, expected_raw=original
+            )
+        self.assertEqual(2, calls)
+        self.assertEqual(external, config.read_bytes())
+        self.assertFalse(
+            config.with_name(f".{config.name}.solidstats-memory.tmp").exists()
+        )
+
+        config.write_bytes(original)
+        config.chmod(0o600)
+        temporary = config.with_name(f".{config.name}.solidstats-memory.tmp")
+
+        def inject_after_exchange(left: Path, right: Path) -> None:
+            real_exchange(left, right)
+            writer = config.with_name("second-nonparticipating-writer.toml")
+            writer.write_bytes(external)
+            writer.chmod(0o600)
+            os.replace(writer, config)
+
+        with (
+            mock.patch.object(
+                CLIENT_POLICY,
+                "_rename_exchange",
+                side_effect=inject_after_exchange,
+            ),
+            self.assertRaisesRegex(CLIENT_POLICY.PolicyError, "publication"),
+        ):
+            CLIENT_POLICY._atomic_replace(
+                config, candidate, 0o600, expected_raw=original
+            )
+        self.assertEqual(external, config.read_bytes())
+        self.assertEqual(original, temporary.read_bytes())
+        temporary.unlink()
+
+        config.write_bytes(original)
+        config.chmod(0o600)
+        second_external = b'model = "second-external"\n'
+
+        def inject_before_and_after_exchange(left: Path, right: Path) -> None:
+            first_writer = config.with_name("first-racing-writer.toml")
+            first_writer.write_bytes(external)
+            first_writer.chmod(0o600)
+            os.replace(first_writer, config)
+            real_exchange(left, right)
+            second_writer = config.with_name("second-racing-writer.toml")
+            second_writer.write_bytes(second_external)
+            second_writer.chmod(0o600)
+            os.replace(second_writer, config)
+
+        with (
+            mock.patch.object(
+                CLIENT_POLICY,
+                "_rename_exchange",
+                side_effect=inject_before_and_after_exchange,
+            ),
+            self.assertRaisesRegex(CLIENT_POLICY.PolicyError, "ownership"),
+        ):
+            CLIENT_POLICY._atomic_replace(
+                config, candidate, 0o600, expected_raw=original
+            )
+        self.assertEqual(second_external, config.read_bytes())
+        self.assertEqual(external, temporary.read_bytes())
+        temporary.unlink()
+
+        with (
+            mock.patch.object(
+                CLIENT_POLICY,
+                "_rename_exchange",
+                side_effect=OSError(errno.ENOTSUP, "unsupported"),
+            ),
+            self.assertRaisesRegex(CLIENT_POLICY.PolicyError, "atomically"),
+        ):
+            CLIENT_POLICY._atomic_replace(
+                config, candidate, 0o600, expected_raw=second_external
+            )
+        self.assertEqual(second_external, config.read_bytes())
+        self.assertFalse(
+            config.with_name(f".{config.name}.solidstats-memory.tmp").exists()
+        )
+
+    def test_client_transactions_reject_colliding_token_subtrees(self) -> None:
+        personal = (
+            b'[mcp_servers.mempalace]\ncommand = "legacy"\n'
+            b'bearer_token_env_var = "MEMPALACE_PERSONAL_MCP_TOKEN"\n\n'
+            b'[mcp_servers.mempalace.tools.search]\nenabled = true\n\n'
+        )
+        replacement = (
+            b'[mcp_servers.solidstats_memory]\n'
+            b'url = "https://memory.example/solidstats/mcp"\n'
+            b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
+            b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
+            b'"mempalace_list_drawers","mempalace_get_drawer",'
+            b'"mempalace_check_duplicate","mempalace_add_drawer",'
+            b'"mempalace_delete_drawer"]\n'
+        )
+        for invalid_legacy in (
+            b"MEMPALACE_MCP_TOKEN",
+            b"MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+        ):
+            with self.subTest(legacy=invalid_legacy):
+                private = self.root / f"legacy-token-{invalid_legacy.decode()}"
+                private.mkdir(mode=0o700)
+                config = private / "config.toml"
+                prestate = private / "prestate.toml"
+                result = private / "retirement.result"
+                invalid_personal = personal.replace(
+                    b"MEMPALACE_PERSONAL_MCP_TOKEN", invalid_legacy
+                )
+                current = invalid_personal + replacement
+                config.write_bytes(current)
+                config.chmod(0o600)
+                prestate.write_bytes(invalid_personal)
+                prestate.chmod(0o600)
+                metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
+                metadata.write_text(
+                    json.dumps({
+                        "schema": "solidstats-memory-client-policy/v1",
+                        "accepted_sha256": [hashlib.sha256(current).hexdigest()],
+                    }, separators=(",", ":"), sort_keys=True) + "\n",
+                    encoding="ascii",
+                )
+                metadata.chmod(0o600)
+                with self.assertRaisesRegex(CLIENT_POLICY.PolicyError, "token binding"):
+                    CLIENT_POLICY.retire_transaction(
+                        config,
+                        prestate,
+                        result,
+                        url="https://memory.example/solidstats/mcp",
+                        token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+                    )
+                self.assertEqual(current, config.read_bytes())
+                capture_prestate = private / "capture-prestate.toml"
+                config.write_bytes(invalid_personal)
+                with self.assertRaisesRegex(CLIENT_POLICY.PolicyError, "token binding"):
+                    CLIENT_POLICY.capture(config, capture_prestate)
+                self.assertFalse(capture_prestate.exists())
+                config.write_bytes(replacement)
+                retirement_prestate = result.with_suffix(result.suffix + ".prestate")
+                retirement_prestate.write_bytes(current)
+                retirement_prestate.chmod(0o600)
+                with self.assertRaisesRegex(CLIENT_POLICY.PolicyError, "token binding"):
+                    CLIENT_POLICY.restore_retirement(config, result)
+                self.assertEqual(replacement, config.read_bytes())
+
+        for invalid_replacement in (
+            b"MEMPALACE_MCP_TOKEN",
+            b"MEMPALACE_PERSONAL_MCP_TOKEN",
+        ):
+            with self.subTest(replacement=invalid_replacement):
+                private = self.root / f"replacement-token-{invalid_replacement.decode()}"
+                private.mkdir(mode=0o700)
+                config = private / "config.toml"
+                prestate = private / "prestate.toml"
+                result = private / "rollback.result"
+                current = personal + replacement.replace(
+                    b"MEMPALACE_SOLIDSTATS_MCP_TOKEN", invalid_replacement
+                )
+                config.write_bytes(current)
+                config.chmod(0o600)
+                prestate.write_bytes(personal)
+                prestate.chmod(0o600)
+                with self.assertRaisesRegex(CLIENT_POLICY.PolicyError, "token binding"):
+                    CLIENT_POLICY.rollback_registration_transaction(
+                        config,
+                        prestate,
+                        result,
+                        url="https://memory.example/solidstats/mcp",
+                        token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+                    )
+                self.assertEqual(current, config.read_bytes())
+                self.assertFalse(result.exists())
+
     def test_client_retirement_is_one_pre_authorized_transaction(self) -> None:
         private = self.root / "client-retirement"
         private.mkdir(mode=0o700)
@@ -2857,7 +3104,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             parsed_current["solidstats_memory"]["bearer_token_env_var"],
         )
         self.assertNotIn(b"MEMPALACE_MCP_TOKEN", current)
-        prestate.write_bytes(unrelated)
+        prestate.write_bytes(unrelated + legacy)
         prestate.chmod(0o600)
         metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
         metadata.write_text(
@@ -3129,7 +3376,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         concurrent = b'[plugins.concurrent]\nenabled = true\n\n'
         config.write_bytes(current)
         config.chmod(0o600)
-        prestate.write_bytes(b'model = "gpt-5.6-sol"\n')
+        prestate.write_bytes(b'model = "gpt-5.6-sol"\n\n' + legacy)
         prestate.chmod(0o600)
         metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
         metadata.write_text(json.dumps({

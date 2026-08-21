@@ -15,6 +15,7 @@ import socket
 import stat
 import subprocess
 import tempfile
+import time
 from typing import Callable, Mapping, Protocol
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
@@ -28,6 +29,14 @@ SAFE_CODE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 CLIENT_NAME = "solidstats_memory"
 PUBLIC_PATH = "/solidstats/mcp"
 TOKEN_ENV_NAME = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"
+# Accepted source count: Phase 20 `20-SOURCE-INVENTORY.json` (19,555).
+# One 4,945-drawer reviewed headroom allocation rounds the live inventory gate
+# to 24,500 without replacing it with an unproven smaller corpus bound.
+PHASE20_ACCEPTED_SOURCE_DRAWERS = 19_555
+DRAWER_INVENTORY_HEADROOM = 4_945
+DRAWER_INVENTORY_MAX = PHASE20_ACCEPTED_SOURCE_DRAWERS + DRAWER_INVENTORY_HEADROOM
+DRAWER_INVENTORY_DEADLINE_SECONDS = 30.0
+DRAWER_PAGE_LIMIT = 100
 REQUIRED_TOOLS = (
     "mempalace_search",
     "mempalace_list_rooms",
@@ -499,12 +508,17 @@ def _listed_drawer_ids(session: McpSession, *, wing: str) -> set[str]:
     """
     found: set[str] = set()
     offset = 0
-    for _page in range(100):
+    expected_total: int | None = None
+    started = time.monotonic()
+    max_pages = math.ceil(DRAWER_INVENTORY_MAX / DRAWER_PAGE_LIMIT)
+    for _page in range(max_pages):
+        if time.monotonic() - started > DRAWER_INVENTORY_DEADLINE_SECONDS:
+            raise ProbeError("deterministic drawer inventory exceeded its deadline")
         data = _tool_data(
             mcp_call(
                 session,
                 "mempalace_list_drawers",
-                {"wing": wing, "limit": 100, "offset": offset},
+                {"wing": wing, "limit": DRAWER_PAGE_LIMIT, "offset": offset},
             )
         )
         drawers = data.get("drawers")
@@ -521,11 +535,13 @@ def _listed_drawer_ids(session: McpSession, *, wing: str) -> set[str]:
             or type(page_limit) is not int
             or count != len(drawers)
             or page_offset != offset
-            or page_limit != 100
+            or page_limit != DRAWER_PAGE_LIMIT
             or total < 0
-            or total > 10_000
+            or total > DRAWER_INVENTORY_MAX
+            or (expected_total is not None and total != expected_total)
         ):
             raise ProbeError("deterministic drawer inventory is invalid")
+        expected_total = total
         page_ids: list[str] = []
         for drawer in drawers:
             drawer_id = _first_drawer_id(drawer)
