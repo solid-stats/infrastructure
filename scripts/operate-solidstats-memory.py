@@ -1368,11 +1368,23 @@ class Runtime:
     def wait_backup_job(self, payload: dict[str, object]) -> object:
         exact_mapping(payload, set(), "backup wait request is invalid")
         name = f"solidstats-memory-backup-{self.state_root.parent.name[:16]}"
-        self._kubectl(
-            ["-n", NAMESPACE, "wait", "--for=condition=complete", f"job/{name}", "--timeout=3300s"],
-            timeout=3360,
-        )
-        return {"complete": True, "job_count": 1}
+        deadline = time.monotonic() + 3300
+        while time.monotonic() < deadline:
+            job = self._kubectl_json(["-n", NAMESPACE, "get", "job", name])
+            status = job.get("status") if isinstance(job, Mapping) else None
+            conditions = status.get("conditions") if isinstance(status, Mapping) else None
+            if isinstance(conditions, list):
+                states = {
+                    item.get("type"): item.get("status")
+                    for item in conditions
+                    if isinstance(item, Mapping)
+                }
+                if states.get("Complete") == "True":
+                    return {"complete": True, "job_count": 1}
+                if states.get("Failed") == "True":
+                    raise OperatorError("backup Job failed")
+            time.sleep(5)
+        raise OperatorError("backup Job timed out")
 
     def _backup_pod(self) -> str:
         name = f"solidstats-memory-backup-{self.state_root.parent.name[:16]}"

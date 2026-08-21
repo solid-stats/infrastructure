@@ -1485,7 +1485,8 @@ import json
 import os
 from pathlib import Path
 import tarfile
-from urllib import parse, request
+import time
+from urllib import error, parse, request
 
 run_id = os.environ["BACKUP_RUN_ID"]
 work_dir = Path("/tmp") / run_id
@@ -1493,6 +1494,17 @@ work_dir.mkdir(mode=0o700)
 collection = parse.quote(os.environ["QDRANT_COLLECTION"], safe="")
 headers = {"api-key": os.environ["QDRANT_API_KEY"]}
 base = os.environ["QDRANT_URL"]
+readiness = request.Request(
+    f"{base}/collections/{collection}", headers=headers, method="GET"
+)
+for attempt in range(12):
+    try:
+        with request.urlopen(readiness, timeout=10):
+            break
+    except error.URLError:
+        if attempt == 11:
+            raise
+        time.sleep(5)
 create = request.Request(
     f"{base}/collections/{collection}/snapshots", headers=headers, method="POST"
 )

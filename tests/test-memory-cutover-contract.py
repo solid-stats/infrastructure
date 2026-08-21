@@ -974,6 +974,12 @@ class MemoryCutoverContractTests(unittest.TestCase):
         uploader = pod_spec["containers"][0]
         self.assertEqual(["python3", "-c"], prepare["command"])
         self.assertIn("solidstats-memory-backup-package/v1", prepare["args"][0])
+        self.assertIn("for attempt in range(12):", prepare["args"][0])
+        self.assertIn("time.sleep(5)", prepare["args"][0])
+        self.assertLess(
+            prepare["args"][0].index("for attempt in range(12):"),
+            prepare["args"][0].index("method=\"POST\""),
+        )
         self.assertNotIn("AWS_SECRET_ACCESS_KEY", json.dumps(prepare["env"]))
         self.assertEqual(["aws"], uploader["command"])
         self.assertIn("s3", uploader["args"])

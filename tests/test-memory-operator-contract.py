@@ -342,6 +342,22 @@ class MemoryOperatorContractTests(unittest.TestCase):
         self.assertEqual(capacity["pvc_capacity_bytes"], result["pvc_capacity_bytes"])
         self.assertEqual(2, kubectl.call_count)
 
+    def test_backup_wait_returns_complete_and_fails_fast(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.state_root = self.root / "run" / "operator"
+        runtime.state_root.mkdir(parents=True, mode=0o700)
+        complete = {"status": {"conditions": [{"type": "Complete", "status": "True"}]}}
+        with mock.patch.object(runtime, "_kubectl_json", return_value=complete):
+            self.assertEqual(
+                {"complete": True, "job_count": 1},
+                runtime.wait_backup_job({}),
+            )
+
+        failed = {"status": {"conditions": [{"type": "Failed", "status": "True"}]}}
+        with mock.patch.object(runtime, "_kubectl_json", return_value=failed):
+            with self.assertRaisesRegex(OPERATOR.OperatorError, "failed"):
+                runtime.wait_backup_job({})
+
     def test_client_state_matches_only_exact_solidstats_registrations(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
         entries = [
