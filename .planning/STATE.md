@@ -4,17 +4,17 @@ milestone: v4.0
 milestone_name: SolidStats Memory Isolation
 current_phase: 21
 current_phase_name: restore-cutover-recovery
-status: executing
-stopped_at: Completed 21-01-PLAN.md
-last_updated: "2026-08-20T12:47:08.745Z"
-last_activity: 2026-08-20
-last_activity_desc: Phase 20 completed and verified; Phase 21 intentionally paused
+status: phase_complete
+stopped_at: Phase 21 completed and verified; Phase 22 not started
+last_updated: "2026-08-22T01:47:50+07:00"
+last_activity: 2026-08-22
+last_activity_desc: Phase 21 completed with code-review PASS, ASVS L2 SECURED, and 13/13 verification
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 19
-  completed_plans: 16
-  percent: 50
+  completed_plans: 19
+  percent: 75
 ---
 
 <!-- markdownlint-disable MD013 MD033 -->
@@ -26,14 +26,25 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 21 — restore-cutover-recovery
+**Current focus:** Phase 21 completion boundary; Phase 22 not started
 
 ## Current Position
 
-Phase: 21 (restore-cutover-recovery) — EXECUTING
-Plan: 2 of 4
-Status: Ready to execute
-Last activity: 2026-08-20 — Plan 21-01 offline contract completed
+Phase: 21 (restore-cutover-recovery) — COMPLETE
+Plan: 4 of 4
+Status: Verified
+Last activity: 2026-08-22 — Phase 21 goal verified and security gate secured
+
+**Phase 21 completion evidence:**
+
+- Isolated restore parity: 19,534 records with a deterministic four-member
+  backup package and verified Timeweb S3 round-trip.
+- Reversible cutover: authenticated MCP behavior, restart, one VPS reboot,
+  actual rollback, and forward replay all passed.
+- Final runtime: `solidstats_memory` active, legacy client retired, Qdrant
+  private, recurring backup active with `Forbid`, and host guard enabled.
+- Quality gates: 224/224 tests, final code review PASS, ASVS Level 2 SECURED
+  with 18/18 threats closed, and 13/13 goal-level must-haves verified.
 
 **Plan 20-07 completion evidence:**
 
@@ -88,7 +99,7 @@ Last activity: 2026-08-20 — Plan 21-01 offline contract completed
 
 **Velocity:**
 
-- Total plans completed: 15/15 (defined milestone plans)
+- Total plans completed: 19/19 (defined milestone plans)
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -101,6 +112,7 @@ Last activity: 2026-08-20 — Plan 21-01 offline contract completed
 | 09 | 1 | - | - |
 | 19 | 6 | - | - |
 | 20 | 9 | - | - |
+| 21 | 4 | - | - |
 
 **Recent Trend:**
 
@@ -305,12 +317,13 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-20T12:46:53.159Z
-Stopped at: Completed 21-01-PLAN.md
+Last session: 2026-08-22T01:47:50+07:00
+Stopped at: Phase 21 completed and verified; Phase 22 not started
 Resume file: None
 
 ## Operator Next Steps
 
-- Phase 21 is not started; resume only when the user requests planning or execution.
+- Stop at the verified Phase 21 boundary per explicit user direction.
 
-- Phase 21 must recompute the sealed handoff and provenance digests before any live restore; do not resume it until the user requests planning or execution.
+- Phase 22 remains planned but not started. Resume only when the user explicitly
+  requests archive-distillation planning or execution.

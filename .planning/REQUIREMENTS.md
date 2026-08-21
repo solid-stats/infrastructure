@@ -1,18 +1,18 @@
 # Requirements: SolidStats Memory Isolation
 
 **Milestone:** v4.0
-**Status:** Planned
+**Status:** In Progress
 **Source:** Accepted SolidStats MemPalace migration decision pack
 
 ## Isolation
 
-- [ ] **ISO-01**: The MCP client is named `solidstats_memory`; no legacy
+- [x] **ISO-01**: The MCP client is named `solidstats_memory`; no legacy
   `mempalace` alias remains after cutover.
 
 - [ ] **ISO-02**: Kubernetes resources live in `solidstats-memory`, outside
   `k8s/staging/`, with credentials distinct from personal and VocalClub memory.
 
-- [ ] **ISO-03**: Qdrant remains private; only MemPalace is exposed at public HTTPS
+- [x] **ISO-03**: Qdrant remains private; only MemPalace is exposed at public HTTPS
   `/solidstats/mcp` through host nginx.
 
 - [ ] **ISO-04**: Default-deny policies permit only DNS, MemPalace to Qdrant,
@@ -70,17 +70,17 @@
 - [x] **OPS-01**: A dedicated deploy workflow and namespace-scoped CI identity are
   independent of runtime and observability deploys.
 
-- [ ] **OPS-02**: Backups use Qdrant's collection snapshot API plus a MemPalace
+- [x] **OPS-02**: Backups use Qdrant's collection snapshot API plus a MemPalace
   metadata archive, manifest, and checksums under
   `backups/solidstats-memory/`.
 
-- [ ] **OPS-03**: Restore is proven in isolation before cutover and never targets
+- [x] **OPS-03**: Restore is proven in isolation before cutover and never targets
   the active collection.
 
 - [x] **OPS-04**: Static Prometheus scraping covers MCP readiness/latency/errors,
   Qdrant health/collection state, snapshot freshness, and PVC capacity.
 
-- [ ] **OPS-05**: Cutover proves auth rejection, MCP schema, scoped recall,
+- [x] **OPS-05**: Cutover proves auth rejection, MCP schema, scoped recall,
   semantic-miss fallback, archive labeling, capture shape, read-after-write,
   restart recovery, and reboot recovery.
 
@@ -106,7 +106,7 @@
 
 | Requirement | Phase | Status |
 | --- | --- | --- |
-| ISO-01..04, RUN-01..05, MIG-03..07, OPS-01, OPS-04 | 19 | Planned |
+| ISO-02, ISO-04, RUN-01..05, MIG-03..07, OPS-01, OPS-04 | 19 | Planned |
 | MIG-01..02 | 20 | Complete |
-| OPS-02..03, OPS-05 | 21 | Planned |
+| ISO-01, ISO-03, OPS-02..03, OPS-05 | 21 | Complete |
 | CUR-01..05 | 22 | Planned |
