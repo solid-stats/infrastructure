@@ -189,6 +189,73 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, command)
 
+    def test_backup_uses_native_controller_and_aws_only_transfers(self) -> None:
+        cronjob = next(
+            document
+            for document in yaml.safe_load_all(
+                (ROOT / "k8s" / "memory" / "40-backup.yaml").read_text()
+            )
+            if document["kind"] == "CronJob"
+        )
+        pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        init_containers = pod["initContainers"]
+        containers = pod["containers"]
+        self.assertEqual(
+            ["control-and-package", "upload-package", "download-package"],
+            [container["name"] for container in init_containers],
+        )
+        self.assertEqual(
+            ["verify-and-release"],
+            [container["name"] for container in containers],
+        )
+        controller, upload, download = init_containers
+        verifier = containers[0]
+        self.assertEqual("Always", controller["restartPolicy"])
+        self.assertEqual(
+            "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST",
+            controller["image"],
+        )
+        self.assertEqual(["python3", "-c"], controller["command"])
+        self.assertEqual(
+            ["python3", "-c"],
+            controller["startupProbe"]["exec"]["command"][:2],
+        )
+        controller_source = controller["args"][0]
+        for marker in (
+            "package-ready",
+            "verification-passed",
+            "writer-restored",
+            "availableReplicas",
+            "metadata_source_before_sha256",
+            "metadata_source_after_sha256",
+            "metadata_archive_sha256",
+            "finally:",
+        ):
+            self.assertIn(marker, controller_source)
+        for transfer, direction in ((upload, "/work/upload"), (download, "/work/download")):
+            self.assertEqual(
+                "MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST",
+                transfer["image"],
+            )
+            self.assertEqual(["aws"], transfer["command"])
+            self.assertEqual("s3", transfer["args"][2])
+            self.assertEqual("cp", transfer["args"][3])
+            self.assertIn(direction, transfer["args"])
+            invocation = " ".join([*transfer["command"], *transfer["args"]])
+            for forbidden in ("/bin/sh", "curl", "tar", "find", "sed", "python"):
+                self.assertNotIn(forbidden, invocation)
+        self.assertEqual(
+            "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST",
+            verifier["image"],
+        )
+        self.assertEqual(["python3", "-c"], verifier["command"])
+        verifier_source = verifier["args"][0]
+        self.assertLess(
+            verifier_source.index("verification-passed"),
+            verifier_source.index("writer-restored"),
+        )
+        self.assertNotIn("snapshot-and-package", [item["name"] for item in containers])
+
     def test_mempalace_uses_the_pinned_exact_image_cli_contract(self) -> None:
         documents = list(
             yaml.safe_load_all(
