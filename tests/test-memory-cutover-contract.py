@@ -43,6 +43,8 @@ CUTOVER_PATH = ROOT / "scripts" / "cutover-solidstats-memory.sh"
 REMOTE_CUTOVER_PATH = (
     ROOT / "scripts" / "operate-solidstats-memory-cutover-remote.sh"
 )
+BACKUP_GUARD_PATH = ROOT / "scripts" / "guard-solidstats-memory-backup.sh"
+EVIDENCE_COLLECTOR_PATH = ROOT / "scripts" / "collect-phase-21-recovery-evidence.py"
 CLIENT_POLICY_PATH = ROOT / "scripts" / "configure-solidstats-memory-client.py"
 
 STAGES = (
@@ -2743,6 +2745,15 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual("stopped", new_state.read_text().strip())
         self.assertEqual("running", freeze_state.read_text().strip())
 
+        for cycle in range(2):
+            self.assertEqual(0, run("rearm-forward-cycle").returncode, cycle)
+            self.assertEqual(0, run("stop-legacy-start-new").returncode, cycle)
+            self.assertEqual(0, run("install-nginx", stdin=template).returncode, cycle)
+            if cycle == 0:
+                self.assertEqual(0, run("rollback-nginx").returncode)
+                self.assertEqual(0, run("stop-new").returncode)
+                self.assertEqual(0, run("start-legacy").returncode)
+
         race_run = "b" * 64
         run_id = race_run
         self.assertEqual(0, run("capture-prestate").returncode)
@@ -3335,6 +3346,58 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 )
                 self.assertEqual(64, denied.returncode)
                 self.assertEqual([], denied.stdout.splitlines())
+
+    def test_plan04_static_safety_contract_is_complete(self) -> None:
+        cutover = CUTOVER_PATH.read_text(encoding="utf-8")
+        remote = REMOTE_CUTOVER_PATH.read_text(encoding="utf-8")
+        backup = (ROOT / "k8s/memory/40-backup.yaml").read_text(encoding="utf-8")
+        renderer = (ROOT / "scripts/render-memory-manifests.py").read_text(
+            encoding="utf-8"
+        )
+        for required in (
+            "recover_backup_failure",
+            "collect_recovery_evidence",
+            "prepare_backup_activation",
+            "commit_backup_activation",
+            "rearm-forward-cycle",
+            "install-backup-guard",
+            "verify-backup-guard",
+        ):
+            self.assertIn(required, cutover + remote)
+        self.assertIn("backup_timeout_seconds", remote)
+        self.assertIn("inventory_before_sha256", remote)
+        self.assertIn("inventory_after_sha256", remote)
+        self.assertIn("behavior-oracle=pass", backup)
+        self.assertIn("writer-restored=pass", backup)
+        self.assertIn("OPERATOR_ONLY", renderer)
+        self.assertTrue(BACKUP_GUARD_PATH.is_file())
+        self.assertTrue(EVIDENCE_COLLECTOR_PATH.is_file())
+
+    def test_standalone_cutover_seal_is_rejected(self) -> None:
+        recovery = self.recovery_evidence()
+        seal = {
+            "schema": "solidstats-memory-cutover-seal/v1",
+            "run_id": recovery["run_id"],
+            "recovery_evidence_sha256": hashlib.sha256(
+                VALIDATOR.canonical_json_bytes(recovery)
+            ).hexdigest(),
+            "requirements": {
+                key: True for key in VALIDATOR.CUTOVER_SEAL_REQUIREMENTS
+            },
+            "prohibitions": {
+                key: True for key in VALIDATOR.CUTOVER_SEAL_PROHIBITIONS
+            },
+            "legacy_client_absent": True,
+            "new_client_live": True,
+            "backup_schedule_live": True,
+            "verdict": "pass",
+        }
+        path = self.root / "seal.json"
+        path.write_bytes(VALIDATOR.canonical_json_bytes(seal) + b"\n")
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            self.assertEqual(1, VALIDATOR.main(["--evidence", str(path)]))
+        self.assertIn("recovery", stderr.getvalue())
 
 
 if __name__ == "__main__":
