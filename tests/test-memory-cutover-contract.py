@@ -44,8 +44,16 @@ REMOTE_CUTOVER_PATH = (
     ROOT / "scripts" / "operate-solidstats-memory-cutover-remote.sh"
 )
 BACKUP_GUARD_PATH = ROOT / "scripts" / "guard-solidstats-memory-backup.sh"
+BACKUP_SUSPEND_PATH = ROOT / "scripts" / "suspend-solidstats-memory-backup.sh"
+ACTIVATION_RENDERER_PATH = ROOT / "scripts" / "render-solidstats-memory-backup-activation.py"
 EVIDENCE_COLLECTOR_PATH = ROOT / "scripts" / "collect-phase-21-recovery-evidence.py"
 CLIENT_POLICY_PATH = ROOT / "scripts" / "configure-solidstats-memory-client.py"
+CLIENT_POLICY_SPEC = importlib.util.spec_from_file_location(
+    "solidstats_memory_client_policy", CLIENT_POLICY_PATH
+)
+assert CLIENT_POLICY_SPEC and CLIENT_POLICY_SPEC.loader
+CLIENT_POLICY = importlib.util.module_from_spec(CLIENT_POLICY_SPEC)
+CLIENT_POLICY_SPEC.loader.exec_module(CLIENT_POLICY)
 COLLECTOR_PATH = ROOT / "scripts" / "collect-phase-21-recovery-evidence.py"
 COLLECTOR_SPEC = importlib.util.spec_from_file_location("phase21_collector", COLLECTOR_PATH)
 assert COLLECTOR_SPEC and COLLECTOR_SPEC.loader
@@ -2469,6 +2477,89 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual(0, rollback.returncode, rollback.stderr)
         self.assertEqual(original, config.read_bytes())
 
+    def test_client_retirement_is_one_pre_authorized_transaction(self) -> None:
+        private = self.root / "client-retirement"
+        private.mkdir(mode=0o700)
+        config = private / "config.toml"
+        prestate = private / "prestate.toml"
+        result = private / "retirement.result"
+        unrelated = (
+            b'[mcp_servers.unrelated]\nurl = "https://other.example/mcp"\n\n'
+        )
+        legacy = b'[mcp_servers.mempalace]\ncommand = "legacy"\n\n'
+        current = unrelated + legacy + (
+            b'[mcp_servers.solidstats_memory]\n'
+            b'url = "https://memory.example/solidstats/mcp"\n'
+            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+            b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
+            b'"mempalace_list_drawers","mempalace_get_drawer",'
+            b'"mempalace_check_duplicate","mempalace_add_drawer",'
+            b'"mempalace_delete_drawer"]\n'
+        )
+        config.write_bytes(current)
+        config.chmod(0o600)
+        prestate.write_bytes(unrelated)
+        prestate.chmod(0o600)
+        metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
+        metadata.write_text(
+            json.dumps(
+                {
+                    "schema": "solidstats-memory-client-policy/v1",
+                    "accepted_sha256": [hashlib.sha256(current).hexdigest()],
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="ascii",
+        )
+        metadata.chmod(0o600)
+
+        for failed_stage in ("removed", "readback", "policy", "evidence"):
+            with self.subTest(stage=failed_stage):
+                config.write_bytes(current)
+                config.chmod(0o600)
+                result.unlink(missing_ok=True)
+
+                def remove(expected: bytes) -> None:
+                    config.write_bytes(expected)
+                    config.chmod(0o600)
+
+                def stage(name: str) -> None:
+                    if name == failed_stage:
+                        raise CLIENT_POLICY.PolicyError("injected retirement failure")
+
+                with self.assertRaises(CLIENT_POLICY.PolicyError):
+                    CLIENT_POLICY.retire_transaction(
+                        config,
+                        prestate,
+                        result,
+                        url="https://memory.example/solidstats/mcp",
+                        token_env="SOLIDSTATS_MEMORY_TOKEN",
+                        remove=remove,
+                        stage=stage,
+                    )
+                self.assertEqual(current, config.read_bytes())
+                self.assertFalse(result.exists())
+
+        CLIENT_POLICY.retire_transaction(
+            config,
+            prestate,
+            result,
+            url="https://memory.example/solidstats/mcp",
+            token_env="SOLIDSTATS_MEMORY_TOKEN",
+            remove=lambda expected: config.write_bytes(expected),
+        )
+        retired = config.read_bytes()
+        self.assertNotIn(b"[mcp_servers.mempalace]", retired)
+        self.assertIn(unrelated, retired)
+        self.assertEqual(1, retired.count(b"[mcp_servers.unrelated]"))
+        fields = dict(
+            line.split("=", 1) for line in result.read_text().splitlines()
+        )
+        self.assertEqual("solidstats-memory-client-retirement/v2", fields["schema"])
+        self.assertEqual("true", fields["unrelated_unchanged"])
+
     def test_cutover_self_test_exercises_reverse_order_rollback(self) -> None:
         result = subprocess.run(
             ["bash", str(CUTOVER_PATH), "--self-test"],
@@ -2697,7 +2788,9 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 (
                     "schema=solidstats-memory-remote-operation-result/v1",
                     "operation=recheck-backup-api-access",
+                    "sequence=240",
                     f"config_sha256={config_sha}",
+                    f"run_id_sha256={run_id}",
                     "binding_current=true",
                 )
             )
@@ -3432,6 +3525,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             (
                 "schema=solidstats-memory-remote-operation-result/v1",
                 "operation=restart-mempalace",
+                "sequence=100",
                 "config_sha256=" + "b" * 64,
                 "run_id_sha256=" + run_sha,
                 "identity_changed=true",
@@ -3453,6 +3547,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             valid + "operation=restart-mempalace\n",
             valid.replace("operation=restart-mempalace", "operation=restart-qdrant"),
             valid.replace("run_id_sha256=" + run_sha, "run_id_sha256=" + "e" * 64),
+            valid.replace("identity_changed=true", "identity_changed=1"),
         ):
             path.write_text(near_miss, encoding="ascii")
             with self.assertRaises(ValueError):
@@ -3462,6 +3557,84 @@ class MemoryCutoverContractTests(unittest.TestCase):
         probe.chmod(0o600)
         with self.assertRaises(ValueError):
             COLLECTOR.parse_probe(probe, run_sha)
+
+        transition = self.root / "transition.result"
+        transition.write_text(
+            "schema=solidstats-memory-rollback-forward-evidence/v1\n"
+            "rollback_client_sequence=1\nrollback_nginx_sequence=2\n"
+            "rollback_alias_sequence=3\nrollback_workload_sequence=4\n"
+            "rollback_legacy_sequence=5\nforward_rearm_sequence=6\n"
+            "forward_cutover_sequence=7\nretained_verification_sequence=8\n"
+            "reverse_order=true\nforward_exact=true\n",
+            encoding="ascii",
+        )
+        transition.chmod(0o600)
+        self.assertTrue(COLLECTOR.parse_transition_result(transition)["reverse_order"])
+        transition.write_text(transition.read_text().replace("sequence=4", "sequence=3"))
+        with self.assertRaises(ValueError):
+            COLLECTOR.parse_transition_result(transition)
+
+    def test_remote_batch_requires_one_bound_result_and_one_pass(self) -> None:
+        source = CUTOVER_PATH.read_text(encoding="utf-8")
+        body = source[source.index("run_remote_batch()") : source.index("run_alias()")]
+        self.assertIn('${result_count}" -eq 1', body)
+        self.assertIn("grep -c '^PASS: remote cutover boundary acknowledged$'", body)
+        self.assertIn("grep -c '^sequence='", body)
+        self.assertNotIn('${result_count}" -eq 0', body)
+
+    def test_backup_activation_renderer_binds_source_render_and_template(self) -> None:
+        source = self.root / "source.yaml"
+        rendered = self.root / "rendered.yaml"
+        manifest = b"""apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: solidstats-memory-backup
+spec:
+  suspend: true
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+"""
+        source.write_bytes(manifest)
+        rendered.write_bytes(manifest)
+
+        def invoke(suffix: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, str(ACTIVATION_RENDERER_PATH), str(source), str(rendered),
+                 str(self.root / f"active-source-{suffix}.yaml"),
+                 str(self.root / f"active-rendered-{suffix}.yaml"),
+                 str(self.root / f"descriptor-{suffix}.json")],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+
+        accepted = invoke("accepted")
+        self.assertEqual(0, accepted.returncode, accepted.stderr)
+        descriptor = json.loads((self.root / "descriptor-accepted.json").read_text())
+        self.assertTrue(descriptor["source_render_exact"])
+        self.assertEqual(descriptor["source_suspended_sha256"], descriptor["rendered_suspended_sha256"])
+        self.assertEqual(
+            (self.root / "active-source-accepted.yaml").read_bytes(),
+            (self.root / "active-rendered-accepted.yaml").read_bytes(),
+        )
+        rendered.write_bytes(manifest + b"# render drift\n")
+        self.assertNotEqual(0, invoke("render-drift").returncode)
+        rendered.write_bytes(manifest)
+        source.write_bytes(manifest + b"# source drift\n")
+        self.assertNotEqual(0, invoke("source-drift").returncode)
+
+    def test_backup_guard_fallback_uses_only_fixed_trust_helper(self) -> None:
+        guard = BACKUP_GUARD_PATH.read_text(encoding="utf-8")
+        helper = BACKUP_SUSPEND_PATH.read_text(encoding="utf-8")
+        fallback = guard[guard.index("fallback_suspend()") : guard.index("trap fallback_suspend ERR")]
+        self.assertNotIn("kubectl", fallback)
+        self.assertIn("solidstats-memory-backup-suspend", fallback)
+        self.assertIn("trusted_chain", helper)
+        self.assertIn('^/usr(/local)?/bin/kubectl$', helper)
+        self.assertIn("/etc/rancher/k3s/k3s.yaml", helper)
+        self.assertIn("/proc/self/fd/${kubectl_fd}", helper)
+        self.assertNotIn("SOLIDSTATS_MEMORY_GUARD_SELF_TEST", helper)
 
     def test_artifact_chain_uses_exact_recovery_file_digest(self) -> None:
         source = ROOT / ".planning/phases/21-restore-cutover-recovery"
