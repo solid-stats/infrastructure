@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import socket
 import stat
+import subprocess
 import tempfile
 from typing import Callable, Mapping, Protocol
 from urllib import error as urllib_error
@@ -33,14 +34,7 @@ REQUIRED_TOOLS = (
     "mempalace_get_drawer",
     "mempalace_check_duplicate",
     "mempalace_add_drawer",
-)
-FORBIDDEN_TOOL_PARTS = (
-    "tunnel",
-    "_kg_",
-    "diary",
-    "mempalace_checkpoint",
-    "mempalace_mine",
-    "mempalace_sync",
+    "mempalace_delete_drawer",
 )
 EVIDENCE_KEYS = {
     "archive_untrusted",
@@ -570,11 +564,9 @@ def probe_behavior_matrix(
     """Exercise scoped recall, fallback, archive, capture, and exact cleanup."""
     if any(name not in tools for name in REQUIRED_TOOLS):
         raise ProbeError("required MCP tool is unavailable")
-    if any(part in name for name in tools for part in FORBIDDEN_TOOL_PARTS):
-        raise ProbeError("disabled MCP capability is exposed")
     if not _capture_shape(synthetic_content):
         raise ProbeError("synthetic capture shape is invalid")
-    schema_digest = _digest({name: tools[name] for name in sorted(tools)})
+    schema_digest = _digest({name: tools[name] for name in REQUIRED_TOOLS})
 
     _tool_data(
         mcp_call(
@@ -639,17 +631,14 @@ def probe_behavior_matrix(
     )
     if read_back.get("content") != synthetic_content:
         raise ProbeError("synthetic capture read-back failed")
-    cleanup_supported = "mempalace_delete_drawer" in tools
-    cleanup_exact = False
-    if cleanup_supported:
-        deleted = _tool_data(
-            mcp_call(
-                session, "mempalace_delete_drawer", {"drawer_id": drawer_id}
-            )
+    deleted = _tool_data(
+        mcp_call(
+            session, "mempalace_delete_drawer", {"drawer_id": drawer_id}
         )
-        cleanup_exact = deleted.get("deleted") is True
-        if not cleanup_exact:
-            raise ProbeError("synthetic capture cleanup failed")
+    )
+    cleanup_exact = deleted.get("deleted") is True
+    if not cleanup_exact:
+        raise ProbeError("synthetic capture cleanup failed")
     return {
         "tool_count": len(tools),
         "required_tool_count": len(REQUIRED_TOOLS),
@@ -661,8 +650,8 @@ def probe_behavior_matrix(
         "dedup_checked": True,
         "capture_shape_valid": True,
         "read_back_verified": True,
-        "cleanup_supported": cleanup_supported,
-        "cleanup_exact": cleanup_exact if cleanup_supported else True,
+        "cleanup_supported": True,
+        "cleanup_exact": True,
     }
 
 
@@ -689,6 +678,38 @@ def build_client_commands(
         "get": ("codex", "mcp", "get", CLIENT_NAME),
         "remove": ("codex", "mcp", "remove", CLIENT_NAME),
     }
+
+
+def probe_client_policy(
+    *, config: Path, url: str, token_env: str, policy_script: Path | None = None
+) -> None:
+    """Validate the exact effective allowlist in the machine-local client config."""
+    script = policy_script or Path(__file__).with_name(
+        "configure-solidstats-memory-client.py"
+    )
+    result = subprocess.run(
+        (
+            os.sys.executable,
+            str(script),
+            "validate",
+            "--config",
+            str(config),
+            "--name",
+            CLIENT_NAME,
+            "--url",
+            _validate_url(url),
+            "--token-env",
+            token_env,
+        ),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ProbeError("client tool policy validation failed")
 
 
 def _validate_evidence_node(value: object, *, key: str = "root", depth: int = 0) -> None:
@@ -772,6 +793,10 @@ def _parser() -> argparse.ArgumentParser:
     full.add_argument("--raw-root", type=Path)
     boundary = subparsers.add_parser("private-boundary")
     boundary.add_argument("--host", required=True)
+    client_policy = subparsers.add_parser("client-policy")
+    client_policy.add_argument("--config", required=True, type=Path)
+    client_policy.add_argument("--url", required=True)
+    client_policy.add_argument("--token-env", required=True)
     return parser
 
 
@@ -786,6 +811,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "private-boundary":
             probe_private_boundary(args.host)
             print("PASS: private boundary probe completed")
+            return 0
+        if args.command == "client-policy":
+            probe_client_policy(
+                config=args.config,
+                url=args.url,
+                token_env=args.token_env,
+            )
+            print("PASS: client tool policy probe completed")
             return 0
         if not ENV_NAME.fullmatch(args.token_env):
             raise ProbeError("token environment name is invalid")

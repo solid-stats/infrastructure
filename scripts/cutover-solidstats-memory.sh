@@ -190,10 +190,12 @@ run_alias() {
 register_client() {
   if [[ "${CUTOVER_SELF_TEST:-}" == "1" ]]; then
     printf 'client-add ' >>"${EVENT_LOG}"
+    [[ "${CUTOVER_SELF_TEST_POLICY_FAIL:-}" != "1" ]] || return 1
     return 0
   fi
   required SOLIDSTATS_MEMORY_PUBLIC_URL
   required SOLIDSTATS_MEMORY_TOKEN_ENV
+  required SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH
   [[ "${SOLIDSTATS_MEMORY_PUBLIC_URL}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/solidstats/mcp$ ]] || {
     echo "FATAL: public MCP URL must end at exact /solidstats/mcp" >&2
     return 1
@@ -207,11 +209,24 @@ register_client() {
     echo "FATAL: solidstats_memory already exists; exact pre-state is not absent" >&2
     return 1
   fi
+  timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" capture \
+    --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
+    --prestate "${CLIENT_CONFIG_PRESTATE}" >/dev/null
   timeout "${LOCAL_TIMEOUT}" codex mcp add solidstats_memory \
     --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
     --bearer-token-env-var "${SOLIDSTATS_MEMORY_TOKEN_ENV}" \
     >/dev/null
+  timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" apply \
+    --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
+    --prestate "${CLIENT_CONFIG_PRESTATE}" \
+    --name solidstats_memory \
+    --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
+    --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" >/dev/null
   timeout "${LOCAL_TIMEOUT}" codex mcp get solidstats_memory >/dev/null
+  timeout "${LOCAL_TIMEOUT}" python3 "${PROBE_SCRIPT}" client-policy \
+    --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
+    --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
+    --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" >/dev/null
 }
 
 remove_new_client() {
@@ -219,11 +234,22 @@ remove_new_client() {
     printf 'client ' >>"${EVENT_LOG}"
     return 0
   fi
-  if ! timeout "${LOCAL_TIMEOUT}" codex mcp get solidstats_memory \
-    >/dev/null 2>&1; then
+  required SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH
+  if [[ ! -f "${CLIENT_CONFIG_PRESTATE}" || -L "${CLIENT_CONFIG_PRESTATE}" ]]; then
+    if ! timeout "${LOCAL_TIMEOUT}" codex mcp get solidstats_memory \
+      >/dev/null 2>&1; then
+      return 0
+    fi
+    echo "FATAL: exact client config prestate is unavailable" >&2
+    return 1
+  fi
+  if timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" rollback \
+    --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
+    --prestate "${CLIENT_CONFIG_PRESTATE}" \
+    --name solidstats_memory >/dev/null; then
     return 0
   fi
-  timeout "${LOCAL_TIMEOUT}" codex mcp remove solidstats_memory >/dev/null
+  return 1
 }
 
 rollback() {
@@ -388,6 +414,28 @@ self_test() {
   self_test_failure_case PRIVATE_LIVE alias "alias workload legacy"
   self_test_failure_case DATA_SWITCHED nginx "nginx alias workload legacy"
   self_test_failure_case PUBLIC_LIVE client "client nginx alias workload legacy"
+  : >"${EVENT_LOG}"
+  CURRENT_STAGE="PUBLIC_LIVE"
+  PENDING_MUTATION="none"
+  journal_write "${CURRENT_STAGE}" "${PENDING_MUTATION}"
+  CUTOVER_SELF_TEST_POLICY_FAIL=1
+  set +e
+  (
+    trap handle_cutover_failure ERR
+    perform_cutover
+  ) >/dev/null 2>&1
+  local policy_status=$?
+  set -e
+  unset CUTOVER_SELF_TEST_POLICY_FAIL
+  [[ "${policy_status}" -ne 0 ]] || {
+    echo "SELF_TEST FAILED: client policy failure was accepted" >&2
+    return 1
+  }
+  [[ "$(sed -e 's/[[:space:]]*$//' "${EVENT_LOG}")" == \
+    "client-add client nginx alias workload legacy" ]] || {
+    echo "SELF_TEST FAILED: client policy rollback order mismatch" >&2
+    return 1
+  }
   echo "SELF_TEST PASSED: ${ROLLBACK_ORDER}"
   rm -f "${EVENT_LOG}" "${JOURNAL_PATH}"
   rmdir "${STATE_DIR}" "${temporary}"
@@ -435,6 +483,8 @@ main() {
   SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   RESTORE_SCRIPT="${SCRIPT_DIR}/restore-solidstats-memory.py"
   PROBE_SCRIPT="${SCRIPT_DIR}/probe-solidstats-memory.py"
+  CLIENT_POLICY_SCRIPT="${SCRIPT_DIR}/configure-solidstats-memory-client.py"
+  CLIENT_CONFIG_PRESTATE="${STATE_DIR}/codex-config.prestate.toml"
   NGINX_TEMPLATE="${SCRIPT_DIR}/../config/nginx/sites-available/solidstats-memory-shared-cutover.patch.template"
 
   if [[ -e "${JOURNAL_PATH}" ]]; then

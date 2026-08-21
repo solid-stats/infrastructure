@@ -39,6 +39,7 @@ RESTORE_SPEC.loader.exec_module(RESTORE)
 
 PROBE_PATH = ROOT / "scripts" / "probe-solidstats-memory.py"
 CUTOVER_PATH = ROOT / "scripts" / "cutover-solidstats-memory.sh"
+CLIENT_POLICY_PATH = ROOT / "scripts" / "configure-solidstats-memory-client.py"
 
 STAGES = (
     "PREPARED",
@@ -1625,6 +1626,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "mempalace_check_duplicate",
                 "mempalace_add_drawer",
                 "mempalace_delete_drawer",
+                "mempalace_create_tunnel",
             )
         }
 
@@ -2116,6 +2118,247 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 probe.ProbeError
             ):
                 probe.build_client_commands(**arguments)
+
+    def test_client_policy_add_validate_and_exact_rollback(self) -> None:
+        private = self.root / "client-state"
+        private.mkdir(mode=0o700)
+        config = private / "config.toml"
+        prestate = private / "config.prestate.toml"
+        original = (
+            b'# unrelated bytes stay byte-identical\nmodel = "gpt-5.6-sol"\n'
+            b"\n[mcp_servers.unrelated]\nurl = \"https://other.example/mcp\"\n"
+        )
+        config.write_bytes(original)
+        config.chmod(0o600)
+
+        def policy(command: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(CLIENT_POLICY_PATH),
+                    command,
+                    "--config",
+                    str(config),
+                    *arguments,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+
+        captured = policy("capture", "--prestate", str(prestate))
+        self.assertEqual(0, captured.returncode, captured.stderr)
+        registration = (
+            b"\n[mcp_servers.solidstats_memory]\n"
+            b'url = "https://memory.example/solidstats/mcp"\n'
+            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+        )
+        config.write_bytes(original + registration)
+        config.chmod(0o600)
+        applied = policy(
+            "apply",
+            "--prestate",
+            str(prestate),
+            "--url",
+            "https://memory.example/solidstats/mcp",
+            "--token-env",
+            "SOLIDSTATS_MEMORY_TOKEN",
+        )
+        self.assertEqual(0, applied.returncode, applied.stderr)
+        configured = config.read_bytes()
+        self.assertTrue(configured.startswith(original))
+        self.assertEqual(1, configured.count(b"enabled_tools ="))
+        for allowed in (
+            b"mempalace_search",
+            b"mempalace_list_rooms",
+            b"mempalace_list_drawers",
+            b"mempalace_get_drawer",
+            b"mempalace_check_duplicate",
+            b"mempalace_add_drawer",
+            b"mempalace_delete_drawer",
+        ):
+            self.assertIn(allowed, configured)
+        for forbidden in (b"tunnel", b"_kg_", b"diary", b"update_drawer"):
+            self.assertNotIn(forbidden, configured)
+        validated = policy(
+            "validate",
+            "--url",
+            "https://memory.example/solidstats/mcp",
+            "--token-env",
+            "SOLIDSTATS_MEMORY_TOKEN",
+        )
+        self.assertEqual(0, validated.returncode, validated.stderr)
+        probe_validated = subprocess.run(
+            [
+                sys.executable,
+                str(PROBE_PATH),
+                "client-policy",
+                "--config",
+                str(config),
+                "--url",
+                "https://memory.example/solidstats/mcp",
+                "--token-env",
+                "SOLIDSTATS_MEMORY_TOKEN",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(0, probe_validated.returncode, probe_validated.stderr)
+        rolled_back = policy("rollback", "--prestate", str(prestate))
+        self.assertEqual(0, rolled_back.returncode, rolled_back.stderr)
+        self.assertEqual(original, config.read_bytes())
+
+    def test_client_policy_rejects_conflicts_duplicates_and_unsafe_files(self) -> None:
+        private = self.root / "policy-rejections"
+        private.mkdir(mode=0o700)
+        config = private / "config.toml"
+        prestate = private / "prestate.toml"
+        prestate.write_bytes(b'model = "prestate"\n')
+        prestate.chmod(0o600)
+        base = (
+            b"[mcp_servers.solidstats_memory]\n"
+            b'url = "https://memory.example/solidstats/mcp"\n'
+            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+        )
+
+        def run(command: str, *extra: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, str(CLIENT_POLICY_PATH), command, "--config", str(config), *extra],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+
+        for suffix in (
+            b'disabled_tools = ["mempalace_sync"]\n',
+            b'enabled_tools = ["mempalace_search"]\n',
+            base,
+        ):
+            with self.subTest(suffix=suffix[-20:]):
+                config.write_bytes(base + suffix)
+                config.chmod(0o600)
+                result = run(
+                    "validate" if b"enabled_tools" in suffix else "apply",
+                    "--prestate",
+                    str(prestate),
+                    "--url",
+                    "https://memory.example/solidstats/mcp",
+                    "--token-env",
+                    "SOLIDSTATS_MEMORY_TOKEN",
+                )
+                self.assertNotEqual(0, result.returncode)
+        config.write_bytes(b'model = "no target"\n')
+        config.chmod(0o600)
+        missing = run(
+            "validate",
+            "--url",
+            "https://memory.example/solidstats/mcp",
+            "--token-env",
+            "SOLIDSTATS_MEMORY_TOKEN",
+        )
+        self.assertNotEqual(0, missing.returncode)
+        config.write_bytes(base)
+        config.chmod(0o600)
+        for invalid in (
+            ("--url", "http://memory.example/solidstats/mcp"),
+            ("--token-env", "not-valid"),
+            ("--name", "mempalace"),
+        ):
+            arguments = [
+                "--url",
+                "https://memory.example/solidstats/mcp",
+                "--token-env",
+                "SOLIDSTATS_MEMORY_TOKEN",
+                *invalid,
+            ]
+            with self.subTest(invalid=invalid):
+                rejected = run("validate", *arguments)
+                self.assertNotEqual(0, rejected.returncode)
+        config.write_bytes(base)
+        config.chmod(0o644)
+        unsafe_mode = run(
+            "validate",
+            "--url",
+            "https://memory.example/solidstats/mcp",
+            "--token-env",
+            "SOLIDSTATS_MEMORY_TOKEN",
+        )
+        self.assertNotEqual(0, unsafe_mode.returncode)
+        config.unlink()
+        target = private / "target.toml"
+        target.write_bytes(base)
+        target.chmod(0o600)
+        config.symlink_to(target)
+        unsafe_link = run(
+            "validate",
+            "--url",
+            "https://memory.example/solidstats/mcp",
+            "--token-env",
+            "SOLIDSTATS_MEMORY_TOKEN",
+        )
+        self.assertNotEqual(0, unsafe_link.returncode)
+
+    def test_client_policy_interrupted_write_remains_exactly_rollbackable(self) -> None:
+        private = self.root / "policy-interrupt"
+        private.mkdir(mode=0o700)
+        config = private / "config.toml"
+        prestate = private / "prestate.toml"
+        original = b'model = "gpt-5.6-sol"\n'
+        config.write_bytes(original)
+        config.chmod(0o600)
+        capture = subprocess.run(
+            [sys.executable, str(CLIENT_POLICY_PATH), "capture", "--config", str(config), "--prestate", str(prestate)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(0, capture.returncode, capture.stderr)
+        registered = original + (
+            b"\n[mcp_servers.solidstats_memory]\n"
+            b'url = "https://memory.example/solidstats/mcp"\n'
+            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+        )
+        config.write_bytes(registered)
+        config.chmod(0o600)
+        temporary = config.with_name(f".{config.name}.solidstats-memory.tmp")
+        temporary.write_bytes(b"occupied")
+        temporary.chmod(0o600)
+        apply = subprocess.run(
+            [
+                sys.executable,
+                str(CLIENT_POLICY_PATH),
+                "apply",
+                "--config",
+                str(config),
+                "--prestate",
+                str(prestate),
+                "--url",
+                "https://memory.example/solidstats/mcp",
+                "--token-env",
+                "SOLIDSTATS_MEMORY_TOKEN",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertNotEqual(0, apply.returncode)
+        self.assertEqual(registered, config.read_bytes())
+        temporary.unlink()
+        rollback = subprocess.run(
+            [sys.executable, str(CLIENT_POLICY_PATH), "rollback", "--config", str(config), "--prestate", str(prestate)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(0, rollback.returncode, rollback.stderr)
+        self.assertEqual(original, config.read_bytes())
 
     def test_cutover_self_test_exercises_reverse_order_rollback(self) -> None:
         result = subprocess.run(
