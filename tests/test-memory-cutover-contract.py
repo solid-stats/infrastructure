@@ -3514,6 +3514,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn("urllib.request.urlopen(request,timeout=8", operator)
         self.assertNotIn("curl --config", operator)
         self.assertIn("'    runAsNonRoot: true'", operator)
+        self.assertIn("'    fsGroup: 1000'", operator)
+        self.assertIn("'    fsGroupChangePolicy: OnRootMismatch'", operator)
         self.assertIn("'      type: RuntimeDefault'", operator)
         self.assertIn(
             "'        - ipBlock:'\n    printf '            cidr:",
