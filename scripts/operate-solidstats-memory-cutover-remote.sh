@@ -1087,8 +1087,34 @@ verify_retained_collections() {
   record_operation verify-retained-collections complete
 }
 
+validate_guard_prestate() {
+  local root="${RUN_ROOT}/guard-prestate" name state
+  [[ -d "${root}" && ! -L "${root}" &&
+    "$(stat -c '%a:%u' "${root}")" == "700:$(id -u)" ]] || fatal
+  for name in enabled active libexec.state state-root.state; do
+    require_regular_private_file "${root}/${name}"
+  done
+  [[ "$(<"${root}/enabled")" =~ ^(true|false)$ &&
+    "$(<"${root}/active")" =~ ^(true|false)$ &&
+    "$(<"${root}/libexec.state")" =~ ^(present|absent)$ &&
+    "$(<"${root}/state-root.state")" =~ ^(present|absent)$ ]] || fatal
+  for name in script suspend service timer config; do
+    state="${root}/${name}.state"
+    require_regular_private_file "${state}"
+    if [[ "$(<"${state}")" == file ]]; then
+      require_regular_private_file "${root}/${name}"
+      require_regular_private_file "${root}/${name}.mode"
+      require_regular_private_file "${root}/${name}.owner"
+    else
+      [[ "$(<"${state}")" == absent ]] || fatal
+    fi
+  done
+}
+
 install_backup_guard() {
-  if [[ "$(operation_status install-backup-guard 2>/dev/null || true)" == complete ]]; then
+  local operation_state
+  operation_state=$(operation_status install-backup-guard 2>/dev/null || true)
+  if [[ "${operation_state}" == complete ]]; then
     verify_backup_guard
     require_operation_complete install-backup-guard
     return 0
@@ -1106,48 +1132,69 @@ install_backup_guard() {
   [[ -f "${service_source}" && ! -L "${service_source}" &&
     -f "${timer_source}" && ! -L "${timer_source}" ]] || fatal
   local destination backup name
-  mkdir -p -m 700 "${RUN_ROOT}/guard-prestate"
+  if [[ -z "${operation_state}" ]]; then
+    [[ ! -e "${RUN_ROOT}/guard-prestate" ]] || fatal
+    mkdir -m 700 "${RUN_ROOT}/guard-prestate"
+    [[ -e /usr/local/libexec ]] &&
+      printf 'present\n' | private_write "${RUN_ROOT}/guard-prestate/libexec.state" ||
+      printf 'absent\n' | private_write "${RUN_ROOT}/guard-prestate/libexec.state"
+    [[ -e /var/lib/solidstats-memory-backup-guard ]] &&
+      printf 'present\n' | private_write "${RUN_ROOT}/guard-prestate/state-root.state" ||
+      printf 'absent\n' | private_write "${RUN_ROOT}/guard-prestate/state-root.state"
+    if "${SYSTEMCTL_PATH}" is-enabled --quiet solidstats-memory-backup-guard.timer 2>/dev/null; then
+      printf 'true\n' | private_write "${RUN_ROOT}/guard-prestate/enabled"
+    else
+      printf 'false\n' | private_write "${RUN_ROOT}/guard-prestate/enabled"
+    fi
+    if "${SYSTEMCTL_PATH}" is-active --quiet solidstats-memory-backup-guard.timer 2>/dev/null; then
+      printf 'true\n' | private_write "${RUN_ROOT}/guard-prestate/active"
+    else
+      printf 'false\n' | private_write "${RUN_ROOT}/guard-prestate/active"
+    fi
+    for name in script suspend service timer config; do
+      case "${name}" in
+        script) destination=/usr/local/libexec/solidstats-memory-backup-guard ;;
+        suspend) destination=/usr/local/libexec/solidstats-memory-backup-suspend ;;
+        service) destination=/etc/systemd/system/solidstats-memory-backup-guard.service ;;
+        timer) destination=/etc/systemd/system/solidstats-memory-backup-guard.timer ;;
+        config) destination=/etc/solidstats-memory-backup-guard.conf ;;
+      esac
+      backup="${RUN_ROOT}/guard-prestate/${name}"
+      if [[ -e "${destination}" ]]; then
+        [[ -f "${destination}" && ! -L "${destination}" ]] || fatal
+        stat -c '%a' "${destination}" | private_write "${backup}.mode"
+        stat -c '%u:%g' "${destination}" | private_write "${backup}.owner"
+        cp --preserve=all "${destination}" "${backup}"
+        chmod 600 "${backup}"
+        printf 'file\n' | private_write "${backup}.state"
+      else
+        printf 'absent\n' | private_write "${backup}.state"
+      fi
+    done
+    validate_guard_prestate
+    record_operation install-backup-guard pending
+  else
+    [[ "${operation_state}" == pending ]] || fatal
+    validate_guard_prestate
+  fi
   if [[ -e /usr/local/libexec ]]; then
     [[ -d /usr/local/libexec && ! -L /usr/local/libexec &&
       "$(stat -c '%u' /usr/local/libexec)" == 0 &&
       $((8#$(stat -c '%a' /usr/local/libexec) & 8#022)) -eq 0 ]] || fatal
-    printf 'present\n' | private_write "${RUN_ROOT}/guard-prestate/libexec.state"
   else
-    printf 'absent\n' | private_write "${RUN_ROOT}/guard-prestate/libexec.state"
+    [[ "$(<"${RUN_ROOT}/guard-prestate/libexec.state")" == absent ]] || fatal
     install -d -o 0 -g 0 -m 0755 /usr/local/libexec
   fi
   [[ -d /usr/local/libexec && ! -L /usr/local/libexec &&
     "$(stat -c '%u:%a' /usr/local/libexec)" == 0:755 ]] || fatal
-  if "${SYSTEMCTL_PATH}" is-enabled --quiet solidstats-memory-backup-guard.timer 2>/dev/null; then
-    printf 'true\n' | private_write "${RUN_ROOT}/guard-prestate/enabled"
+  if [[ -e /var/lib/solidstats-memory-backup-guard ]]; then
+    [[ -d /var/lib/solidstats-memory-backup-guard &&
+      ! -L /var/lib/solidstats-memory-backup-guard &&
+      "$(stat -c '%u:%a' /var/lib/solidstats-memory-backup-guard)" == 0:700 ]] || fatal
   else
-    printf 'false\n' | private_write "${RUN_ROOT}/guard-prestate/enabled"
+    [[ "$(<"${RUN_ROOT}/guard-prestate/state-root.state")" == absent ]] || fatal
+    install -d -o 0 -g 0 -m 0700 /var/lib/solidstats-memory-backup-guard
   fi
-  if "${SYSTEMCTL_PATH}" is-active --quiet solidstats-memory-backup-guard.timer 2>/dev/null; then
-    printf 'true\n' | private_write "${RUN_ROOT}/guard-prestate/active"
-  else
-    printf 'false\n' | private_write "${RUN_ROOT}/guard-prestate/active"
-  fi
-  for name in script suspend service timer config; do
-    case "${name}" in
-      script) destination=/usr/local/libexec/solidstats-memory-backup-guard ;;
-      suspend) destination=/usr/local/libexec/solidstats-memory-backup-suspend ;;
-      service) destination=/etc/systemd/system/solidstats-memory-backup-guard.service ;;
-      timer) destination=/etc/systemd/system/solidstats-memory-backup-guard.timer ;;
-      config) destination=/etc/solidstats-memory-backup-guard.conf ;;
-    esac
-    backup="${RUN_ROOT}/guard-prestate/${name}"
-    if [[ -e "${destination}" ]]; then
-      [[ -f "${destination}" && ! -L "${destination}" ]] || fatal
-      stat -c '%a' "${destination}" | private_write "${backup}.mode"
-      stat -c '%u:%g' "${destination}" | private_write "${backup}.owner"
-      cp --preserve=all "${destination}" "${backup}"
-      chmod 600 "${backup}"
-      printf 'file\n' | private_write "${backup}.state"
-    else
-      printf 'absent\n' | private_write "${backup}.state"
-    fi
-  done
   install -m 0755 "${guard_source}" /usr/local/libexec/solidstats-memory-backup-guard
   install -m 0755 "${suspend_source}" /usr/local/libexec/solidstats-memory-backup-suspend
   install -m 0644 "${service_source}" /etc/systemd/system/solidstats-memory-backup-guard.service
@@ -1258,6 +1305,12 @@ rollback_backup_guard() {
     rmdir /usr/local/libexec || fatal
   else
     [[ "$(<"${RUN_ROOT}/guard-prestate/libexec.state")" == present ]] || fatal
+  fi
+  require_regular_private_file "${RUN_ROOT}/guard-prestate/state-root.state"
+  if [[ "$(<"${RUN_ROOT}/guard-prestate/state-root.state")" == absent ]]; then
+    rmdir /var/lib/solidstats-memory-backup-guard || fatal
+  else
+    [[ "$(<"${RUN_ROOT}/guard-prestate/state-root.state")" == present ]] || fatal
   fi
   run_quiet "${SYSTEMCTL_PATH}" daemon-reload
   if [[ "$(<"${RUN_ROOT}/guard-prestate/enabled")" == true ]]; then
