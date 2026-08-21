@@ -1056,7 +1056,7 @@ class MemoryValidatorContractTests(unittest.TestCase):
         mutations = (
             ('result.get("isError") is True', 'result.get("isError") is False'),
             ('set(deleted) != {"success", "drawer_id", "deleted_ids", "chunks_deleted"}', 'set(deleted) != set(deleted)'),
-            ('if drawer_id in json.dumps(remaining', 'if False and drawer_id in json.dumps(remaining'),
+            ('if absent.get("isError") is not True', 'if absent.get("isError") is True'),
         )
         for original, replacement in mutations:
             with self.subTest(original=original):

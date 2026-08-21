@@ -595,7 +595,7 @@ spec:
                   next_id = 1
                   session = None
 
-                  def mcp(method, params):
+                  def mcp(method, params, *, allow_tool_error=False):
                       global next_id, session
                       body = json.dumps({
                           "jsonrpc": "2.0", "id": next_id,
@@ -620,7 +620,9 @@ spec:
                           raise RuntimeError("behavior oracle MCP call failed")
                       next_id += 1
                       result = payload["result"]
-                      if not isinstance(result, dict) or result.get("isError") is True:
+                      if not isinstance(result, dict) or (
+                          result.get("isError") is True and not allow_tool_error
+                      ):
                           raise RuntimeError("behavior oracle MCP tool call failed")
                       return result
 
@@ -659,10 +661,11 @@ spec:
                   deleted_ids = deleted.get("deleted_ids")
                   if set(deleted) != {"success", "drawer_id", "deleted_ids", "chunks_deleted"} or deleted.get("success") is not True or deleted.get("drawer_id") != drawer_id or not isinstance(deleted_ids, list) or not deleted_ids or not all(isinstance(value, str) and value for value in deleted_ids) or type(deleted.get("chunks_deleted")) is not int or deleted["chunks_deleted"] != len(deleted_ids):
                       raise RuntimeError("behavior oracle cleanup contract failed")
-                  remaining = tool_data(mcp("tools/call", {"name": "mempalace_search", "arguments": {
-                      "wing": "infrastructure", "query": marker, "limit": 5,
-                  }}))
-                  if drawer_id in json.dumps(remaining, separators=(",", ":")):
+                  absent = mcp("tools/call", {
+                      "name": "mempalace_get_drawer",
+                      "arguments": {"drawer_id": drawer_id},
+                  }, allow_tool_error=True)
+                  if absent.get("isError") is not True:
                       raise RuntimeError("behavior oracle cleanup absence failed")
                   print("PASS: writer-restored=pass", flush=True)
                   print("PASS: behavior-oracle=pass", flush=True)

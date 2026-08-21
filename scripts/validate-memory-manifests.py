@@ -317,7 +317,7 @@ def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
         "backup behavior oracle delete contract differs",
     )
     require(
-        backup.count('if drawer_id in json.dumps(remaining') == 1,
+        backup.count('if absent.get("isError") is not True') == 1,
         "backup behavior oracle absence proof differs",
     )
     observer = docs["ConfigMap/solidstats-memory-observer"]
