@@ -9,6 +9,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "config" / "nginx" / "sites-available" / "solidstats-memory-mcp.conf.template"
+PATCH_TEMPLATE = ROOT / "config" / "nginx" / "sites-available" / "solidstats-memory-shared-cutover.patch.template"
+REMOTE_OPERATOR_CONFIG = (
+    ROOT
+    / "config"
+    / "solidstats-memory"
+    / "remote-cutover-operator.config.template"
+)
 
 
 def require(text: str, expected: str) -> None:
@@ -35,10 +42,41 @@ def main() -> None:
         require(text, expected)
     if "proxy_pass http://solidstats_memory_mcp;" in text:
         raise ValueError("nginx template does not map the public path to MemPalace /mcp")
-    placeholders = sorted(set(re.findall(r"MEMORY_OPERATOR_[A-Z0-9_]+", text)))
+    patch = PATCH_TEMPLATE.read_text()
+    expected_patch = "\n".join(
+        (
+            "schema=solidstats-memory-nginx-patch/v1",
+            "public_port=8443",
+            "public_location=/solidstats/",
+            "old_upstream=MEMORY_OPERATOR_BOUND_OLD_UPSTREAM_ROOT_WITH_TRAILING_SLASH",
+            "new_upstream=MEMORY_OPERATOR_BOUND_NEW_UPSTREAM_ROOT_WITH_TRAILING_SLASH",
+            "",
+        )
+    )
+    if patch != expected_patch:
+        raise ValueError("shared nginx cutover patch template is not exact")
+    remote_config = REMOTE_OPERATOR_CONFIG.read_text()
+    for expected in (
+        "old_upstream=MEMORY_OPERATOR_OLD_UPSTREAM_ROOT_WITH_TRAILING_SLASH\n",
+        "new_upstream=MEMORY_OPERATOR_NEW_UPSTREAM_ROOT_WITH_TRAILING_SLASH\n",
+    ):
+        require(remote_config, expected)
+    for forbidden in (
+        "old_upstream=MEMORY_OPERATOR_OLD_UPSTREAM\n",
+        "new_upstream=MEMORY_OPERATOR_NEW_UPSTREAM\n",
+    ):
+        if forbidden in remote_config:
+            raise ValueError("remote operator upstream contract is ambiguous")
+    placeholders = sorted(
+        set(re.findall(r"MEMORY_OPERATOR_[A-Z0-9_]+", text + patch + remote_config))
+    )
     if placeholders and not args.allow_operator_placeholders:
         raise ValueError(f"unresolved operator placeholders: {', '.join(placeholders)}")
-    print(f"validated {TEMPLATE.relative_to(ROOT)}")
+    print(
+        "validated "
+        f"{TEMPLATE.relative_to(ROOT)}, {PATCH_TEMPLATE.relative_to(ROOT)}, and "
+        f"{REMOTE_OPERATOR_CONFIG.relative_to(ROOT)}"
+    )
 
 
 if __name__ == "__main__":

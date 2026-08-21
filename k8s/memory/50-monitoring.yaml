@@ -164,7 +164,7 @@ spec:
             - name: QDRANT_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: qdrant-runtime
+                  name: memory-observer-runtime
                   key: QDRANT_API_KEY
           readinessProbe:
             httpGet: {path: /healthz, port: metrics}

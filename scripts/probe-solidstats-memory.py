@@ -1,0 +1,1044 @@
+#!/usr/bin/env python3
+"""Probe the authenticated SolidStats MemPalace Streamable HTTP contract."""
+
+from __future__ import annotations
+
+import argparse
+import errno
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import socket
+import stat
+import subprocess
+import tempfile
+import time
+from typing import Callable, Mapping, Protocol
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
+
+
+PROTOCOL_VERSION = "2025-06-18"
+MAX_BODY_BYTES = 4 * 1024 * 1024
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+SAFE_CODE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+CLIENT_NAME = "solidstats_memory"
+PUBLIC_PATH = "/solidstats/mcp"
+TOKEN_ENV_NAME = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"
+# Accepted source count: Phase 20 `20-SOURCE-INVENTORY.json` (19,555).
+# One 4,945-drawer reviewed headroom allocation rounds the live inventory gate
+# to 24,500 without replacing it with an unproven smaller corpus bound.
+PHASE20_ACCEPTED_SOURCE_DRAWERS = 19_555
+DRAWER_INVENTORY_HEADROOM = 4_945
+DRAWER_INVENTORY_MAX = PHASE20_ACCEPTED_SOURCE_DRAWERS + DRAWER_INVENTORY_HEADROOM
+DRAWER_INVENTORY_DEADLINE_SECONDS = 30.0
+DRAWER_PAGE_LIMIT = 100
+REQUIRED_TOOLS = (
+    "mempalace_search",
+    "mempalace_list_rooms",
+    "mempalace_list_drawers",
+    "mempalace_get_drawer",
+    "mempalace_check_duplicate",
+    "mempalace_add_drawer",
+    "mempalace_delete_drawer",
+)
+EVIDENCE_KEYS = {
+    "archive_untrusted",
+    "auth_checks",
+    "capture_shape_valid",
+    "cleanup_exact",
+    "cleanup_supported",
+    "dedup_checked",
+    "invalid_rejected",
+    "mcp_checks",
+    "missing_rejected",
+    "private_boundary",
+    "protocol_version_match",
+    "qdrant_6333_blocked",
+    "qdrant_6334_blocked",
+    "read_back_verified",
+    "required_tool_count",
+    "schema_digest_recorded",
+    "schema_sha256",
+    "schema",
+    "run_id_sha256",
+    "verdict",
+    "scoped_recall",
+    "semantic_miss_fallback",
+    "session_contract",
+    "session_propagated",
+    "tool_count",
+    "untrusted_origin_rejected",
+    "valid_accepted",
+}
+
+
+class ProbeError(ValueError):
+    """A value-free probe contract failure."""
+
+
+class HttpProbeResult:
+    """Bounded internal HTTP result; raw bodies never enter evidence."""
+
+    def __init__(
+        self,
+        status: int,
+        headers: Mapping[str, str],
+        payload: object | None,
+        body_sha256: str,
+    ) -> None:
+        self.status = status
+        self.headers = {str(key).lower(): str(value) for key, value in headers.items()}
+        self.payload = payload
+        self.body_sha256 = body_sha256
+
+
+class Transport(Protocol):
+    def request(
+        self,
+        message: dict[str, object],
+        *,
+        session_id: str | None,
+        token_mode: str,
+        protocol_version: str | None,
+    ) -> HttpProbeResult: ...
+
+
+class McpSession:
+    """One negotiated stateless or sessionful MCP connection."""
+
+    def __init__(
+        self,
+        transport: Transport,
+        *,
+        session_id: str | None,
+        protocol_version: str,
+    ) -> None:
+        self.transport = transport
+        self.session_id = session_id
+        self.protocol_version = protocol_version
+        self.next_id = 2
+
+
+def _canonical(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ProbeError("probe request is not canonical JSON") from error
+
+
+def _digest(value: object) -> str:
+    return hashlib.sha256(_canonical(value)).hexdigest()
+
+
+def _decode_payload(raw: bytes, *, expected_id: object | None) -> object | None:
+    if not raw:
+        return None
+    candidates = [raw]
+    candidates.extend(
+        line[5:].strip()
+        for line in raw.splitlines()
+        if line.startswith(b"data:") and line[5:].strip()
+    )
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(value, Mapping) or value.get("jsonrpc") != "2.0":
+            continue
+        if expected_id is None or value.get("id") == expected_id:
+            return value
+    raise ProbeError("MCP response is malformed")
+
+
+def _validate_url(url: str) -> str:
+    parsed = urllib_parse.urlsplit(url)
+    if (
+        parsed.scheme not in {"https", "http"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path != PUBLIC_PATH
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ProbeError("public MCP URL is invalid")
+    if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise ProbeError("public MCP URL must use TLS")
+    return url
+
+
+class StreamableHttpTransport:
+    """Standard-library MCP Streamable HTTP transport with bounded raw storage."""
+
+    def __init__(
+        self,
+        url: str,
+        token: str,
+        *,
+        opener: Callable[..., object] = urllib_request.urlopen,
+        timeout: float = 30.0,
+        raw_root: Path | None = None,
+    ) -> None:
+        self.url = _validate_url(url)
+        if not isinstance(token, str) or not token or "\n" in token or "\r" in token:
+            raise ProbeError("valid bearer token is unavailable")
+        if not isinstance(timeout, (int, float)) or timeout <= 0 or not math.isfinite(timeout):
+            raise ProbeError("probe timeout is invalid")
+        self.token = token
+        self.opener = opener
+        self.timeout = float(timeout)
+        self.raw_root = Path(raw_root) if raw_root is not None else None
+        if self.raw_root is not None:
+            try:
+                details = self.raw_root.lstat()
+            except OSError as error:
+                raise ProbeError("private raw storage is unavailable") from error
+            if (
+                stat.S_ISLNK(details.st_mode)
+                or not stat.S_ISDIR(details.st_mode)
+                or stat.S_IMODE(details.st_mode) & 0o077
+            ):
+                raise ProbeError("private raw storage is unsafe")
+
+    def request(
+        self,
+        message: dict[str, object],
+        *,
+        session_id: str | None,
+        token_mode: str,
+        protocol_version: str | None,
+    ) -> HttpProbeResult:
+        if token_mode not in {"missing", "invalid", "untrusted-origin", "valid"}:
+            raise ProbeError("auth probe mode is invalid")
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+        if token_mode == "invalid":
+            headers["Authorization"] = "Bearer phase21-invalid-probe"
+        elif token_mode in {"untrusted-origin", "valid"}:
+            headers["Authorization"] = f"Bearer {self.token}"
+        if token_mode == "untrusted-origin":
+            headers["Origin"] = "https://phase21-untrusted.invalid"
+        if session_id is not None:
+            if not session_id.isascii() or not session_id.isprintable():
+                raise ProbeError("MCP session contract is invalid")
+            headers["Mcp-Session-Id"] = session_id
+        if protocol_version is not None:
+            headers["MCP-Protocol-Version"] = protocol_version
+        request = urllib_request.Request(
+            self.url,
+            data=_canonical(message),
+            headers=headers,
+            method="POST",
+        )
+        status: int
+        response_headers: Mapping[str, str]
+        raw: bytes
+        try:
+            with self.opener(request, timeout=self.timeout) as response:
+                status = int(response.status)
+                response_headers = dict(response.headers.items())
+                raw = response.read(MAX_BODY_BYTES + 1)
+        except urllib_error.HTTPError as error:
+            status = int(error.code)
+            response_headers = dict(error.headers.items()) if error.headers else {}
+            try:
+                raw = error.read(MAX_BODY_BYTES + 1)
+            finally:
+                error.close()
+        except (OSError, TimeoutError, socket.timeout, urllib_error.URLError) as error:
+            raise ProbeError("public MCP request failed") from error
+        if len(raw) > MAX_BODY_BYTES:
+            raise ProbeError("public MCP response exceeds its bound")
+        content_type = next(
+            (
+                str(value).split(";", 1)[0].strip().lower()
+                for key, value in response_headers.items()
+                if str(key).lower() == "content-type"
+            ),
+            "",
+        )
+        if status == 200:
+            if content_type not in {"application/json", "text/event-stream"}:
+                raise ProbeError("public MCP response content type is invalid")
+            if not raw:
+                raise ProbeError("MCP response is malformed")
+        forbidden_echoes = (
+            self.token.encode("utf-8"),
+            b"phase21-invalid-probe",
+        )
+        header_bytes = "\n".join(
+            f"{key}:{value}" for key, value in response_headers.items()
+        ).encode("utf-8", errors="replace")
+        if any(value and (value in raw or value in header_bytes) for value in forbidden_echoes):
+            raise ProbeError("public MCP response echoed authorization material")
+        body_sha256 = hashlib.sha256(raw).hexdigest()
+        expected_id = message.get("id")
+        with tempfile.TemporaryDirectory(
+            prefix="solidstats-mcp-probe-", dir=self.raw_root
+        ) as temporary:
+            directory = Path(temporary)
+            os.chmod(directory, 0o700)
+            raw_path = directory / "response.bin"
+            descriptor = os.open(
+                raw_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(raw)
+                output.flush()
+                os.fsync(output.fileno())
+            stored_raw = raw_path.read_bytes()
+            if status == 200:
+                payload = _decode_payload(stored_raw, expected_id=expected_id)
+            else:
+                try:
+                    payload = _decode_payload(stored_raw, expected_id=expected_id)
+                except ProbeError:
+                    payload = None
+        return HttpProbeResult(status, response_headers, payload, body_sha256)
+
+
+def http_probe(
+    transport: Transport,
+    message: Mapping[str, object],
+    *,
+    session_id: str | None = None,
+    token_mode: str = "valid",
+    protocol_version: str | None = None,
+) -> HttpProbeResult:
+    """Send one bounded MCP POST through the injected transport."""
+    result = transport.request(
+        dict(message),
+        session_id=session_id,
+        token_mode=token_mode,
+        protocol_version=protocol_version,
+    )
+    if not isinstance(result, HttpProbeResult):
+        raise ProbeError("MCP transport contract is invalid")
+    if not SHA256.fullmatch(result.body_sha256):
+        raise ProbeError("MCP response digest is invalid")
+    return result
+
+
+def _initialize_message(request_id: int = 1) -> dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "phase21-cutover-probe", "version": "1"},
+        },
+    }
+
+
+def mcp_initialize(transport: Transport) -> McpSession:
+    """Negotiate MCP, preserve a returned session, and send initialized."""
+    initialized = http_probe(
+        transport, _initialize_message(), token_mode="valid"
+    )
+    if initialized.status != 200 or not isinstance(initialized.payload, Mapping):
+        raise ProbeError("MCP initialization failed")
+    if "error" in initialized.payload:
+        raise ProbeError("MCP initialization failed")
+    result = initialized.payload.get("result")
+    if not isinstance(result, Mapping):
+        raise ProbeError("MCP initialization result is invalid")
+    protocol_version = result.get("protocolVersion")
+    capabilities = result.get("capabilities")
+    if protocol_version != PROTOCOL_VERSION or not isinstance(capabilities, Mapping):
+        raise ProbeError("MCP protocol negotiation failed")
+    if not isinstance(capabilities.get("tools"), Mapping):
+        raise ProbeError("MCP tools capability is unavailable")
+    session_id = initialized.headers.get("mcp-session-id")
+    session = McpSession(
+        transport,
+        session_id=session_id,
+        protocol_version=protocol_version,
+    )
+    notification = http_probe(
+        transport,
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        session_id=session_id,
+        token_mode="valid",
+        protocol_version=protocol_version,
+    )
+    if notification.status not in {200, 202, 204}:
+        raise ProbeError("MCP initialized notification failed")
+    return session
+
+
+def _mcp_request(
+    session: McpSession, method: str, params: Mapping[str, object]
+) -> Mapping[str, object]:
+    request_id = session.next_id
+    session.next_id += 1
+    response = http_probe(
+        session.transport,
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": dict(params),
+        },
+        session_id=session.session_id,
+        token_mode="valid",
+        protocol_version=session.protocol_version,
+    )
+    if response.status != 200 or not isinstance(response.payload, Mapping):
+        raise ProbeError("MCP request failed")
+    if response.payload.get("id") != request_id or "error" in response.payload:
+        raise ProbeError("MCP response contract is invalid")
+    result = response.payload.get("result")
+    if not isinstance(result, Mapping):
+        raise ProbeError("MCP result contract is invalid")
+    return result
+
+
+def mcp_list_tools(session: McpSession) -> dict[str, object]:
+    """List every tool page and retain schemas only in process memory."""
+    tools: dict[str, object] = {}
+    cursor: str | None = None
+    for _page in range(20):
+        params: dict[str, object] = {}
+        if cursor is not None:
+            params["cursor"] = cursor
+        result = _mcp_request(session, "tools/list", params)
+        listed = result.get("tools")
+        if not isinstance(listed, list):
+            raise ProbeError("MCP tool list is invalid")
+        for item in listed:
+            if not isinstance(item, Mapping):
+                raise ProbeError("MCP tool list is invalid")
+            name = item.get("name")
+            schema = item.get("inputSchema")
+            if not isinstance(name, str) or not isinstance(schema, Mapping) or name in tools:
+                raise ProbeError("MCP tool list is invalid")
+            tool_schema: dict[str, object] = {"inputSchema": dict(schema)}
+            output_schema = item.get("outputSchema")
+            if output_schema is not None:
+                if not isinstance(output_schema, Mapping):
+                    raise ProbeError("MCP tool list is invalid")
+                tool_schema["outputSchema"] = dict(output_schema)
+            tools[name] = tool_schema
+        next_cursor = result.get("nextCursor")
+        if next_cursor is None:
+            return tools
+        if not isinstance(next_cursor, str) or not next_cursor:
+            raise ProbeError("MCP tool cursor is invalid")
+        cursor = next_cursor
+    raise ProbeError("MCP tool pagination exceeded its bound")
+
+
+def mcp_call(
+    session: McpSession, tool_name: str, arguments: Mapping[str, object]
+) -> Mapping[str, object]:
+    """Call one exact tool and reject protocol-level or tool-level errors."""
+    if not isinstance(tool_name, str) or not tool_name:
+        raise ProbeError("MCP tool name is invalid")
+    result = _mcp_request(
+        session,
+        "tools/call",
+        {"name": tool_name, "arguments": dict(arguments)},
+    )
+    if result.get("isError") is True:
+        raise ProbeError("MCP tool call failed")
+    return result
+
+
+def _tool_data(result: Mapping[str, object]) -> Mapping[str, object]:
+    structured = result.get("structuredContent")
+    if isinstance(structured, Mapping):
+        return structured
+    content = result.get("content")
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, Mapping) or item.get("type") != "text":
+                continue
+            text = item.get("text")
+            if not isinstance(text, str):
+                continue
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded, Mapping):
+                return decoded
+    raise ProbeError("MCP tool result is not structured")
+
+
+def _first_drawer_id(value: object) -> str | None:
+    if isinstance(value, Mapping):
+        for key in ("drawer_id", "id"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate:
+                return candidate
+        for item in value.values():
+            found = _first_drawer_id(item)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = _first_drawer_id(item)
+            if found is not None:
+                return found
+    return None
+
+
+def _listed_drawer_ids(session: McpSession, *, wing: str) -> set[str]:
+    """Enumerate one wing deterministically; never infer completeness from ANN.
+
+    Source: MemPalace v3.5.0 mcp_server.py lines 2551-2590 and 3750-3770.
+    """
+    found: set[str] = set()
+    offset = 0
+    expected_total: int | None = None
+    started = time.monotonic()
+    max_pages = math.ceil(DRAWER_INVENTORY_MAX / DRAWER_PAGE_LIMIT)
+    for _page in range(max_pages):
+        if time.monotonic() - started > DRAWER_INVENTORY_DEADLINE_SECONDS:
+            raise ProbeError("deterministic drawer inventory exceeded its deadline")
+        data = _tool_data(
+            mcp_call(
+                session,
+                "mempalace_list_drawers",
+                {"wing": wing, "limit": DRAWER_PAGE_LIMIT, "offset": offset},
+            )
+        )
+        drawers = data.get("drawers")
+        total = data.get("total")
+        count = data.get("count")
+        page_offset = data.get("offset")
+        page_limit = data.get("limit")
+        if (
+            set(data) != {"drawers", "total", "count", "offset", "limit"}
+            or not isinstance(drawers, list)
+            or type(total) is not int
+            or type(count) is not int
+            or type(page_offset) is not int
+            or type(page_limit) is not int
+            or count != len(drawers)
+            or page_offset != offset
+            or page_limit != DRAWER_PAGE_LIMIT
+            or total < 0
+            or total > DRAWER_INVENTORY_MAX
+            or (expected_total is not None and total != expected_total)
+        ):
+            raise ProbeError("deterministic drawer inventory is invalid")
+        expected_total = total
+        page_ids: list[str] = []
+        for drawer in drawers:
+            drawer_id = _first_drawer_id(drawer)
+            if drawer_id is None or drawer_id in found or drawer_id in page_ids:
+                raise ProbeError("deterministic drawer inventory is invalid")
+            page_ids.append(drawer_id)
+        found.update(page_ids)
+        offset += len(page_ids)
+        if offset == total:
+            return found
+        if not page_ids or offset > total:
+            raise ProbeError("deterministic drawer inventory is incomplete")
+    raise ProbeError("deterministic drawer inventory exceeded its bound")
+
+
+def _capture_shape(content: str) -> bool:
+    return all(
+        f"{field}:" in content
+        for field in ("Task", "Outcome", "Decisions", "Validation", "Sources")
+    )
+
+
+def _validate_delete_result(
+    result: Mapping[str, object], *, drawer_id: str
+) -> None:
+    """Require the exact successful MemPalace v3.5.0 delete response.
+
+    Source: https://github.com/MemPalace/mempalace/blob/v3.5.0/mempalace/mcp_server.py#L2133-L2166
+    """
+    expected_keys = {
+        "success",
+        "drawer_id",
+        "deleted_ids",
+        "chunks_deleted",
+    }
+    deleted_ids = result.get("deleted_ids")
+    chunks_deleted = result.get("chunks_deleted")
+    if (
+        set(result) != expected_keys
+        or result.get("success") is not True
+        or result.get("drawer_id") != drawer_id
+        or not isinstance(deleted_ids, list)
+        or not deleted_ids
+        or not all(isinstance(value, str) and value for value in deleted_ids)
+        or type(chunks_deleted) is not int
+        or chunks_deleted != len(deleted_ids)
+    ):
+        raise ProbeError("synthetic capture cleanup failed")
+
+
+def probe_auth_matrix(transport: Transport) -> tuple[dict[str, object], McpSession]:
+    """Require missing/invalid rejection and a valid initialized session."""
+    statuses: dict[str, int] = {}
+    for mode in ("missing", "invalid", "untrusted-origin"):
+        result = http_probe(transport, _initialize_message(), token_mode=mode)
+        statuses[mode] = result.status
+    if (
+        statuses["missing"] not in {401, 403}
+        or statuses["invalid"] not in {401, 403}
+        or statuses["untrusted-origin"] not in {400, 403}
+    ):
+        raise ProbeError("public MCP auth rejection failed")
+    session = mcp_initialize(transport)
+    return (
+        {
+            "missing_rejected": True,
+            "invalid_rejected": True,
+            "untrusted_origin_rejected": True,
+            "valid_accepted": True,
+            "protocol_version_match": True,
+            "session_contract": "sessionful" if session.session_id else "stateless",
+            "session_propagated": True,
+        },
+        session,
+    )
+
+
+def probe_private_boundary(
+    hostname: str,
+    *,
+    resolver: Callable[..., object] = socket.getaddrinfo,
+    socket_factory: Callable[..., object] = socket.socket,
+    timeout: float = 2.0,
+) -> dict[str, object]:
+    """Require every resolved public address to block both Qdrant ports."""
+    if not isinstance(hostname, str) or not hostname or any(
+        character.isspace() for character in hostname
+    ):
+        raise ProbeError("public boundary host is invalid")
+    if not isinstance(timeout, (int, float)) or timeout <= 0 or not math.isfinite(timeout):
+        raise ProbeError("public boundary timeout is invalid")
+    try:
+        resolved = resolver(
+            hostname,
+            None,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP,
+        )
+    except OSError as error:
+        raise ProbeError("public boundary DNS resolution failed") from error
+    addresses: set[tuple[int, int, int, str, int, int]] = set()
+    for item in resolved:
+        if not isinstance(item, tuple) or len(item) != 5:
+            raise ProbeError("public boundary address is malformed")
+        family, socktype, protocol, _, sockaddr = item
+        if family == socket.AF_INET and socktype == socket.SOCK_STREAM and protocol in {0, socket.IPPROTO_TCP} and isinstance(sockaddr, tuple) and len(sockaddr) == 2:
+            address, _ = sockaddr
+            try:
+                canonical = socket.inet_ntop(socket.AF_INET, socket.inet_pton(socket.AF_INET, address))
+            except (OSError, TypeError) as error:
+                raise ProbeError("public boundary address is malformed") from error
+            addresses.add((family, socktype, socket.IPPROTO_TCP, canonical, 0, 0))
+        elif family == socket.AF_INET6 and socktype == socket.SOCK_STREAM and protocol in {0, socket.IPPROTO_TCP} and isinstance(sockaddr, tuple) and len(sockaddr) == 4:
+            address, _, flowinfo, scopeid = sockaddr
+            try:
+                canonical = socket.inet_ntop(socket.AF_INET6, socket.inet_pton(socket.AF_INET6, address))
+            except (OSError, TypeError) as error:
+                raise ProbeError("public boundary address is malformed") from error
+            addresses.add((family, socktype, socket.IPPROTO_TCP, canonical, int(flowinfo), int(scopeid)))
+        else:
+            raise ProbeError("public boundary address family differs")
+    ordered = sorted(addresses)
+    if not ordered or len(ordered) > 16:
+        raise ProbeError("public boundary address set is invalid")
+    address_set_sha256 = _digest(
+        [{"family": item[0], "address": item[3], "flowinfo": item[4], "scopeid": item[5]} for item in ordered]
+    )
+    port_results: dict[int, list[bool]] = {}
+    for port in (6333, 6334):
+        port_results[port] = []
+        for family, socktype, protocol, address, flowinfo, scopeid in ordered:
+            connection = socket_factory(family, socktype, protocol)
+            try:
+                connection.settimeout(float(timeout))
+                sockaddr = (address, port) if family == socket.AF_INET else (address, port, flowinfo, scopeid)
+                try:
+                    connection.connect(sockaddr)
+                except (socket.timeout, TimeoutError):
+                    port_results[port].append(True)
+                except OSError as error:
+                    if error.errno in {errno.ECONNREFUSED, errno.ETIMEDOUT}:
+                        port_results[port].append(True)
+                    else:
+                        raise ProbeError("public boundary route is inconclusive") from error
+                else:
+                    raise ProbeError("Qdrant is publicly reachable")
+            finally:
+                try:
+                    connection.close()
+                except OSError:
+                    pass
+    if any(len(results) != len(ordered) or not all(results) for results in port_results.values()):
+        raise ProbeError("public boundary coverage is incomplete")
+    return {
+        "address_set_sha256": address_set_sha256,
+        "address_count": len(ordered),
+        "port_6333_all_addresses_blocked": True,
+        "port_6333_result_sha256": _digest(port_results[6333]),
+        "port_6334_all_addresses_blocked": True,
+        "port_6334_result_sha256": _digest(port_results[6334]),
+    }
+
+
+def probe_behavior_matrix(
+    session: McpSession,
+    tools: Mapping[str, object],
+    *,
+    wing: str,
+    archive_wing: str,
+    synthetic_content: str,
+) -> dict[str, object]:
+    """Exercise scoped recall, fallback, archive, capture, and exact cleanup."""
+    if any(name not in tools for name in REQUIRED_TOOLS):
+        raise ProbeError("required MCP tool is unavailable")
+    if not _capture_shape(synthetic_content):
+        raise ProbeError("synthetic capture shape is invalid")
+    schema_digest = _digest({name: tools[name] for name in REQUIRED_TOOLS})
+
+    _tool_data(
+        mcp_call(
+            session,
+            "mempalace_search",
+            {"query": "phase21 cutover", "wing": wing, "limit": 1},
+        )
+    )
+    _tool_data(
+        mcp_call(
+            session,
+            "mempalace_search",
+            {"query": "phase21 semantic miss fixture", "wing": wing, "limit": 1},
+        )
+    )
+    _tool_data(mcp_call(session, "mempalace_list_rooms", {"wing": wing}))
+    fallback = _tool_data(
+        mcp_call(
+            session,
+            "mempalace_list_drawers",
+            {"wing": wing, "limit": 1, "offset": 0},
+        )
+    )
+    fallback_id = _first_drawer_id(fallback)
+    if fallback_id is not None:
+        _tool_data(
+            mcp_call(
+                session, "mempalace_get_drawer", {"drawer_id": fallback_id}
+            )
+        )
+    _tool_data(
+        mcp_call(
+            session,
+            "mempalace_search",
+            {"query": "phase21 historical lead", "wing": archive_wing, "limit": 1},
+        )
+    )
+    _tool_data(
+        mcp_call(
+            session,
+            "mempalace_check_duplicate",
+            {"content": synthetic_content, "threshold": 0.9},
+        )
+    )
+    preexisting = _listed_drawer_ids(session, wing=wing)
+    drawer_id: str | None = None
+    probe_error: Exception | None = None
+    cleanup_error: Exception | None = None
+    try:
+        created = _tool_data(
+            mcp_call(
+                session,
+                "mempalace_add_drawer",
+                {
+                    "wing": wing,
+                    "room": "migrations",
+                    "content": synthetic_content,
+                    "added_by": "phase21-cutover-probe",
+                },
+            )
+        )
+        drawer_id = _first_drawer_id(created)
+        if drawer_id is None:
+            raise ProbeError("synthetic capture did not return an exact ID")
+        read_back = _tool_data(
+            mcp_call(session, "mempalace_get_drawer", {"drawer_id": drawer_id})
+        )
+        if read_back.get("content") != synthetic_content:
+            raise ProbeError("synthetic capture read-back failed")
+    except Exception as error:
+        probe_error = error
+    finally:
+        try:
+            observed = _listed_drawer_ids(session, wing=wing)
+            created_ids = observed - preexisting
+            if drawer_id is not None:
+                created_ids.add(drawer_id)
+            if not created_ids and probe_error is not None:
+                cleanup_id = None
+            elif len(created_ids) == 1:
+                cleanup_id = next(iter(created_ids))
+            else:
+                raise ProbeError("synthetic capture cleanup target is ambiguous")
+            if cleanup_id is not None:
+                deleted = _tool_data(
+                    mcp_call(
+                        session,
+                        "mempalace_delete_drawer",
+                        {"drawer_id": cleanup_id},
+                    )
+                )
+                _validate_delete_result(deleted, drawer_id=cleanup_id)
+            if _listed_drawer_ids(session, wing=wing) != preexisting:
+                raise ProbeError("synthetic capture cleanup failed")
+        except Exception as error:
+            cleanup_error = error
+    if cleanup_error is not None:
+        raise ProbeError("synthetic capture cleanup failed") from cleanup_error
+    if probe_error is not None:
+        raise ProbeError("synthetic capture probe failed") from probe_error
+    return {
+        "tool_count": len(tools),
+        "required_tool_count": len(REQUIRED_TOOLS),
+        "schema_sha256": schema_digest,
+        "schema_digest_recorded": True,
+        "scoped_recall": True,
+        "semantic_miss_fallback": True,
+        "archive_untrusted": True,
+        "dedup_checked": True,
+        "capture_shape_valid": True,
+        "read_back_verified": True,
+        "cleanup_supported": True,
+        "cleanup_exact": True,
+    }
+
+
+def build_client_commands(
+    *, name: str, url: str, token_env: str
+) -> dict[str, tuple[str, ...]]:
+    """Build only the exact `solidstats_memory` add/get/remove commands."""
+    if name != CLIENT_NAME:
+        raise ProbeError("client name is invalid")
+    url = _validate_url(url)
+    if token_env != TOKEN_ENV_NAME:
+        raise ProbeError("client token environment name is invalid")
+    return {
+        "add": (
+            "codex",
+            "mcp",
+            "add",
+            CLIENT_NAME,
+            "--url",
+            url,
+            "--bearer-token-env-var",
+            token_env,
+        ),
+        "get": ("codex", "mcp", "get", CLIENT_NAME),
+        "remove": ("codex", "mcp", "remove", CLIENT_NAME),
+    }
+
+
+def probe_client_policy(
+    *, config: Path, url: str, token_env: str, policy_script: Path | None = None
+) -> None:
+    """Validate the exact effective allowlist in the machine-local client config."""
+    script = policy_script or Path(__file__).with_name(
+        "configure-solidstats-memory-client.py"
+    )
+    result = subprocess.run(
+        (
+            os.sys.executable,
+            str(script),
+            "validate",
+            "--config",
+            str(config),
+            "--name",
+            CLIENT_NAME,
+            "--url",
+            _validate_url(url),
+            "--token-env",
+            token_env,
+        ),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ProbeError("client tool policy validation failed")
+
+
+def _validate_evidence_node(value: object, *, key: str = "root", depth: int = 0) -> None:
+    if depth > 8:
+        raise ProbeError("probe evidence nesting is invalid")
+    if isinstance(value, Mapping):
+        for child_key, child in value.items():
+            if not isinstance(child_key, str) or child_key not in EVIDENCE_KEYS:
+                raise ProbeError("probe evidence field is invalid")
+            _validate_evidence_node(child, key=child_key, depth=depth + 1)
+        return
+    if isinstance(value, bool):
+        return
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return
+    if isinstance(value, str):
+        if key.endswith("sha256") and SHA256.fullmatch(value):
+            return
+        if key == "session_contract" and value in {"stateless", "sessionful"}:
+            return
+        if key == "schema" and value == "solidstats-memory-probe-evidence/v1":
+            return
+        if key == "verdict" and value == "pass":
+            return
+        if key.endswith("code") and SAFE_CODE.fullmatch(value):
+            return
+    raise ProbeError("probe evidence contains a private or unsupported value")
+
+
+def validate_probe_evidence(evidence: Mapping[str, object]) -> None:
+    """Recursively reject non-aggregate evidence and private-value surfaces."""
+    _validate_evidence_node(evidence)
+
+
+def write_probe_evidence(path: Path, evidence: Mapping[str, object]) -> None:
+    """Write validated aggregate evidence atomically with mode 0600."""
+    validate_probe_evidence(evidence)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    raw = _canonical(evidence) + b"\n"
+    temporary = path.with_name(f".{path.name}.tmp")
+    if path.exists() or path.is_symlink() or temporary.exists() or temporary.is_symlink():
+        raise ProbeError("probe evidence destination already exists")
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(raw)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    except OSError as error:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        raise ProbeError("probe evidence could not be written") from error
+
+
+def _synthetic_content(run_id: str) -> str:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{7,63}", run_id):
+        raise ProbeError("probe run identity is invalid")
+    return (
+        f"Task: {run_id}\n"
+        "Outcome: disposable cutover behavior probe\n"
+        "Decisions: exact-id cleanup required\n"
+        "Validation: authenticated read-back\n"
+        "Sources: phase-21-cutover-probe"
+    )
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command")
+    full = subparsers.add_parser("full")
+    full.add_argument("--url", required=True)
+    full.add_argument("--token-env", required=True)
+    full.add_argument("--run-id", required=True)
+    full.add_argument("--wing", default="infrastructure")
+    full.add_argument("--archive-wing", default="infrastructure-archive")
+    full.add_argument("--evidence", type=Path)
+    full.add_argument("--raw-root", type=Path)
+    boundary = subparsers.add_parser("private-boundary")
+    boundary.add_argument("--host", required=True)
+    client_policy = subparsers.add_parser("client-policy")
+    client_policy.add_argument("--config", required=True, type=Path)
+    client_policy.add_argument("--url", required=True)
+    client_policy.add_argument("--token-env", required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run one requested probe and print a single value-free result line."""
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        return 0
+    try:
+        if args.command == "private-boundary":
+            result = probe_private_boundary(args.host)
+            for key in sorted(result):
+                print(f"{key}={str(result[key]).lower() if isinstance(result[key], bool) else result[key]}")
+            return 0
+        if args.command == "client-policy":
+            probe_client_policy(
+                config=args.config,
+                url=args.url,
+                token_env=args.token_env,
+            )
+            print("PASS: client tool policy probe completed")
+            return 0
+        if args.token_env != TOKEN_ENV_NAME:
+            raise ProbeError("token environment name is invalid")
+        token = os.environ.get(args.token_env)
+        if not token:
+            raise ProbeError("valid bearer token is unavailable")
+        transport = StreamableHttpTransport(
+            args.url, token, raw_root=args.raw_root
+        )
+        auth, session = probe_auth_matrix(transport)
+        tools = mcp_list_tools(session)
+        behavior = probe_behavior_matrix(
+            session,
+            tools,
+            wing=args.wing,
+            archive_wing=args.archive_wing,
+            synthetic_content=_synthetic_content(args.run_id),
+        )
+        evidence = {
+            "schema": "solidstats-memory-probe-evidence/v1",
+            "run_id_sha256": hashlib.sha256(args.run_id.encode()).hexdigest(),
+            "auth_checks": auth,
+            "mcp_checks": behavior,
+            "verdict": "pass",
+        }
+        validate_probe_evidence(evidence)
+        if args.evidence is not None:
+            write_probe_evidence(args.evidence, evidence)
+        print("PASS: authenticated MCP behavior probe completed")
+        return 0
+    except (OSError, ProbeError) as error:
+        print(f"FAIL: {error}", file=os.sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

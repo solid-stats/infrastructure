@@ -3,14 +3,23 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import re
+import importlib.util
+import base64
+import hashlib
+import hmac
+import io
+import json
 import shutil
 import signal
 import subprocess
 import tempfile
+import tarfile
 import time
 import unittest
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
@@ -24,6 +33,20 @@ TUNNEL = ROOT / "scripts" / "ssh-tunnel-up.sh"
 MANIFEST_RENDERER = ROOT / "scripts" / "render-memory-manifests.py"
 SECRET_RENDERER = ROOT / "scripts" / "render-memory-secrets.py"
 VALIDATOR = ROOT / "scripts" / "validate-memory-manifests.py"
+BOOTSTRAP_PATH = ROOT / "scripts" / "bootstrap-solidstats-memory-palace.py"
+BOOTSTRAP_SPEC = importlib.util.spec_from_file_location(
+    "solidstats_memory_runtime_bootstrap", BOOTSTRAP_PATH
+)
+assert BOOTSTRAP_SPEC and BOOTSTRAP_SPEC.loader
+BOOTSTRAP = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
+BOOTSTRAP_SPEC.loader.exec_module(BOOTSTRAP)
+BACKUP_ORACLE_PATH = ROOT / "scripts" / "solidstats_memory_backup_oracle.py"
+BACKUP_ORACLE_SPEC = importlib.util.spec_from_file_location(
+    "solidstats_memory_backup_oracle", BACKUP_ORACLE_PATH
+)
+assert BACKUP_ORACLE_SPEC and BACKUP_ORACLE_SPEC.loader
+BACKUP_ORACLE = importlib.util.module_from_spec(BACKUP_ORACLE_SPEC)
+BACKUP_ORACLE_SPEC.loader.exec_module(BACKUP_ORACLE)
 
 
 def synthetic_environment(**values: str) -> dict[str, str]:
@@ -46,14 +69,68 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
             capture_output=True, check=False, timeout=10,
         )
 
+    def test_backup_oracle_exact_not_found_and_error_matrix(self) -> None:
+        drawer_id = "synthetic-drawer"
+        BACKUP_ORACLE.validate_not_found_result(
+            {"error": f"Drawer not found: {drawer_id}"}, drawer_id=drawer_id
+        )
+        for result in (
+            {"isError": True, "content": [{"type": "text", "text": "unauthorized"}]},
+            {"isError": True, "content": [{"type": "text", "text": "unavailable"}]},
+            {"structuredContent": {"error": "internal failure"}},
+            {"structuredContent": {"drawer_id": drawer_id, "content": "still present"}},
+            {"content": [{"type": "text", "text": "not-json"}]},
+        ):
+            with self.subTest(result=result):
+                with self.assertRaises(BACKUP_ORACLE.BackupOracleError):
+                    structured = BACKUP_ORACLE.tool_data(result)
+                    BACKUP_ORACLE.validate_not_found_result(
+                        structured, drawer_id=drawer_id
+                    )
+
+    def test_backup_oracle_configmap_matches_importable_source(self) -> None:
+        documents = list(
+            yaml.safe_load_all((ROOT / "k8s/memory/40-backup.yaml").read_text())
+        )
+        config_map = next(
+            item
+            for item in documents
+            if item.get("kind") == "ConfigMap"
+            and item["metadata"]["name"] == "solidstats-memory-backup-oracle"
+        )
+        encoded = config_map["binaryData"]["solidstats_memory_backup_oracle.py"]
+        self.assertEqual(BACKUP_ORACLE_PATH.read_bytes(), base64.b64decode(encoded))
+
     def test_renderer_copies_exact_source_bytes_without_environment_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output_dir = Path(directory) / "rendered"
             rendered = self.render(output_dir)
             self.assertEqual(rendered.returncode, 0, rendered.stderr)
             source_files = sorted((ROOT / "k8s" / "memory").glob("*.yaml"))
-            self.assertEqual([path.name for path in source_files], sorted(path.name for path in output_dir.glob("*.yaml")))
-            for source in source_files:
+            self.assertEqual(
+                [
+                    "00-namespace.yaml",
+                    "01-ci-rbac.yaml",
+                    "05-rbac.yaml",
+                    "10-qdrant.yaml",
+                    "20-mempalace.yaml",
+                    "30-network-policy.yaml",
+                    "40-backup.yaml",
+                    "50-monitoring.yaml",
+                ],
+                [path.name for path in source_files],
+            )
+            operator_source = ROOT / "k8s" / "memory" / "05-rbac.yaml"
+            rendered_sources = [
+                path for path in source_files if path != operator_source
+            ]
+            self.assertEqual(
+                [path.name for path in rendered_sources],
+                sorted(path.name for path in output_dir.glob("*.yaml")),
+            )
+            self.assertFalse((output_dir / operator_source.name).exists())
+            self.assertEqual(3, len(list(yaml.safe_load_all(operator_source.read_text()))))
+            for source in rendered_sources:
                 self.assertEqual(source.read_bytes(), (output_dir / source.name).read_bytes())
 
             overridden_dir = Path(directory) / "overridden"
@@ -64,16 +141,709 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
                 MEMORY_HOST_NGINX_SOURCE_CIDR="203.0.113.0/24",
             )
             self.assertEqual(overridden.returncode, 0, overridden.stderr)
-            for source in source_files:
+            self.assertFalse((overridden_dir / operator_source.name).exists())
+            for source in rendered_sources:
                 self.assertEqual((output_dir / source.name).read_bytes(), (overridden_dir / source.name).read_bytes())
 
     def test_backup_owns_endpoint_and_prefix_without_secret_refs(self) -> None:
         backup = (ROOT / "k8s" / "memory" / "40-backup.yaml").read_text()
         self.assertIn("name: S3_ENDPOINT\n                  value: https://s3.twcstorage.ru", backup)
         self.assertIn("name: S3_PREFIX\n                  value: backups/solidstats-memory/", backup)
-        self.assertIn('"s3://${S3_BUCKET}/${S3_PREFIX}${backup_id}/"', backup)
+        self.assertIn("s3://$(S3_BUCKET)/$(S3_PREFIX)$(POD_NAME)/", backup)
         self.assertNotIn("key: S3_ENDPOINT", backup)
         self.assertNotIn("key: S3_PREFIX", backup)
+
+    def test_backup_control_plane_is_exact_and_operator_bound(self) -> None:
+        path = ROOT / "k8s" / "memory" / "05-rbac.yaml"
+        documents = list(yaml.safe_load_all(path.read_text()))
+        resources = {
+            (document["kind"], document["metadata"]["name"]): document
+            for document in documents
+        }
+        role = resources[("Role", "solidstats-memory-backup")]
+        self.assertEqual(
+            [
+                {
+                    "apiGroups": ["apps"],
+                    "resources": ["deployments"],
+                    "resourceNames": ["mempalace"],
+                    "verbs": ["get"],
+                },
+                {
+                    "apiGroups": ["apps"],
+                    "resources": ["deployments/scale"],
+                    "resourceNames": ["mempalace"],
+                    "verbs": ["get", "patch"],
+                },
+                {
+                    "apiGroups": [""],
+                    "resources": ["pods"],
+                    "verbs": ["list"],
+                },
+            ],
+            role["rules"],
+        )
+        binding = resources[("RoleBinding", "solidstats-memory-backup")]
+        self.assertEqual(
+            [{"kind": "ServiceAccount", "name": "solidstats-memory-backup", "namespace": "solidstats-memory"}],
+            binding["subjects"],
+        )
+        policy = resources[("NetworkPolicy", "allow-backup-to-kubernetes-api")]
+        self.assertEqual(
+            {"matchLabels": {"app.kubernetes.io/name": "solidstats-memory-backup"}},
+            policy["spec"]["podSelector"],
+        )
+        egress = policy["spec"]["egress"]
+        self.assertEqual(1, len(egress))
+        self.assertEqual(
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR",
+            egress[0]["to"][0]["ipBlock"]["cidr"],
+        )
+        self.assertEqual(
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT",
+            egress[0]["ports"][0]["port"],
+        )
+
+    def test_backup_template_projects_only_rotating_api_identity(self) -> None:
+        documents = list(
+            yaml.safe_load_all(
+                (ROOT / "k8s" / "memory" / "40-backup.yaml").read_text()
+            )
+        )
+        cronjob = next(document for document in documents if document["kind"] == "CronJob")
+        self.assertIsInstance(cronjob["spec"]["suspend"], bool)
+        self.assertEqual("Forbid", cronjob["spec"]["concurrencyPolicy"])
+        pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        self.assertFalse(pod["automountServiceAccountToken"])
+        projected = next(volume for volume in pod["volumes"] if volume["name"] == "kubernetes-api-access")
+        sources = projected["projected"]["sources"]
+        self.assertEqual(600, sources[0]["serviceAccountToken"]["expirationSeconds"])
+        self.assertNotIn("audience", sources[0]["serviceAccountToken"])
+        self.assertEqual("kube-root-ca.crt", sources[1]["configMap"]["name"])
+        controller = pod["initContainers"][0]
+        mount = next(item for item in controller["volumeMounts"] if item["name"] == "kubernetes-api-access")
+        self.assertTrue(mount["readOnly"])
+        command = controller["args"][0]
+        self.assertIn("api_token.read_text().strip()", command)
+        for marker in (
+            '"deployments/mempalace"',
+            'scale_path = deployment_path + "/scale"',
+            "original_generation",
+            "original_writer_pod_count",
+            "original_writer_pods_sha256",
+            "canonical_tree_digest",
+            "metadata_source_before_sha256",
+            "metadata_source_after_sha256",
+            "metadata_archive_sha256",
+            "restore_writer",
+        ):
+            self.assertIn(marker, command)
+
+    def test_backup_uses_native_controller_and_aws_only_transfers(self) -> None:
+        cronjob = next(
+            document
+            for document in yaml.safe_load_all(
+                (ROOT / "k8s" / "memory" / "40-backup.yaml").read_text()
+            )
+            if document["kind"] == "CronJob"
+        )
+        pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        init_containers = pod["initContainers"]
+        containers = pod["containers"]
+        self.assertEqual(360, pod["terminationGracePeriodSeconds"])
+        self.assertEqual(
+            ["control-and-package", "upload-package", "download-package"],
+            [container["name"] for container in init_containers],
+        )
+        self.assertEqual(
+            ["verify-and-release"],
+            [container["name"] for container in containers],
+        )
+        controller, upload, download = init_containers
+        verifier = containers[0]
+        self.assertEqual("Always", controller["restartPolicy"])
+        self.assertEqual(
+            "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST",
+            controller["image"],
+        )
+        self.assertEqual(["python3", "-c"], controller["command"])
+        self.assertEqual(
+            ["python3", "-c"],
+            controller["startupProbe"]["exec"]["command"][:2],
+        )
+        controller_source = controller["args"][0]
+        compile(controller_source, "backup-controller.py", "exec")
+        for marker in (
+            "package-ready",
+            "verification-passed",
+            "writer-restored",
+            "availableReplicas",
+            "metadata_source_before_sha256",
+            "metadata_source_after_sha256",
+            "metadata_archive_sha256",
+            "finally:",
+        ):
+            self.assertIn(marker, controller_source)
+        for transfer, direction in ((upload, "/work/upload"), (download, "/work/download")):
+            self.assertEqual(
+                "MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST",
+                transfer["image"],
+            )
+            self.assertEqual(["aws"], transfer["command"])
+            self.assertEqual("s3", transfer["args"][2])
+            self.assertEqual("cp", transfer["args"][3])
+            self.assertIn(direction, transfer["args"])
+            invocation = " ".join([*transfer["command"], *transfer["args"]])
+            for forbidden in ("/bin/sh", "curl", "tar", "find", "sed", "python"):
+                self.assertNotIn(forbidden, invocation)
+        self.assertEqual(
+            "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST",
+            verifier["image"],
+        )
+        self.assertEqual(["python3", "-c"], verifier["command"])
+        verifier_source = verifier["args"][0]
+        compile(verifier_source, "backup-verifier.py", "exec")
+        verification_signal = verifier_source.index("verification_passed.write_text")
+        restoration_wait = verifier_source.index("if writer_restored.exists():")
+        success_exit = verifier_source.index("print(\"PASS:")
+        self.assertLess(
+            verification_signal,
+            restoration_wait,
+        )
+        self.assertLess(restoration_wait, success_exit)
+        self.assertRegex(
+            controller_source,
+            r"restore_required = False\n\s+mark\(writer_restored\)",
+        )
+        self.assertNotIn("snapshot-and-package", [item["name"] for item in containers])
+
+    def test_backup_metadata_digest_preserves_only_contained_file_symlinks(self) -> None:
+        cronjob = next(
+            document
+            for document in yaml.safe_load_all(
+                (ROOT / "k8s" / "memory" / "40-backup.yaml").read_text()
+            )
+            if document["kind"] == "CronJob"
+        )
+        pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        sources = (
+            pod["initContainers"][0]["args"][0],
+            pod["containers"][0]["args"][0],
+        )
+
+        functions = []
+        for source in sources:
+            definition = next(
+                node
+                for node in ast.parse(source).body
+                if isinstance(node, ast.FunctionDef)
+                and node.name == "canonical_tree_digest"
+            )
+            namespace = {"Path": Path, "hashlib": hashlib, "os": os}
+            exec(compile(ast.Module([definition], []), "digest.py", "exec"), namespace)
+            functions.append(namespace["canonical_tree_digest"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "palace"
+            blobs = root / "blobs"
+            snapshot = root / "snapshots" / "revision"
+            blobs.mkdir(parents=True)
+            snapshot.mkdir(parents=True)
+            (blobs / "model").write_bytes(b"model-bytes")
+            (snapshot / "model").symlink_to("../../blobs/model")
+
+            expected = functions[0](root)
+            self.assertEqual(expected, functions[1](root))
+
+            archive = Path(directory) / "metadata.tar"
+            with tarfile.open(archive, "w") as package:
+                package.add(root, arcname="palace")
+            extracted = Path(directory) / "extracted"
+            extracted.mkdir()
+            with tarfile.open(archive) as package:
+                package.extractall(extracted, filter="data")
+            self.assertEqual(expected, functions[1](extracted / "palace"))
+
+            outside = Path(directory) / "outside"
+            outside.write_bytes(b"outside")
+            (root / "escape").symlink_to(outside)
+            for function in functions:
+                with self.assertRaisesRegex(RuntimeError, "symlink"):
+                    function(root)
+
+    def test_mempalace_uses_the_pinned_exact_image_cli_contract(self) -> None:
+        documents = list(
+            yaml.safe_load_all(
+                (ROOT / "k8s" / "memory" / "20-mempalace.yaml").read_text()
+            )
+        )
+        deployment = next(document for document in documents if document["kind"] == "Deployment")
+        self.assertEqual(
+            "OnRootMismatch",
+            deployment["spec"]["template"]["spec"]["securityContext"][
+                "fsGroupChangePolicy"
+            ],
+        )
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        init_container = deployment["spec"]["template"]["spec"]["initContainers"][0]
+        embedding_resources = {
+            "requests": {"cpu": "250m", "memory": "1Gi"},
+            "limits": {"cpu": "1", "memory": "3Gi"},
+        }
+        self.assertEqual(embedding_resources, init_container["resources"])
+        self.assertEqual(embedding_resources, container["resources"])
+        self.assertEqual(init_container["name"], "runtime-bootstrap")
+        self.assertEqual(
+            init_container["image"], "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST"
+        )
+        self.assertEqual(
+            init_container["command"],
+            ["python", "/opt/mempalace-bootstrap/bootstrap.py"],
+        )
+        self.assertEqual(init_container["args"], ["offline"])
+        init_env = {entry["name"]: entry for entry in init_container["env"]}
+        self.assertEqual(init_env["MEMPALACE_EMBEDDING_MODEL"]["value"], "embeddinggemma")
+        self.assertEqual(init_env["MEMPALACE_EMBEDDING_DEVICE"]["value"], "cpu")
+        self.assertEqual(init_env["HF_HUB_OFFLINE"]["value"], "1")
+        self.assertEqual(
+            init_env["HF_HOME"]["value"], "/data/palace/.cache/huggingface"
+        )
+        self.assertEqual(container["command"], ["mempalace-mcp"])
+        self.assertEqual(
+            container["args"],
+            [
+                "--palace",
+                "/data/palace",
+                "--backend",
+                "qdrant",
+                "--transport",
+                "http",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "8765",
+            ],
+        )
+        main_env = {entry["name"]: entry for entry in container["env"]}
+        self.assertEqual(main_env["MEMPALACE_EMBEDDING_MODEL"]["value"], "embeddinggemma")
+        self.assertEqual(main_env["HF_HUB_OFFLINE"]["value"], "1")
+        volumes = {
+            volume["name"]: volume
+            for volume in deployment["spec"]["template"]["spec"]["volumes"]
+        }
+        self.assertEqual(
+            volumes["mempalace-bootstrap"]["configMap"],
+            {"name": "mempalace-runtime-bootstrap", "defaultMode": 0o444},
+        )
+
+
+class RuntimePalaceBootstrapContractTests(unittest.TestCase):
+    class Identity:
+        def __init__(self, model_name: str, dimension: int):
+            self.model_name = model_name
+            self.dimension = dimension
+
+        def __eq__(self, other: object) -> bool:
+            return (
+                isinstance(other, RuntimePalaceBootstrapContractTests.Identity)
+                and (self.model_name, self.dimension)
+                == (other.model_name, other.dimension)
+            )
+
+    class Result:
+        def __init__(self, ids: list[str]):
+            self.ids = ids
+
+    class Backend:
+        def __init__(self, palace: Path, initial_ids: list[str]):
+            self.palace = palace
+            self.ids = list(initial_ids)
+            self.upserts = 0
+            self.deletes = 0
+            self.collection = RuntimePalaceBootstrapContractTests.Collection(self)
+
+        def _marker_target(self, reference, config):
+            palace_hash = hashlib.sha256(str(self.palace).encode()).hexdigest()[:16]
+            return {
+                "url": config.url,
+                "namespace": config.namespace,
+                "palace_hash": palace_hash,
+                "remote_prefix": f"mempalace_SolidStats_{palace_hash}",
+            }
+
+        def _read_marker(self, _reference):
+            return json.loads((self.palace / "qdrant_backend.json").read_text())
+
+        def _validate_marker_target(self, reference, config):
+            marker = self._read_marker(reference)
+            if marker.get("qdrant") != self._marker_target(reference, config):
+                raise ValueError("marker mismatch")
+
+        def _get_embedder_identity(self, _reference, _collection):
+            value = json.loads((self.palace / "mempalace_embedder.json").read_text())[
+                BOOTSTRAP.COLLECTION
+            ]
+            return RuntimePalaceBootstrapContractTests.Identity(**value)
+
+        def get_collection(self, **_kwargs):
+            return self.collection
+
+    class Collection:
+        def __init__(self, backend):
+            self.backend = backend
+
+        def count(self):
+            return len(self.backend.ids)
+
+        def get(self, *, ids, include):
+            return RuntimePalaceBootstrapContractTests.Result(
+                [value for value in ids if value in self.backend.ids]
+            )
+
+        def upsert(self, *, documents, ids, metadatas, embeddings):
+            self.backend.upserts += 1
+            self.backend.ids.extend(ids)
+            target = self.backend._marker_target(None, self.backend.config)
+            marker = {
+                "backend": "qdrant",
+                "schema_version": 1,
+                "created_at": "2026-08-21T00:00:00+00:00",
+                "palace_id": str(self.backend.palace),
+                "qdrant": target,
+            }
+            path = self.backend.palace / "qdrant_backend.json"
+            path.write_text(json.dumps(marker))
+            path.chmod(0o600)
+
+        def delete(self, *, ids):
+            self.backend.deletes += 1
+            self.backend.ids = [value for value in self.backend.ids if value not in ids]
+
+        def set_embedder_identity(self, identity):
+            path = self.backend.palace / "mempalace_embedder.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        BOOTSTRAP.COLLECTION: {
+                            "model_name": identity.model_name,
+                            "dimension": identity.dimension,
+                        }
+                    }
+                )
+            )
+            path.chmod(0o600)
+
+    class Config:
+        url = BOOTSTRAP.QDRANT_URL
+        api_key = "synthetic-alias-only-token"
+        namespace = BOOTSTRAP.NAMESPACE
+
+    def handles(self, palace: Path, backend):
+        backend.config = self.Config()
+        reference = object()
+        return backend, reference, backend.config, self.Identity
+
+    def test_probe_id_is_a_deterministic_reserved_uuid(self) -> None:
+        self.assertEqual(
+            "40c30eca-8b79-5d62-a3e2-1f2effc7f84f",
+            BOOTSTRAP.PROBE_ID,
+        )
+        parsed = uuid.UUID(BOOTSTRAP.PROBE_ID)
+        self.assertEqual(5, parsed.version)
+        self.assertEqual(BOOTSTRAP.PROBE_ID, str(parsed))
+
+    def test_regular_private_normalizes_owned_fs_group_mode_idempotently(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "marker"
+            marker.write_text("bound\n", encoding="ascii")
+            marker.chmod(0o660)
+
+            self.assertTrue(BOOTSTRAP.regular_private(marker))
+            self.assertEqual(0o600, marker.lstat().st_mode & 0o777)
+            self.assertTrue(BOOTSTRAP.regular_private(marker))
+            self.assertEqual(0o600, marker.lstat().st_mode & 0o777)
+
+    def test_regular_private_rejects_wrong_owner_mode_and_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "marker"
+            marker.write_text("bound\n", encoding="ascii")
+            marker.chmod(0o660)
+            details = marker.lstat()
+
+            for uid, gid, mode in (
+                (1001, 1000, 0o660),
+                (1000, 1001, 0o660),
+                (1000, 1000, 0o640),
+                (1000, 1000, 0o600 | 0o100),
+            ):
+                unsafe = os.stat_result(
+                    (
+                        (details.st_mode & ~0o777) | mode,
+                        details.st_ino,
+                        details.st_dev,
+                        details.st_nlink,
+                        uid,
+                        gid,
+                        details.st_size,
+                        details.st_atime,
+                        details.st_mtime,
+                        details.st_ctime,
+                    )
+                )
+                with patch.object(BOOTSTRAP.os, "fstat", return_value=unsafe):
+                    with self.assertRaises(BOOTSTRAP.BootstrapError):
+                        BOOTSTRAP.regular_private(marker)
+
+            link = root / "link"
+            link.symlink_to(marker)
+            with self.assertRaises(BOOTSTRAP.BootstrapError):
+                BOOTSTRAP.regular_private(link)
+
+    @staticmethod
+    def cache_archive(*, unsafe_link: bool = False) -> bytes:
+        output = io.BytesIO()
+        repository = (
+            "huggingface/hub/"
+            "models--onnx-community--embeddinggemma-300m-ONNX"
+        )
+        revision = f"{repository}/snapshots/{BOOTSTRAP.MODEL_REVISION}"
+        directories = [
+            "huggingface",
+            "huggingface/hub",
+            repository,
+            f"{repository}/blobs",
+            f"{repository}/snapshots",
+            revision,
+            f"{revision}/onnx",
+            "huggingface/assets",
+            "huggingface/xet",
+            "huggingface/xet/logs",
+            "huggingface/xet/https___cas_serv-tGqkUaZf_CBPHQ6h",
+            "huggingface/xet/https___cas_serv-tGqkUaZf_CBPHQ6h/staging",
+            "huggingface/hub/.locks",
+            "huggingface/hub/.locks/models--onnx-community--embeddinggemma-300m-ONNX",
+        ]
+        with tarfile.open(fileobj=output, mode="w") as archive:
+            for name in directories:
+                member = tarfile.TarInfo(name)
+                member.type = tarfile.DIRTYPE
+                archive.addfile(member)
+            for name in "abcdef":
+                payload = name.encode()
+                member = tarfile.TarInfo(f"{repository}/blobs/{name}")
+                member.size = len(payload)
+                archive.addfile(member, io.BytesIO(payload))
+            links = [
+                (f"{revision}/onnx/model.onnx", "../../../blobs/a"),
+                (f"{revision}/onnx/model.onnx_data", "../../../blobs/b"),
+                (
+                    f"{revision}/tokenizer.json",
+                    "/outside" if unsafe_link else "../../blobs/c",
+                ),
+            ]
+            for name, target in links:
+                member = tarfile.TarInfo(name)
+                member.type = tarfile.SYMTYPE
+                member.linkname = target
+                archive.addfile(member)
+        return output.getvalue()
+
+    def test_cache_seed_verifies_exact_archive_and_is_idempotent(self) -> None:
+        archive = self.cache_archive()
+        archive_sha256 = hashlib.sha256(archive).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            with patch.object(
+                BOOTSTRAP.sys, "stdin", mock_stdin := unittest.mock.Mock()
+            ):
+                mock_stdin.buffer = io.BytesIO(archive)
+                BOOTSTRAP.seed_cache(palace, archive_sha256, len(archive))
+            BOOTSTRAP.cache_ready(palace, archive_sha256)
+            marker = (
+                palace
+                / ".cache"
+                / "huggingface"
+                / BOOTSTRAP.MODEL_SEED_MARKER
+            )
+            marker.chmod(0o660)
+            BOOTSTRAP.cache_ready(palace, archive_sha256)
+            self.assertEqual(0o600, marker.stat().st_mode & 0o777)
+            tokenizer = (
+                palace
+                / ".cache"
+                / "huggingface"
+                / "hub"
+                / "models--onnx-community--embeddinggemma-300m-ONNX"
+                / "snapshots"
+                / BOOTSTRAP.MODEL_REVISION
+                / "tokenizer.json"
+            )
+            self.assertTrue(tokenizer.is_symlink())
+            self.assertEqual("../../blobs/c", os.readlink(tokenizer))
+
+            with patch.object(
+                BOOTSTRAP.sys, "stdin", mock_stdin := unittest.mock.Mock()
+            ):
+                mock_stdin.buffer = io.BytesIO(b"")
+                BOOTSTRAP.seed_cache(palace, archive_sha256, len(archive))
+            self.assertTrue(tokenizer.is_symlink())
+
+    def test_cache_seed_refuses_escaping_symlink_without_partial_install(self) -> None:
+        archive = self.cache_archive(unsafe_link=True)
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            with patch.object(
+                BOOTSTRAP.sys, "stdin", mock_stdin := unittest.mock.Mock()
+            ):
+                mock_stdin.buffer = io.BytesIO(archive)
+                with self.assertRaises(BOOTSTRAP.BootstrapError):
+                    BOOTSTRAP.seed_cache(
+                        palace, hashlib.sha256(archive).hexdigest(), len(archive)
+                    )
+            self.assertFalse((palace / ".cache" / "huggingface").exists())
+            self.assertFalse((palace / ".cache" / "huggingface.seed").exists())
+
+    def test_online_bootstrap_uses_official_write_path_and_leaves_zero_residue(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            backend = self.Backend(palace, ["one", "two", "three"])
+            with (
+                patch.object(
+                    BOOTSTRAP,
+                    "backend_handles",
+                    return_value=self.handles(palace, backend),
+                ),
+                patch.object(BOOTSTRAP, "model_vector", return_value=[0.0] * 384),
+            ):
+                BOOTSTRAP.online_bootstrap(palace, 3)
+                self.assertEqual(backend.ids, ["one", "two", "three"])
+                self.assertEqual((backend.upserts, backend.deletes), (1, 1))
+                for name in ("qdrant_backend.json", "mempalace_embedder.json"):
+                    (palace / name).chmod(0o660)
+                BOOTSTRAP.online_bootstrap(palace, 3)
+            self.assertEqual((backend.upserts, backend.deletes), (1, 1))
+            self.assertTrue(
+                all(
+                    (palace / name).stat().st_mode & 0o777 == 0o600
+                    for name in ("qdrant_backend.json", "mempalace_embedder.json")
+                )
+            )
+            marker = json.loads((palace / "qdrant_backend.json").read_text())
+            self.assertNotIn("collection_name", marker)
+            self.assertEqual(
+                json.loads((palace / "mempalace_embedder.json").read_text())[
+                    BOOTSTRAP.COLLECTION
+                ],
+                {"model_name": "embeddinggemma", "dimension": 384},
+            )
+
+    def test_online_bootstrap_refuses_count_drift_and_corrupt_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            backend = self.Backend(palace, ["one"])
+            with patch.object(
+                BOOTSTRAP,
+                "backend_handles",
+                return_value=self.handles(palace, backend),
+            ):
+                with self.assertRaises(BOOTSTRAP.BootstrapError):
+                    BOOTSTRAP.online_bootstrap(palace, 2)
+            self.assertEqual((backend.upserts, backend.deletes), (0, 0))
+
+            marker = palace / "qdrant_backend.json"
+            marker.write_text('{"backend":"qdrant","collection_name":"physical"}')
+            marker.chmod(0o600)
+            sidecar = palace / "mempalace_embedder.json"
+            sidecar.write_text(
+                json.dumps(
+                    {
+                        BOOTSTRAP.COLLECTION: {
+                            "model_name": "embeddinggemma",
+                            "dimension": 384,
+                        }
+                    }
+                )
+            )
+            sidecar.chmod(0o600)
+            with patch.object(
+                BOOTSTRAP,
+                "backend_handles",
+                return_value=self.handles(palace, backend),
+            ):
+                with self.assertRaises(BOOTSTRAP.BootstrapError):
+                    BOOTSTRAP.online_bootstrap(palace, 1)
+
+    def test_online_bootstrap_removes_probe_and_new_marker_after_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            backend = self.Backend(palace, ["one", "two"])
+            with (
+                patch.object(
+                    BOOTSTRAP,
+                    "backend_handles",
+                    return_value=self.handles(palace, backend),
+                ),
+                patch.object(BOOTSTRAP, "model_vector", return_value=[0.0] * 384),
+                patch.object(
+                    backend.collection,
+                    "set_embedder_identity",
+                    side_effect=RuntimeError("synthetic sidecar failure"),
+                ),
+            ):
+                with self.assertRaises(RuntimeError):
+                    BOOTSTRAP.online_bootstrap(palace, 2)
+
+            self.assertEqual(["one", "two"], backend.ids)
+            self.assertEqual((backend.upserts, backend.deletes), (1, 1))
+            self.assertFalse((palace / "qdrant_backend.json").exists())
+            self.assertFalse((palace / "mempalace_embedder.json").exists())
+
+    def test_online_bootstrap_cleans_probe_after_lost_upsert_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            backend = self.Backend(palace, ["one", "two"])
+            original_upsert = backend.collection.upsert
+
+            def apply_then_raise(**kwargs: object) -> None:
+                original_upsert(**kwargs)
+                raise RuntimeError("synthetic lost acknowledgement")
+
+            with (
+                patch.object(
+                    BOOTSTRAP,
+                    "backend_handles",
+                    return_value=self.handles(palace, backend),
+                ),
+                patch.object(BOOTSTRAP, "model_vector", return_value=[0.0] * 384),
+                patch.object(backend.collection, "upsert", side_effect=apply_then_raise),
+            ):
+                with self.assertRaises(RuntimeError):
+                    BOOTSTRAP.online_bootstrap(palace, 2)
+            self.assertEqual(["one", "two"], backend.ids)
+            self.assertEqual(1, backend.deletes)
+
+    def test_qdrant_has_a_bounded_writable_snapshot_mount(self) -> None:
+        documents = list(
+            yaml.safe_load_all(
+                (ROOT / "k8s" / "memory" / "10-qdrant.yaml").read_text()
+            )
+        )
+        statefulset = next(
+            document for document in documents if document["kind"] == "StatefulSet"
+        )
+        pod = statefulset["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
+        volumes = {volume["name"]: volume for volume in pod["volumes"]}
+        self.assertEqual("/qdrant/snapshots", mounts["snapshots"]["mountPath"])
+        self.assertEqual({"sizeLimit": "1Gi"}, volumes["snapshots"]["emptyDir"])
 
 
 class MemorySecretRendererContractTests(unittest.TestCase):
@@ -81,6 +851,12 @@ class MemorySecretRendererContractTests(unittest.TestCase):
 
     values = {
         "MEMORY_QDRANT_API_KEY": "synthetic-qdrant-key",
+        "MEMORY_QDRANT_COLLECTION": "synthetic-own-collection",
+        "MEMORY_QDRANT_LOGICAL_ALIAS": (
+            "mempalace_SolidStats_"
+            + hashlib.sha256(b"/data/palace").hexdigest()[:16]
+            + "_mempalace_drawers"
+        ),
         "MEMORY_MCP_HTTP_TOKEN": "synthetic-mcp-token",
         "S3_BUCKET": "synthetic-bucket",
         "S3_ACCESS_KEY_ID": "synthetic-access-key",
@@ -97,18 +873,128 @@ class MemorySecretRendererContractTests(unittest.TestCase):
         rendered = self.render(self.values)
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
         documents = list(yaml.safe_load_all(rendered.stdout))
-        self.assertEqual([document["metadata"]["name"] for document in documents], ["qdrant-runtime", "mempalace-runtime", "memory-backup-runtime"])
+        self.assertEqual([document["metadata"]["name"] for document in documents], ["qdrant-runtime", "mempalace-runtime", "memory-backup-runtime", "memory-observer-runtime"])
         self.assertTrue(all(document["metadata"]["namespace"] == "solidstats-memory" for document in documents))
         self.assertEqual(set(documents[0]["stringData"]), {"QDRANT_API_KEY"})
-        self.assertEqual(set(documents[1]["stringData"]), {"MEMPALACE_QDRANT_API_KEY", "MEMPALACE_MCP_HTTP_TOKEN"})
+        self.assertEqual(
+            set(documents[1]["stringData"]),
+            {
+                "MEMPALACE_QDRANT_API_KEY",
+                "MEMPALACE_MCP_HTTP_TOKEN",
+                "SOLIDSTATS_MEMORY_LOGICAL_ALIAS",
+                "SOLIDSTATS_MEMORY_PHYSICAL_COLLECTION",
+            },
+        )
+        self.assertEqual(
+            documents[1]["stringData"]["SOLIDSTATS_MEMORY_LOGICAL_ALIAS"],
+            self.values["MEMORY_QDRANT_LOGICAL_ALIAS"],
+        )
+        self.assertEqual(
+            documents[1]["stringData"]["SOLIDSTATS_MEMORY_PHYSICAL_COLLECTION"],
+            self.values["MEMORY_QDRANT_COLLECTION"],
+        )
         self.assertEqual(set(documents[2]["stringData"]), {"QDRANT_API_KEY", "S3_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"})
+        self.assertEqual(set(documents[3]["stringData"]), {"QDRANT_API_KEY"})
+        self.assertEqual(
+            documents[0]["stringData"]["QDRANT_API_KEY"],
+            self.values["MEMORY_QDRANT_API_KEY"],
+        )
+        self.assertNotEqual(
+            documents[1]["stringData"]["MEMPALACE_QDRANT_API_KEY"],
+            self.values["MEMORY_QDRANT_API_KEY"],
+        )
+        self.assertNotEqual(
+            documents[2]["stringData"]["QDRANT_API_KEY"],
+            self.values["MEMORY_QDRANT_API_KEY"],
+        )
         self.assertNotIn("S3_ENDPOINT", rendered.stdout)
         self.assertNotIn("S3_PREFIX", rendered.stdout)
+
+    def decode_and_verify(self, token: str) -> dict[str, object]:
+        header, payload, signature = token.split(".")
+        padded = payload + "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(padded))
+        expected = hmac.new(
+            self.values["MEMORY_QDRANT_API_KEY"].encode(),
+            f"{header}.{payload}".encode("ascii"),
+            hashlib.sha256,
+        ).digest()
+        actual = base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))
+        self.assertTrue(hmac.compare_digest(expected, actual))
+        return claims
+
+    def test_renderer_signs_least_privilege_qdrant_tokens(self) -> None:
+        documents = list(yaml.safe_load_all(self.render(self.values).stdout))
+        claims = {
+            document["metadata"]["name"]: self.decode_and_verify(
+                document["stringData"][
+                    "MEMPALACE_QDRANT_API_KEY"
+                    if document["metadata"]["name"] == "mempalace-runtime"
+                    else "QDRANT_API_KEY"
+                ]
+            )
+            for document in documents[1:]
+        }
+        self.assertEqual(
+            claims["mempalace-runtime"],
+            {
+                "sub": "solidstats-memory-mempalace",
+                "access": [
+                    {
+                        "collection": self.values["MEMORY_QDRANT_LOGICAL_ALIAS"],
+                        "access": "rw",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            claims["memory-backup-runtime"],
+            {
+                "sub": "solidstats-memory-backup",
+                "access": [
+                    {
+                        "collection": self.values["MEMORY_QDRANT_COLLECTION"],
+                        "access": "rw",
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            claims["memory-observer-runtime"],
+            {
+                "sub": "solidstats-memory-observer",
+                "access": [
+                    {
+                        "collection": self.values["MEMORY_QDRANT_COLLECTION"],
+                        "access": "r",
+                    }
+                ],
+            },
+        )
+        self.assertNotEqual(
+            self.values["MEMORY_QDRANT_COLLECTION"],
+            self.values["MEMORY_QDRANT_LOGICAL_ALIAS"],
+        )
+        self.assertNotIn("synthetic-foreign-collection", json.dumps(claims))
 
     def test_missing_input_fails_before_any_yaml_output(self) -> None:
         for missing in self.values:
             values = self.values.copy()
             values.pop(missing)
+            rendered = self.render(values)
+            self.assertEqual(rendered.returncode, 64)
+            self.assertEqual(rendered.stdout, "")
+
+    def test_renderer_rejects_drifting_or_physical_alias_binding(self) -> None:
+        for overrides in (
+            {"MEMORY_QDRANT_LOGICAL_ALIAS": "drifting-logical-alias"},
+            {
+                "MEMORY_QDRANT_COLLECTION": self.values[
+                    "MEMORY_QDRANT_LOGICAL_ALIAS"
+                ]
+            },
+        ):
+            values = self.values | overrides
             rendered = self.render(values)
             self.assertEqual(rendered.returncode, 64)
             self.assertEqual(rendered.stdout, "")
@@ -143,6 +1029,7 @@ class MemoryDeployWorkflowContractTests(unittest.TestCase):
     def test_reuses_an_exclusive_workload_manifest_list(self) -> None:
         self.assertIn("! -name '00-namespace.yaml'", self.workflow)
         self.assertIn("! -name '01-ci-rbac.yaml'", self.workflow)
+        self.assertIn("! -name '05-rbac.yaml'", self.workflow)
         self.assertEqual(self.workflow.count("mapfile -t MEMORY_WORKLOAD_FILES"), 2)
         self.assertEqual(self.workflow.count("MEMORY_WORKLOAD_FILES[@]/#/-f"), 2)
         self.assertIn("memory-workload-files", self.workflow)
@@ -175,7 +1062,18 @@ class MemoryDeployWorkflowContractTests(unittest.TestCase):
             self.assertIn(f"secrets.{name}", self.workflow)
         secret_names = set(re.findall(r"secrets\.([A-Z0-9_]+)", self.workflow))
         established = {"DEPLOY_SSH_PRIVATE_KEY", "DEPLOY_SSH_KNOWN_HOSTS", "DEPLOY_SSH_HOST", "DEPLOY_SSH_USER", "K8S_CA_CERT"}
-        self.assertEqual(secret_names - established - {"S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"}, {"K8S_MEMORY_TOKEN", "MEMORY_QDRANT_API_KEY", "MEMORY_MCP_HTTP_TOKEN"})
+        self.assertEqual(
+            secret_names
+            - established
+            - {"S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"},
+            {
+                "K8S_MEMORY_TOKEN",
+                "MEMORY_QDRANT_API_KEY",
+                "MEMORY_QDRANT_COLLECTION",
+                "MEMORY_QDRANT_LOGICAL_ALIAS",
+                "MEMORY_MCP_HTTP_TOKEN",
+            },
+        )
 
 
 class MemoryValidatorContractTests(unittest.TestCase):
@@ -192,6 +1090,32 @@ class MemoryValidatorContractTests(unittest.TestCase):
         if placeholders:
             command.append("--allow-operator-placeholders")
         return subprocess.run(command, env=synthetic_environment(), text=True, capture_output=True, check=False, timeout=10)
+
+    def test_validator_rejects_backup_oracle_cleanup_regressions(self) -> None:
+        mutations = (
+            (
+                "name: solidstats-memory-backup-oracle",
+                "name: missing-backup-oracle",
+            ),
+            (
+                "validate_delete_result(deleted, drawer_id=drawer_id)",
+                "validate_delete_result({}, drawer_id=drawer_id)",
+            ),
+            (
+                "validate_not_found_result(absent, drawer_id=drawer_id)",
+                "validate_not_found_result({}, drawer_id=drawer_id)",
+            ),
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                path = manifest_dir / "40-backup.yaml"
+                source = path.read_text()
+                self.assertIn(original, source)
+                path.write_text(source.replace(original, replacement, 1))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertNotEqual(0, result.returncode)
 
     def test_source_mode_requires_exact_marker_locations(self) -> None:
         temporary, manifest_dir = self.copied_manifests()
@@ -215,6 +1139,88 @@ class MemoryValidatorContractTests(unittest.TestCase):
         result = self.validate(manifest_dir, placeholders=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("endpoint", result.stderr)
+
+    def test_backup_suspend_state_accepts_only_one_boolean(self) -> None:
+        for replacement, expected in (
+            ("  suspend: true", 0),
+            ("  suspend: false", 0),
+            ("  suspend: enabled", 1),
+        ):
+            with self.subTest(replacement=replacement):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                path = manifest_dir / "40-backup.yaml"
+                source = path.read_text()
+                current = re.findall(r"(?m)^  suspend: (?:true|false)$", source)
+                self.assertEqual(1, len(current))
+                path.write_text(source.replace(current[0], replacement, 1))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertEqual(expected, int(result.returncode != 0), result.stderr)
+
+    def test_validator_rejects_backup_control_plane_broadening(self) -> None:
+        mutations = (
+            ('resources: ["deployments"]', 'resources: ["deployments", "secrets"]'),
+            ('resourceNames: ["mempalace"]', 'resourceNames: ["mempalace", "other"]'),
+            ('verbs: ["get"]', 'verbs: ["get", "list"]'),
+            ('verbs: ["get", "patch"]', 'verbs: ["get", "patch", "update"]'),
+            ('resources: ["pods"]', 'resources: ["pods", "secrets"]'),
+            ('name: solidstats-memory-backup\n    namespace: solidstats-memory\nroleRef:', 'name: other\n    namespace: solidstats-memory\nroleRef:'),
+            ('app.kubernetes.io/name: solidstats-memory-backup\n  policyTypes:', 'app.kubernetes.io/name: other\n  policyTypes:'),
+            ('cidr: MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR', 'cidr: 10.0.0.0/8'),
+            ('port: MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT', 'port: 443\n        - protocol: TCP\n          port: 6443'),
+        )
+        for original, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                path = manifest_dir / "05-rbac.yaml"
+                source = path.read_text()
+                self.assertIn(original, source)
+                path.write_text(source.replace(original, replacement, 1))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertNotEqual(0, result.returncode)
+
+    def test_validator_rejects_backup_identity_projection_drift(self) -> None:
+        mutations = (
+            ("expirationSeconds: 600", "expirationSeconds: 3600"),
+            ("name: kube-root-ca.crt", "name: other-ca"),
+            ("mountPath: /var/run/secrets/solidstats-memory", "mountPath: /var/run/secrets/kubernetes.io/serviceaccount"),
+            (
+                "mountPath: /var/run/secrets/solidstats-memory\n                  readOnly: true",
+                "mountPath: /var/run/secrets/solidstats-memory\n                  readOnly: false",
+            ),
+        )
+        for original, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                path = manifest_dir / "40-backup.yaml"
+                source = path.read_text()
+                self.assertIn(original, source)
+                path.write_text(source.replace(original, replacement, 1))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertNotEqual(0, result.returncode)
+
+    def test_validator_rejects_backup_container_role_regressions(self) -> None:
+        mutations = (
+            ('command: ["aws"]', 'command: ["/bin/sh", "-ec"]'),
+            ("restartPolicy: Always", "restartPolicy: Never"),
+            ("name: upload-package", "name: snapshot-and-package"),
+            (
+                "image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST",
+                "image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST",
+            ),
+        )
+        for original, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                path = manifest_dir / "40-backup.yaml"
+                source = path.read_text()
+                self.assertIn(original, source)
+                path.write_text(source.replace(original, replacement, 1))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertNotEqual(0, result.returncode)
 
     def test_validator_rejects_broad_or_drifting_mempalace_egress(self) -> None:
         mutations = (
@@ -288,6 +1294,8 @@ class MemoryValidatorContractTests(unittest.TestCase):
             "MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR": "not-a-cidr",
             "MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR": "also-not-a-cidr",
             "MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME": "Invalid_Collection",
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR": "10.0.0.0/8",
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT": "not-a-port",
         }
         for path in manifest_dir.glob("*.yaml"):
             text = path.read_text()
@@ -310,6 +1318,8 @@ class MemoryValidatorContractTests(unittest.TestCase):
             "MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR": "203.0.113.0/24",
             "MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR": "198.51.100.0/24",
             "MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME": "solidstats_memory",
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR": "10.43.0.1/32",
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT": "443",
         }
         for path in manifest_dir.glob("*.yaml"):
             text = path.read_text()

@@ -12,10 +12,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST_DIR = ROOT / "k8s" / "memory"
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-memory.yml"
+RUNTIME_BOOTSTRAP = ROOT / "scripts" / "bootstrap-solidstats-memory-palace.py"
 NAMESPACE = "solidstats-memory"
 EXPECTED = {
     "00-namespace.yaml",
     "01-ci-rbac.yaml",
+    "05-rbac.yaml",
     "10-qdrant.yaml",
     "20-mempalace.yaml",
     "30-network-policy.yaml",
@@ -53,7 +55,10 @@ def field(doc: str, expression: str) -> str | None:
 
 def validate_documents(manifest_dir: Path) -> dict[str, str]:
     files = {path.name for path in manifest_dir.glob("*.yaml")}
-    require(files == EXPECTED, f"manifest set differs from contract: {sorted(files ^ EXPECTED)}")
+    require(
+        files in (EXPECTED, EXPECTED - {"05-rbac.yaml"}),
+        f"manifest set differs from contract: {sorted(files ^ EXPECTED)}",
+    )
     all_docs: dict[str, str] = {}
     for path in sorted(manifest_dir.glob("*.yaml")):
         for index, doc in enumerate(documents(path.read_text()), start=1):
@@ -96,15 +101,74 @@ def require_workload_safety(docs: dict[str, str]) -> None:
         doc = docs[name]
         require("readinessProbe:" in doc and "livenessProbe:" in doc, f"{name} lacks probes")
     require(QDRANT_IMAGE in docs["StatefulSet/qdrant"], "Qdrant image digest is not pinned to the verified artifact")
+    require(
+        'name: QDRANT__SERVICE__JWT_RBAC\n              value: "true"'
+        in docs["StatefulSet/qdrant"],
+        "Qdrant JWT RBAC is not enabled",
+    )
     require("type: ClusterIP" in docs["Service/qdrant"], "Qdrant must be a private ClusterIP service")
     require("clusterIP: None" in docs["Service/qdrant"], "Qdrant StatefulSet requires a headless governing service")
     require("type: LoadBalancer" not in docs["Service/qdrant"] and "type: NodePort" not in docs["Service/qdrant"], "Qdrant is publicly exposed")
     require("type: ClusterIP" in docs["Service/mempalace"], "MemPalace must use an internal ClusterIP service")
     require("mountPath: /qdrant/storage" in docs["StatefulSet/qdrant"], "Qdrant storage mount is missing")
+    require(
+        "name: snapshots\n              mountPath: /qdrant/snapshots"
+        in docs["StatefulSet/qdrant"]
+        and "name: snapshots\n          emptyDir:\n            sizeLimit: 1Gi"
+        in docs["StatefulSet/qdrant"],
+        "Qdrant read-only root lacks a bounded writable snapshot mount",
+    )
     require("claimName: mempalace-data" in docs["Deployment/mempalace"], "MemPalace PVC is missing")
     require("persistentVolumeClaimRetentionPolicy:" in docs["StatefulSet/qdrant"], "Qdrant PVC Retain policy is missing")
     require("name: MEMPALACE_BACKEND\n              value: qdrant" in docs["Deployment/mempalace"], "MemPalace backend is not Qdrant")
     require("name: MEMPALACE_QDRANT_NAMESPACE\n              value: SolidStats" in docs["Deployment/mempalace"], "MemPalace namespace is incorrect")
+    mempalace = docs["Deployment/mempalace"]
+    for required in (
+        "name: runtime-bootstrap",
+        'command: ["python", "/opt/mempalace-bootstrap/bootstrap.py"]',
+        'args: ["offline"]',
+        "name: MEMPALACE_EMBEDDING_MODEL\n              value: embeddinggemma",
+        "name: MEMPALACE_EMBEDDING_DEVICE\n              value: cpu",
+        "name: HF_HOME\n              value: /data/palace/.cache/huggingface",
+        'name: HF_HUB_OFFLINE\n              value: "1"',
+        'name: HF_HUB_DISABLE_TELEMETRY\n              value: "1"',
+        "name: mempalace-runtime-bootstrap\n            defaultMode: 0444",
+    ):
+        require(required in mempalace, f"MemPalace runtime bootstrap misses: {required}")
+    embedding_resources = """resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              cpu: \"1\"
+              memory: 3Gi"""
+    require(
+        mempalace.count(embedding_resources) == 2,
+        "MemPalace init and runtime embedding resources must match the proven 1Gi/3Gi contract",
+    )
+    bootstrap = RUNTIME_BOOTSTRAP.read_text(encoding="utf-8")
+    for required in (
+        "QdrantBackend",
+        "collection.upsert(",
+        "collection.delete(ids=[PROBE_ID])",
+        "collection.set_embedder_identity(",
+        "backend._validate_marker_target(",
+        'HF_HUB_OFFLINE") != "1"',
+    ):
+        require(required in bootstrap, f"runtime bootstrap source misses: {required}")
+    require(
+        "_write_marker(" not in bootstrap and "json.dump(" not in bootstrap,
+        "runtime bootstrap must use the pinned library marker writer",
+    )
+    operator = (ROOT / "scripts" / "operate-solidstats-memory.py").read_text(
+        encoding="utf-8"
+    )
+    for required in (
+        '"bootstrap-runtime-palace"',
+        '"synthetic_residue": 0',
+        '"alias_prestate_restored": True',
+    ):
+        require(required in operator, f"runtime bootstrap operator misses: {required}")
 
 
 def require_network_contract(docs: dict[str, str], source_has_placeholders: bool) -> None:
@@ -115,12 +179,16 @@ def require_network_contract(docs: dict[str, str], source_has_placeholders: bool
         "NetworkPolicy/allow-mempalace-to-qdrant",
         "NetworkPolicy/allow-mempalace-qdrant-egress",
         "NetworkPolicy/allow-backup-to-qdrant",
+        "NetworkPolicy/allow-backup-to-mempalace",
+        "NetworkPolicy/allow-backup-to-mempalace-ingress",
         "NetworkPolicy/allow-backup-upload-egress",
         "NetworkPolicy/allow-prometheus-to-memory-observer",
         "NetworkPolicy/allow-memory-observer-egress",
         "NetworkPolicy/allow-memory-observer-to-mempalace",
         "NetworkPolicy/allow-host-nginx-to-mcp",
     }
+    if "NetworkPolicy/allow-backup-to-kubernetes-api" in docs:
+        required.add("NetworkPolicy/allow-backup-to-kubernetes-api")
     require(required <= policies, f"network policies missing: {sorted(required - policies)}")
 
     observer_ingress = docs["NetworkPolicy/allow-memory-observer-to-mempalace"]
@@ -213,39 +281,249 @@ def require_network_contract(docs: dict[str, str], source_has_placeholders: bool
 
 def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
     backup = docs["CronJob/solidstats-memory-backup"]
-    require("suspend: true" in backup, "backup must start suspended")
-    require("/collections/${QDRANT_COLLECTION}/snapshots" in backup, "backup misses Qdrant snapshot API")
+    suspend = re.findall(r"(?m)^  suspend: (true|false)$", backup)
+    require(len(suspend) == 1, "backup suspend state must be one boolean")
+    require("concurrencyPolicy: Forbid" in backup, "backup concurrency must remain Forbid")
+    require('"/collections/"' in backup and '"/snapshots"' in backup, "backup misses Qdrant snapshot API")
     require("backups/solidstats-memory/" in backup, "backup prefix is incorrect")
     require("mempalace-metadata.tar" in backup and "SHA256SUMS" in backup, "backup misses metadata or checksums")
+    for marker in (
+        "serviceAccountToken:",
+        "expirationSeconds: 600",
+        "name: kube-root-ca.crt",
+        "mountPath: /var/run/secrets/solidstats-memory",
+        "api_token.read_text().strip()",
+        "readOnly: true",
+        '"deployments/mempalace"',
+        'scale_path = deployment_path + "/scale"',
+        "original_generation",
+        "original_writer_pod_count",
+        "original_writer_pods_sha256",
+        "metadata_source_before_sha256",
+        "metadata_source_after_sha256",
+        "metadata_archive_sha256",
+        "canonical_tree_digest",
+        "def restore_writer():",
+        "verification-passed",
+        "writer-restored",
+    ):
+        require(marker in backup, f"backup quiescence contract misses: {marker}")
+    require(
+        "ConfigMap/solidstats-memory-backup-oracle" in docs
+        and "from solidstats_memory_backup_oracle import (" in backup
+        and "validate_delete_result(deleted, drawer_id=drawer_id)" in backup
+        and "validate_not_found_result(absent, drawer_id=drawer_id)" in backup,
+        "backup behavior oracle contract differs",
+    )
     observer = docs["ConfigMap/solidstats-memory-observer"]
     for marker in ("def probe_http", "def parse_collection_health", "def latest_snapshot_timestamp", "def collect_metrics", "class MetricsHandler", "solidstats_memory_mcp_ready", "solidstats_memory_qdrant_collection_healthy"):
         require(marker in observer, f"observer misses {marker}")
     compile(textwrap.dedent(observer.split("exporter.py: |", 1)[1]), "exporter.py", "exec")
     deployment = docs["Deployment/solidstats-memory-observer"]
+    require(
+        "name: memory-observer-runtime" in deployment
+        and "name: qdrant-runtime" not in deployment,
+        "observer must use its read-only Qdrant credential",
+    )
     require("MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST" in deployment or not PLACEHOLDER_RE.search(deployment), "observer image is not rendered")
     require("automountServiceAccountToken: false" in deployment and "port: 9108" in docs["Service/solidstats-memory-observer"], "observer boundary is incomplete")
+
+
+def require_backup_container_contract(
+    docs: dict[str, str], source_has_placeholders: bool
+) -> None:
+    backup = docs["CronJob/solidstats-memory-backup"]
+    for marker in (
+        "initContainers:",
+        "name: control-and-package",
+        "restartPolicy: Always",
+        "startupProbe:",
+        "name: upload-package",
+        "name: download-package",
+        "name: verify-and-release",
+    ):
+        require(marker in backup, f"backup native-sidecar contract misses: {marker}")
+    if source_has_placeholders:
+        require(
+            backup.count("image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST")
+            == 2,
+            "backup controller and verifier must use the approved MemPalace image",
+        )
+        require(
+            backup.count(
+                "image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST"
+            )
+            == 2,
+            "backup upload and download must use the approved AWS CLI image",
+        )
+    else:
+        def container_image(name: str) -> str | None:
+            return field(
+                backup,
+                rf"^\s*- name: {re.escape(name)}\n\s+image:\s*(.+)$",
+            )
+
+        controller_image = container_image("control-and-package")
+        verifier_image = container_image("verify-and-release")
+        upload_image = container_image("upload-package")
+        download_image = container_image("download-package")
+        require(
+            controller_image is not None
+            and controller_image == verifier_image
+            and upload_image is not None
+            and upload_image == download_image
+            and controller_image != upload_image,
+            "rendered backup image roles are invalid",
+        )
+    require(
+        backup.count('command: ["aws"]') == 2,
+        "AWS CLI containers must execute only the aws entrypoint",
+    )
+    require(
+        backup.count('command: ["python3", "-c"]') == 2,
+        "backup controller and verifier must execute local Python only",
+    )
+    require(
+        'command: ["/bin/sh"' not in backup
+        and "snapshot-and-package" not in backup,
+        "backup must not collapse into an unsupported single-container image",
+    )
+    upload = backup.split("- name: upload-package", 1)[1].split(
+        "- name: download-package", 1
+    )[0]
+    download = backup.split("- name: download-package", 1)[1].split(
+        "containers:", 1
+    )[0]
+    for block, direction in ((upload, "/work/upload"), (download, "/work/download")):
+        require(direction in block, f"AWS transfer contract misses: {direction}")
+        require(
+            'command: ["aws"]' in block
+            and "- s3" in block
+            and "- cp" in block
+            and "- --recursive" in block
+            and "- --only-show-errors" in block,
+            "AWS CLI transfer command is not exact",
+        )
+        for forbidden in ('/bin/sh', "curl ", "tar ", "find ", "sed ", "python"):
+            require(forbidden not in block, "AWS CLI container uses unsupported tooling")
+
+
+def require_backup_api_control_contract(
+    docs: dict[str, str], source_has_placeholders: bool
+) -> None:
+    role = docs["Role/solidstats-memory-backup"]
+    binding = docs["RoleBinding/solidstats-memory-backup"]
+    policy = docs["NetworkPolicy/allow-backup-to-kubernetes-api"]
+    backup = docs["CronJob/solidstats-memory-backup"]
+    exact_role_rules = """rules:
+  - apiGroups: [\"apps\"]
+    resources: [\"deployments\"]
+    resourceNames: [\"mempalace\"]
+    verbs: [\"get\"]
+  - apiGroups: [\"apps\"]
+    resources: [\"deployments/scale\"]
+    resourceNames: [\"mempalace\"]
+    verbs: [\"get\", \"patch\"]
+  - apiGroups: [\"\"]
+    resources: [\"pods\"]
+    verbs: [\"list\"]"""
+    require(exact_role_rules in role, "backup Role is not exact least privilege")
+    for forbidden in ('"*"', "ClusterRole", "secrets", '"delete"', '"create"'):
+        require(forbidden not in role, "backup Role exceeds least privilege")
+    exact_subject = """subjects:
+  - kind: ServiceAccount
+    name: solidstats-memory-backup
+    namespace: solidstats-memory
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: solidstats-memory-backup"""
+    require(exact_subject in binding, "backup RoleBinding subject is not exact")
+    exact_projection = """- name: kubernetes-api-access
+              projected:
+                defaultMode: 0400
+                sources:
+                  - serviceAccountToken:
+                      path: token
+                      expirationSeconds: 600
+                  - configMap:
+                      name: kube-root-ca.crt
+                      items:
+                        - key: ca.crt
+                          path: ca.crt"""
+    exact_mount = """- name: kubernetes-api-access
+                  mountPath: /var/run/secrets/solidstats-memory
+                  readOnly: true"""
+    require(exact_projection in backup, "backup projected API identity is not exact")
+    require(exact_mount in backup, "backup API identity mount is not exact")
+    require("audience:" not in backup, "backup API token audience must use the API default")
+    expected_policy = """spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: solidstats-memory-backup
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR
+      ports:
+        - protocol: TCP
+          port: MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT"""
+    if source_has_placeholders:
+        require(
+            policy.split("spec:\n", 1)[-1].strip()
+            == expected_policy.split("spec:\n", 1)[-1].strip(),
+            "backup API policy source contract is not exact",
+        )
+        return
+    cidr = field(policy, r"^            cidr:\s*(.+)$")
+    port = field(policy, r"^          port:\s*(.+)$")
+    require(cidr is not None and port is not None, "backup API binding is absent")
+    try:
+        network = ipaddress.ip_network(cidr, strict=True)
+    except ValueError as error:
+        raise ValidationError("backup API CIDR is invalid") from error
+    require(
+        network.prefixlen == network.max_prefixlen,
+        "backup API destination must be one host prefix",
+    )
+    require(port.isdigit() and 1 <= int(port) <= 65535, "backup API port is invalid")
+    resolved_spec = expected_policy.replace(
+        "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR", cidr
+    ).replace("MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT", port)
+    require(
+        policy.split("spec:\n", 1)[-1].strip()
+        == resolved_spec.split("spec:\n", 1)[-1].strip(),
+        "backup API policy rendered contract is not exact",
+    )
 
 
 def require_operator_placeholder_positions(docs: dict[str, str]) -> list[str]:
     """Keep each evidence gate in its owning field, never in comments."""
     expected = {
-        "StatefulSet/qdrant": ["storage: MEMORY_OPERATOR_MEASURED_QDRANT_PVC_SIZE"],
-        "PersistentVolumeClaim/mempalace-data": ["storage: MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE"],
-        "Deployment/mempalace": ["image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST"],
-        "CronJob/solidstats-memory-backup": [
-            "image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST",
-            "value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
-        ],
+        "StatefulSet/qdrant": {"storage: MEMORY_OPERATOR_MEASURED_QDRANT_PVC_SIZE": 1},
+        "PersistentVolumeClaim/mempalace-data": {"storage: MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE": 1},
+        "Deployment/mempalace": {"image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST": 2},
+        "CronJob/solidstats-memory-backup": {
+            "image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST": 2,
+            "image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST": 2,
+            "value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME": 1,
+        },
         "Deployment/solidstats-memory-observer": [
             "image: MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST",
             "value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
         ],
         "NetworkPolicy/allow-backup-upload-egress": ["cidr: MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR"],
         "NetworkPolicy/allow-host-nginx-to-mcp": ["cidr: MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR"],
+        "NetworkPolicy/allow-backup-to-kubernetes-api": [
+            "cidr: MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR",
+            "port: MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT",
+        ],
     }
     for resource, entries in expected.items():
-        for entry in entries:
-            require(docs[resource].count(entry) == 1, f"operator placeholders must retain expected field: {resource} {entry}")
+        counts = entries if isinstance(entries, dict) else {entry: 1 for entry in entries}
+        for entry, expected_count in counts.items():
+            require(docs[resource].count(entry) == expected_count, f"operator placeholders must retain expected field: {resource} {entry}")
     all_markers = PLACEHOLDER_RE.findall("\n".join(docs.values()))
     expected_markers = {
         "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST",
@@ -256,16 +534,21 @@ def require_operator_placeholder_positions(docs: dict[str, str]) -> list[str]:
         "MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR",
         "MEMORY_OPERATOR_APPROVED_BACKUP_S3_CIDR",
         "MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
+        "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR",
+        "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT",
     }
-    require(set(all_markers) == expected_markers, "operator placeholders differ from the eight evidence gates")
-    require(len(all_markers) == 9, "operator placeholders are missing, duplicated, or misplaced")
+    require(set(all_markers) == expected_markers, "operator placeholders differ from the ten evidence gates")
+    require(len(all_markers) == 15, "operator placeholders are missing, duplicated, or misplaced")
     return sorted(set(all_markers))
 
 
 def require_resolved_value_shapes(docs: dict[str, str]) -> None:
     for resource in ("StatefulSet/qdrant", "Deployment/mempalace", "Deployment/solidstats-memory-observer", "CronJob/solidstats-memory-backup"):
-        image = field(docs[resource], r"^\s+image:\s*(.+)$")
-        require(image is not None and IMAGE_RE.fullmatch(image) is not None, f"{resource} image must be an immutable digest")
+        images = re.findall(r"^\s+image:\s*(.+)$", docs[resource], flags=re.MULTILINE)
+        require(
+            bool(images) and all(IMAGE_RE.fullmatch(image) is not None for image in images),
+            f"{resource} images must be immutable digests",
+        )
     for resource in ("StatefulSet/qdrant", "PersistentVolumeClaim/mempalace-data"):
         size = field(docs[resource], r"^\s*storage:\s*(.+)$")
         require(size is not None and SIZE_RE.fullmatch(size) is not None, f"{resource} storage must be a positive Kubernetes quantity")
@@ -281,7 +564,10 @@ def require_checked_in_staging_config(docs: dict[str, str]) -> None:
     backup = docs["CronJob/solidstats-memory-backup"]
     require("name: S3_ENDPOINT\n                  value: https://s3.twcstorage.ru" in backup, "backup endpoint must be checked in")
     require("name: S3_PREFIX\n                  value: backups/solidstats-memory/" in backup, "backup prefix must be checked in")
-    require('"s3://${S3_BUCKET}/${S3_PREFIX}${backup_id}/"' in backup, "backup upload path is incorrect")
+    require(
+        "s3://$(S3_BUCKET)/$(S3_PREFIX)$(POD_NAME)/" in backup,
+        "backup upload path is incorrect",
+    )
     require("key: S3_ENDPOINT" not in backup and "key: S3_PREFIX" not in backup, "backup endpoint or prefix must not be secret-backed")
 
 
@@ -294,7 +580,17 @@ def require_deploy_input_contract() -> None:
         require(f"secrets.{name}" in workflow and f'required("{name}")' in secret_renderer, f"S3 secret contract missing: {name}")
     names = set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow))
     established = {"DEPLOY_SSH_PRIVATE_KEY", "DEPLOY_SSH_KNOWN_HOSTS", "DEPLOY_SSH_HOST", "DEPLOY_SSH_USER", "K8S_CA_CERT", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_BUCKET"}
-    require(names - established == {"K8S_MEMORY_TOKEN", "MEMORY_QDRANT_API_KEY", "MEMORY_MCP_HTTP_TOKEN"}, "memory-specific secret inventory changed")
+    require(
+        names - established
+        == {
+            "K8S_MEMORY_TOKEN",
+            "MEMORY_QDRANT_API_KEY",
+            "MEMORY_QDRANT_COLLECTION",
+            "MEMORY_QDRANT_LOGICAL_ALIAS",
+            "MEMORY_MCP_HTTP_TOKEN",
+        },
+        "memory-specific secret inventory changed",
+    )
     identity = workflow.index("auth whoami")
     for mutation in ("--dry-run=server", "apply --server-side"):
         require(identity < workflow.index(mutation), "memory identity check must precede mutation")
@@ -312,7 +608,7 @@ def require_rbac_and_workflow_contract(docs: dict[str, str]) -> None:
         "validate-memory-manifests.py --allow-operator-placeholders",
         "render-memory-manifests.py rendered-memory",
         "validate-memory-manifests.py --manifest-dir rendered-memory",
-        "00-namespace.yaml and 01-ci-rbac.yaml are operator bootstrap",
+        "00-namespace.yaml, 01-ci-rbac.yaml, and 05-rbac.yaml are operator",
     ):
         require(expected in workflow, f"memory workflow is missing: {expected}")
     for forbidden in ("secrets.K8S_TOKEN", "K8S_OBS_TOKEN", "K8S_OBS_ET_TOKEN", "ci-k3s-staging", "obs-k3s-staging", "obs-et-k3s-staging"):
@@ -337,7 +633,10 @@ def main() -> None:
     docs = validate_documents(args.manifest_dir)
     require_workload_safety(docs)
     require_network_contract(docs, bool(placeholders))
+    if "Role/solidstats-memory-backup" in docs:
+        require_backup_api_control_contract(docs, bool(placeholders))
     require_backup_monitoring_contract(docs)
+    require_backup_container_contract(docs, bool(placeholders))
     require_checked_in_staging_config(docs)
     require_rbac_and_workflow_contract(docs)
     require_no_secret_values(args.manifest_dir)

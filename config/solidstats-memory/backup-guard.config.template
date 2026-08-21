@@ -1,0 +1,8 @@
+schema=solidstats-memory-backup-guard/v1
+state_root=/var/lib/solidstats-memory-backup-guard
+kubectl_path=MEMORY_OPERATOR_KUBECTL_PATH
+kubeconfig_path=MEMORY_OPERATOR_KUBECONFIG_PATH
+kube_context=MEMORY_OPERATOR_KUBE_CONTEXT
+namespace=solidstats-memory
+cronjob=solidstats-memory-backup
+job_timeout_seconds=MEMORY_OPERATOR_BACKUP_TIMEOUT_SECONDS

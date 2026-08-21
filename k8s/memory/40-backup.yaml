@@ -8,8 +8,19 @@ metadata:
     app.kubernetes.io/part-of: solidstats-memory
 automountServiceAccountToken: false
 ---
-# The job remains suspended until collection naming, uploader image, object-store
-# egress, credentials, and a restore drill are explicitly approved.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: solidstats-memory-backup-oracle
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-backup
+    app.kubernetes.io/part-of: solidstats-memory
+binaryData:
+  solidstats_memory_backup_oracle.py: IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiJFeGFjdCBNZW1QYWxhY2UgdjMuNS4wIGJhY2t1cCBiZWhhdmlvci1vcmFjbGUgcmVzcG9uc2UgY2hlY2tzLgoKUGlubmVkIHNvdXJjZToKaHR0cHM6Ly9naXRodWIuY29tL01lbVBhbGFjZS9tZW1wYWxhY2UvYmxvYi92My41LjAvbWVtcGFsYWNlL21jcF9zZXJ2ZXIucHkjTDI1MzctTDI1OTAKIiIiCgpmcm9tIF9fZnV0dXJlX18gaW1wb3J0IGFubm90YXRpb25zCgppbXBvcnQganNvbgpmcm9tIHR5cGluZyBpbXBvcnQgSXRlcmFibGUsIE1hcHBpbmcKCgpjbGFzcyBCYWNrdXBPcmFjbGVFcnJvcihWYWx1ZUVycm9yKToKICAgICIiIkEgdmFsdWUtZnJlZSBiZWhhdmlvci1vcmFjbGUgY29udHJhY3QgZmFpbHVyZS4iIiIKCgpkZWYgdG9vbF9kYXRhKHJlc3VsdDogTWFwcGluZ1tzdHIsIG9iamVjdF0pIC0+IE1hcHBpbmdbc3RyLCBvYmplY3RdOgogICAgIiIiUmVqZWN0IGV2ZXJ5IHRvb2wgZXJyb3IgYW5kIHJldHVybiBvbmUgc3RydWN0dXJlZCBtYXBwaW5nLiIiIgogICAgaWYgcmVzdWx0LmdldCgiaXNFcnJvciIpIGlzIFRydWU6CiAgICAgICAgcmFpc2UgQmFja3VwT3JhY2xlRXJyb3IoImJlaGF2aW9yIG9yYWNsZSBNQ1AgdG9vbCBjYWxsIGZhaWxlZCIpCiAgICBzdHJ1Y3R1cmVkID0gcmVzdWx0LmdldCgic3RydWN0dXJlZENvbnRlbnQiKQogICAgaWYgaXNpbnN0YW5jZShzdHJ1Y3R1cmVkLCBNYXBwaW5nKToKICAgICAgICByZXR1cm4gc3RydWN0dXJlZAogICAgY29udGVudCA9IHJlc3VsdC5nZXQoImNvbnRlbnQiKQogICAgaWYgaXNpbnN0YW5jZShjb250ZW50LCBsaXN0KToKICAgICAgICBmb3IgaXRlbSBpbiBjb250ZW50OgogICAgICAgICAgICBpZiBub3QgaXNpbnN0YW5jZShpdGVtLCBNYXBwaW5nKSBvciBpdGVtLmdldCgidHlwZSIpICE9ICJ0ZXh0IjoKICAgICAgICAgICAgICAgIGNvbnRpbnVlCiAgICAgICAgICAgIHRleHQgPSBpdGVtLmdldCgidGV4dCIpCiAgICAgICAgICAgIGlmIG5vdCBpc2luc3RhbmNlKHRleHQsIHN0cik6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICBkZWNvZGVkID0ganNvbi5sb2Fkcyh0ZXh0KQogICAgICAgICAgICBleGNlcHQganNvbi5KU09ORGVjb2RlRXJyb3I6CiAgICAgICAgICAgICAgICBjb250aW51ZQogICAgICAgICAgICBpZiBpc2luc3RhbmNlKGRlY29kZWQsIE1hcHBpbmcpOgogICAgICAgICAgICAgICAgcmV0dXJuIGRlY29kZWQKICAgIHJhaXNlIEJhY2t1cE9yYWNsZUVycm9yKCJiZWhhdmlvciBvcmFjbGUgcmVzdWx0IGlzIHVuc3RydWN0dXJlZCIpCgoKZGVmIHZhbGlkYXRlX2RlbGV0ZV9yZXN1bHQoCiAgICByZXN1bHQ6IE1hcHBpbmdbc3RyLCBvYmplY3RdLCAqLCBkcmF3ZXJfaWQ6IHN0cgopIC0+IE5vbmU6CiAgICAiIiJSZXF1aXJlIHRoZSBleGFjdCBzdWNjZXNzZnVsIE1lbVBhbGFjZSB2My41LjAgZGVsZXRlIHJlc3VsdC4iIiIKICAgIGRlbGV0ZWRfaWRzID0gcmVzdWx0LmdldCgiZGVsZXRlZF9pZHMiKQogICAgY2h1bmtzX2RlbGV0ZWQgPSByZXN1bHQuZ2V0KCJjaHVua3NfZGVsZXRlZCIpCiAgICBpZiAoCiAgICAgICAgc2V0KHJlc3VsdCkKICAgICAgICAhPSB7InN1Y2Nlc3MiLCAiZHJhd2VyX2lkIiwgImRlbGV0ZWRfaWRzIiwgImNodW5rc19kZWxldGVkIn0KICAgICAgICBvciByZXN1bHQuZ2V0KCJzdWNjZXNzIikgaXMgbm90IFRydWUKICAgICAgICBvciByZXN1bHQuZ2V0KCJkcmF3ZXJfaWQiKSAhPSBkcmF3ZXJfaWQKICAgICAgICBvciBub3QgaXNpbnN0YW5jZShkZWxldGVkX2lkcywgbGlzdCkKICAgICAgICBvciBub3QgZGVsZXRlZF9pZHMKICAgICAgICBvciBub3QgYWxsKGlzaW5zdGFuY2UodmFsdWUsIHN0cikgYW5kIHZhbHVlIGZvciB2YWx1ZSBpbiBkZWxldGVkX2lkcykKICAgICAgICBvciB0eXBlKGNodW5rc19kZWxldGVkKSBpcyBub3QgaW50CiAgICAgICAgb3IgY2h1bmtzX2RlbGV0ZWQgIT0gbGVuKGRlbGV0ZWRfaWRzKQogICAgKToKICAgICAgICByYWlzZSBCYWNrdXBPcmFjbGVFcnJvcigiYmVoYXZpb3Igb3JhY2xlIGNsZWFudXAgY29udHJhY3QgZmFpbGVkIikKCgpkZWYgdmFsaWRhdGVfbm90X2ZvdW5kX3Jlc3VsdCgKICAgIHJlc3VsdDogTWFwcGluZ1tzdHIsIG9iamVjdF0sICosIGRyYXdlcl9pZDogc3RyCikgLT4gTm9uZToKICAgICIiIlJlcXVpcmUgdGhlIGV4YWN0IHYzLjUuMCBnZXQtZHJhd2VyIG5vdC1mb3VuZCBtYXBwaW5nLiIiIgogICAgaWYgcmVzdWx0ICE9IHsiZXJyb3IiOiBmIkRyYXdlciBub3QgZm91bmQ6IHtkcmF3ZXJfaWR9In06CiAgICAgICAgcmFpc2UgQmFja3VwT3JhY2xlRXJyb3IoImJlaGF2aW9yIG9yYWNsZSBjbGVhbnVwIGFic2VuY2UgZmFpbGVkIikKCgpkZWYgcmVxdWlyZV9leGFjdF9hYnNlbmNlKAogICAgZHJhd2VyX2lkOiBzdHIsIHBhZ2VzOiBJdGVyYWJsZVtNYXBwaW5nW3N0ciwgb2JqZWN0XV0KKSAtPiBOb25lOgogICAgIiIiUHJvdmUgZXhhY3QtSUQgYWJzZW5jZSBmcm9tIG9uZSBjb21wbGV0ZSBib3VuZGVkIGxpc3QgdHJhdmVyc2FsLiIiIgogICAgZm91bmQ6IHNldFtzdHJdID0gc2V0KCkKICAgIGV4cGVjdGVkX3RvdGFsOiBpbnQgfCBOb25lID0gTm9uZQogICAgZXhwZWN0ZWRfb2Zmc2V0ID0gMAogICAgZm9yIHBhZ2VfbnVtYmVyLCBwYWdlIGluIGVudW1lcmF0ZShwYWdlcyk6CiAgICAgICAgZHJhd2VycyA9IHBhZ2UuZ2V0KCJkcmF3ZXJzIikKICAgICAgICB0b3RhbCA9IHBhZ2UuZ2V0KCJ0b3RhbCIpCiAgICAgICAgY291bnQgPSBwYWdlLmdldCgiY291bnQiKQogICAgICAgIG9mZnNldCA9IHBhZ2UuZ2V0KCJvZmZzZXQiKQogICAgICAgIGxpbWl0ID0gcGFnZS5nZXQoImxpbWl0IikKICAgICAgICBpZiAoCiAgICAgICAgICAgIHNldChwYWdlKSAhPSB7ImRyYXdlcnMiLCAidG90YWwiLCAiY291bnQiLCAib2Zmc2V0IiwgImxpbWl0In0KICAgICAgICAgICAgb3Igbm90IGlzaW5zdGFuY2UoZHJhd2VycywgbGlzdCkKICAgICAgICAgICAgb3IgdHlwZSh0b3RhbCkgaXMgbm90IGludAogICAgICAgICAgICBvciB0eXBlKGNvdW50KSBpcyBub3QgaW50CiAgICAgICAgICAgIG9yIHR5cGUob2Zmc2V0KSBpcyBub3QgaW50CiAgICAgICAgICAgIG9yIHR5cGUobGltaXQpIGlzIG5vdCBpbnQKICAgICAgICAgICAgb3IgY291bnQgIT0gbGVuKGRyYXdlcnMpCiAgICAgICAgICAgIG9yIG9mZnNldCAhPSBleHBlY3RlZF9vZmZzZXQKICAgICAgICAgICAgb3IgbGltaXQgPCAxCiAgICAgICAgICAgIG9yIGxpbWl0ID4gMTAwCiAgICAgICAgICAgIG9yIHRvdGFsIDwgMAogICAgICAgICAgICBvciB0b3RhbCA+IDEwXzAwMAogICAgICAgICAgICBvciAoZXhwZWN0ZWRfdG90YWwgaXMgbm90IE5vbmUgYW5kIHRvdGFsICE9IGV4cGVjdGVkX3RvdGFsKQogICAgICAgICk6CiAgICAgICAgICAgIHJhaXNlIEJhY2t1cE9yYWNsZUVycm9yKCJiZWhhdmlvciBvcmFjbGUgaW52ZW50b3J5IGlzIGludmFsaWQiKQogICAgICAgIGV4cGVjdGVkX3RvdGFsID0gdG90YWwKICAgICAgICBleHBlY3RlZF9vZmZzZXQgKz0gY291bnQKICAgICAgICBmb3IgaXRlbSBpbiBkcmF3ZXJzOgogICAgICAgICAgICBpZiBub3QgaXNpbnN0YW5jZShpdGVtLCBNYXBwaW5nKToKICAgICAgICAgICAgICAgIHJhaXNlIEJhY2t1cE9yYWNsZUVycm9yKCJiZWhhdmlvciBvcmFjbGUgaW52ZW50b3J5IGlzIGludmFsaWQiKQogICAgICAgICAgICBjYW5kaWRhdGUgPSBpdGVtLmdldCgiZHJhd2VyX2lkIikgb3IgaXRlbS5nZXQoImlkIikKICAgICAgICAgICAgaWYgbm90IGlzaW5zdGFuY2UoY2FuZGlkYXRlLCBzdHIpIG9yIG5vdCBjYW5kaWRhdGUgb3IgY2FuZGlkYXRlIGluIGZvdW5kOgogICAgICAgICAgICAgICAgcmFpc2UgQmFja3VwT3JhY2xlRXJyb3IoImJlaGF2aW9yIG9yYWNsZSBpbnZlbnRvcnkgaXMgaW52YWxpZCIpCiAgICAgICAgICAgIGZvdW5kLmFkZChjYW5kaWRhdGUpCiAgICAgICAgaWYgcGFnZV9udW1iZXIgPj0gOTk6CiAgICAgICAgICAgIHJhaXNlIEJhY2t1cE9yYWNsZUVycm9yKCJiZWhhdmlvciBvcmFjbGUgaW52ZW50b3J5IGV4Y2VlZGVkIGl0cyBib3VuZCIpCiAgICBpZiBleHBlY3RlZF90b3RhbCBpcyBOb25lIG9yIGxlbihmb3VuZCkgIT0gZXhwZWN0ZWRfdG90YWw6CiAgICAgICAgcmFpc2UgQmFja3VwT3JhY2xlRXJyb3IoImJlaGF2aW9yIG9yYWNsZSBpbnZlbnRvcnkgaXMgaW5jb21wbGV0ZSIpCiAgICBpZiBkcmF3ZXJfaWQgaW4gZm91bmQ6CiAgICAgICAgcmFpc2UgQmFja3VwT3JhY2xlRXJyb3IoImJlaGF2aW9yIG9yYWNsZSBjbGVhbnVwIGFic2VuY2UgZmFpbGVkIikK
+---
+# The native sidecar owns writer quiescence and restoration across both
+# AWS-only transfer stages. Keep this schedule suspended until live proof.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -21,12 +32,13 @@ metadata:
 spec:
   schedule: "0 5 * * *"
   timeZone: Europe/Moscow
-  suspend: true
+  suspend: false
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 7
   failedJobsHistoryLimit: 7
   jobTemplate:
     spec:
+      activeDeadlineSeconds: 3600
       backoffLimit: 1
       ttlSecondsAfterFinished: 604800
       template:
@@ -38,6 +50,7 @@ spec:
           restartPolicy: Never
           serviceAccountName: solidstats-memory-backup
           automountServiceAccountToken: false
+          terminationGracePeriodSeconds: 360
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
@@ -45,38 +58,320 @@ spec:
             fsGroup: 1000
             seccompProfile:
               type: RuntimeDefault
-          containers:
-            - name: snapshot-and-package
-              image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST
+          initContainers:
+            - name: control-and-package
+              image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST
               imagePullPolicy: IfNotPresent
-              command: ["/bin/sh", "-ec"]
+              restartPolicy: Always
+              command: ["python3", "-c"]
               args:
                 - |
-                  backup_id="$(date -u +%Y%m%dT%H%M%SZ)"
-                  work_dir="/tmp/${backup_id}"
-                  mkdir -p "${work_dir}"
-                  snapshot_json="${work_dir}/snapshot.json"
-                  curl --fail --show-error --silent \
-                    -X POST \
-                    -H "api-key: ${QDRANT_API_KEY}" \
-                    "${QDRANT_URL}/collections/${QDRANT_COLLECTION}/snapshots" \
-                    > "${snapshot_json}"
-                  snapshot_name="$(tr -d '[:space:]' < "${snapshot_json}" | sed -n 's/.*\"name\":\"\([^\"]*\)\".*/\1/p' | head -n 1)"
-                  test -n "${snapshot_name}"
-                  curl --fail --show-error --silent \
-                    -H "api-key: ${QDRANT_API_KEY}" \
-                    "${QDRANT_URL}/collections/${QDRANT_COLLECTION}/snapshots/${snapshot_name}" \
-                    -o "${work_dir}/qdrant.snapshot"
-                  tar --create --file "${work_dir}/mempalace-metadata.tar" \
-                    --directory /metadata palace
-                  sha256sum "${work_dir}/qdrant.snapshot" \
-                    "${work_dir}/mempalace-metadata.tar" > "${work_dir}/SHA256SUMS"
-                  printf '{\"backup_id\":\"%s\",\"collection\":\"%s\",\"snapshot\":\"%s\"}\n' \
-                    "${backup_id}" "${QDRANT_COLLECTION}" "${snapshot_name}" \
-                    > "${work_dir}/manifest.json"
-                  aws --endpoint-url "${S3_ENDPOINT}" s3 cp --recursive \
-                    "${work_dir}" "s3://${S3_BUCKET}/${S3_PREFIX}${backup_id}/"
+                  import hashlib
+                  import json
+                  import os
+                  from pathlib import Path
+                  import shutil
+                  import signal
+                  import ssl
+                  import tarfile
+                  import time
+                  from urllib import parse, request
+
+                  work = Path("/work")
+                  upload = work / "upload"
+                  extracted = work / "controller-extracted"
+                  package_ready = work / "package-ready"
+                  verification_passed = work / "verification-passed"
+                  writer_restored = work / "writer-restored"
+                  controller_failed = work / "controller-failed"
+                  terminating = False
+                  restore_required = False
+                  original_replicas = None
+
+                  def stop(_signum, _frame):
+                      global terminating
+                      terminating = True
+
+                  signal.signal(signal.SIGTERM, stop)
+                  signal.signal(signal.SIGINT, stop)
+
+                  api_root = (
+                      "https://"
+                      + os.environ["KUBERNETES_SERVICE_HOST"]
+                      + ":"
+                      + os.environ["KUBERNETES_SERVICE_PORT_HTTPS"]
+                  )
+                  api_ca = "/var/run/secrets/solidstats-memory/ca.crt"
+                  api_token = Path("/var/run/secrets/solidstats-memory/token")
+                  api_tls = ssl.create_default_context(cafile=api_ca)
+                  deployment_path = (
+                      "/apis/apps/v1/namespaces/solidstats-memory/"
+                      "deployments/mempalace"
+                  )
+                  scale_path = deployment_path + "/scale"
+                  pods_path = "/api/v1/namespaces/solidstats-memory/pods"
+                  writer_pods_path = (
+                      pods_path
+                      + "?labelSelector=app.kubernetes.io%2Fname%3Dmempalace"
+                  )
+
+                  def api(method, path, body=None):
+                      headers = {
+                          "Authorization": "Bearer " + api_token.read_text().strip()
+                      }
+                      data = None
+                      if body is not None:
+                          headers["Content-Type"] = "application/merge-patch+json"
+                          data = json.dumps(body, separators=(",", ":")).encode()
+                      operation = request.Request(
+                          api_root + path, data=data, headers=headers, method=method
+                      )
+                      with request.urlopen(operation, context=api_tls, timeout=30) as response:
+                          return json.load(response)
+
+                  def active_pods(document):
+                      return [
+                          pod
+                          for pod in document.get("items", [])
+                          if pod.get("metadata", {}).get("deletionTimestamp") is None
+                          and pod.get("status", {}).get("phase")
+                          not in {"Failed", "Succeeded"}
+                      ]
+
+                  def canonical_tree_digest(root):
+                      root = Path(root)
+                      resolved_root = root.resolve(strict=True)
+                      digest = hashlib.sha256()
+                      for path in sorted(root.rglob("*")):
+                          relative = path.relative_to(root).as_posix().encode()
+                          if path.is_symlink():
+                              target = os.readlink(path)
+                              if Path(target).is_absolute():
+                                  raise RuntimeError("absolute metadata symlink is not allowed")
+                              try:
+                                  resolved = path.resolve(strict=True)
+                                  resolved.relative_to(resolved_root)
+                              except (OSError, ValueError) as exc:
+                                  raise RuntimeError(
+                                      "escaping metadata symlink is not allowed"
+                                  ) from exc
+                              if not resolved.is_file():
+                                  raise RuntimeError(
+                                      "metadata symlink target must be a regular file"
+                                  )
+                              digest.update(relative + b"\0L\0")
+                              digest.update(target.encode("utf-8") + b"\0")
+                              digest.update(
+                                  hashlib.sha256(resolved.read_bytes()).digest()
+                              )
+                              continue
+                          if not path.is_file():
+                              continue
+                          digest.update(relative + b"\0F\0")
+                          digest.update(hashlib.sha256(path.read_bytes()).digest())
+                      return digest.hexdigest()
+
+                  def file_sha256(path):
+                      digest = hashlib.sha256()
+                      with Path(path).open("rb") as source:
+                          for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                              digest.update(chunk)
+                      return digest.hexdigest()
+
+                  def mark(path):
+                      temporary = path.with_suffix(".tmp")
+                      temporary.write_text("complete\n", encoding="ascii")
+                      temporary.replace(path)
+
+                  def restore_writer():
+                      global restore_required
+                      if not restore_required:
+                          return
+                      api("PATCH", scale_path, {"spec": {"replicas": original_replicas}})
+                      deadline = time.monotonic() + 300
+                      while time.monotonic() < deadline:
+                          deployment = api("GET", deployment_path)
+                          available = deployment.get("status", {}).get(
+                              "availableReplicas", 0
+                          )
+                          if available == original_replicas:
+                              restore_required = False
+                              mark(writer_restored)
+                              return
+                          time.sleep(5)
+                      raise RuntimeError("writer availability restoration timed out")
+
+                  try:
+                      if controller_failed.exists():
+                          while not terminating:
+                              time.sleep(1)
+                      else:
+                          work.mkdir(mode=0o700, exist_ok=True)
+                          upload.mkdir(mode=0o700)
+                          deployment = api("GET", deployment_path)
+                          original_generation = deployment.get("metadata", {}).get(
+                              "generation"
+                          )
+                          scale = api("GET", scale_path)
+                          original_replicas = scale.get("spec", {}).get("replicas")
+                          writer_pods = active_pods(api("GET", writer_pods_path))
+                          original_writer_pod_count = len(writer_pods)
+                          original_writer_pods_sha256 = hashlib.sha256(
+                              json.dumps(
+                                  writer_pods,
+                                  allow_nan=False,
+                                  separators=(",", ":"),
+                                  sort_keys=True,
+                              ).encode()
+                          ).hexdigest()
+                          if (
+                              not isinstance(original_generation, int)
+                              or not isinstance(original_replicas, int)
+                              or original_replicas < 1
+                              or original_writer_pod_count != original_replicas
+                          ):
+                              raise RuntimeError("writer pre-state is invalid")
+                          restore_required = True
+                          api("PATCH", scale_path, {"spec": {"replicas": 0}})
+                          deadline = time.monotonic() + 300
+                          while time.monotonic() < deadline:
+                              all_pods = active_pods(api("GET", pods_path))
+                              writer_count = len(active_pods(api("GET", writer_pods_path)))
+                              pvc_consumer_count = sum(
+                                  1
+                                  for pod in all_pods
+                                  if any(
+                                      volume.get("persistentVolumeClaim", {}).get(
+                                          "claimName"
+                                      )
+                                      == "mempalace-data"
+                                      for volume in pod.get("spec", {}).get("volumes", [])
+                                  )
+                              )
+                              if writer_count == 0 and pvc_consumer_count == 1:
+                                  break
+                              time.sleep(5)
+                          else:
+                              raise RuntimeError("writer quiescence timed out")
+
+                          metadata_root = Path("/metadata/palace")
+                          metadata_source_before_sha256 = canonical_tree_digest(
+                              metadata_root
+                          )
+                          qdrant_root = os.environ["QDRANT_URL"].rstrip("/")
+                          collection = parse.quote(
+                              os.environ["QDRANT_COLLECTION"], safe=""
+                          )
+                          qdrant_headers = {
+                              "api-key": os.environ["QDRANT_API_KEY"]
+                          }
+                          create_snapshot = request.Request(
+                              qdrant_root
+                              + "/collections/"
+                              + collection
+                              + "/snapshots",
+                              headers=qdrant_headers,
+                              method="POST",
+                          )
+                          with request.urlopen(create_snapshot, timeout=300) as response:
+                              snapshot = json.load(response)
+                          snapshot_name = snapshot.get("result", {}).get("name")
+                          if not isinstance(snapshot_name, str) or not snapshot_name:
+                              raise RuntimeError("Qdrant snapshot response is invalid")
+                          download_snapshot = request.Request(
+                              qdrant_root
+                              + "/collections/"
+                              + collection
+                              + "/snapshots/"
+                              + parse.quote(snapshot_name, safe=""),
+                              headers=qdrant_headers,
+                          )
+                          with request.urlopen(download_snapshot, timeout=900) as response:
+                              (upload / "qdrant.snapshot").write_bytes(response.read())
+                          metadata_archive = upload / "mempalace-metadata.tar"
+                          with tarfile.open(metadata_archive, "w") as archive:
+                              archive.add(metadata_root, arcname="palace")
+                          metadata_source_after_sha256 = canonical_tree_digest(
+                              metadata_root
+                          )
+                          extracted.mkdir(mode=0o700)
+                          with tarfile.open(metadata_archive) as archive:
+                              archive.extractall(extracted, filter="data")
+                          metadata_archive_sha256 = canonical_tree_digest(
+                              extracted / "palace"
+                          )
+                          shutil.rmtree(extracted)
+                          if not (
+                              metadata_source_before_sha256
+                              == metadata_source_after_sha256
+                              == metadata_archive_sha256
+                          ):
+                              raise RuntimeError("metadata consistency check failed")
+                          manifest = {
+                              "schema": "solidstats-memory-recurring-backup/v1",
+                              "backup_id": os.environ["POD_NAME"],
+                              "collection": os.environ["QDRANT_COLLECTION"],
+                              "snapshot": snapshot_name,
+                              "writer_replicas": original_replicas,
+                              "writer_generation": original_generation,
+                              "writer_pods_sha256": original_writer_pods_sha256,
+                              "metadata_source_before_sha256": metadata_source_before_sha256,
+                              "metadata_source_after_sha256": metadata_source_after_sha256,
+                              "metadata_archive_sha256": metadata_archive_sha256,
+                              "members": {
+                                  "mempalace-metadata.tar": file_sha256(metadata_archive),
+                                  "qdrant.snapshot": file_sha256(
+                                      upload / "qdrant.snapshot"
+                                  ),
+                              },
+                          }
+                          (upload / "manifest.json").write_text(
+                              json.dumps(
+                                  manifest,
+                                  allow_nan=False,
+                                  separators=(",", ":"),
+                                  sort_keys=True,
+                              )
+                              + "\n",
+                              encoding="utf-8",
+                          )
+                          names = (
+                              "manifest.json",
+                              "mempalace-metadata.tar",
+                              "qdrant.snapshot",
+                          )
+                          (upload / "SHA256SUMS").write_text(
+                              "".join(
+                                  file_sha256(upload / name) + "  " + name + "\n"
+                                  for name in names
+                              ),
+                              encoding="ascii",
+                          )
+                          mark(package_ready)
+                          while not verification_passed.exists() and not terminating:
+                              time.sleep(1)
+                          if not terminating:
+                              restore_writer()
+                              while not terminating:
+                                  time.sleep(1)
+                  except BaseException:
+                      mark(controller_failed)
+                      try:
+                          restore_writer()
+                      except BaseException:
+                          pass
+                      while not terminating:
+                          time.sleep(1)
+                  finally:
+                      try:
+                          restore_writer()
+                      except BaseException:
+                          pass
               env:
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
                 - name: QDRANT_URL
                   value: http://qdrant:6333
                 - name: QDRANT_COLLECTION
@@ -86,6 +381,54 @@ spec:
                     secretKeyRef:
                       name: memory-backup-runtime
                       key: QDRANT_API_KEY
+              startupProbe:
+                exec:
+                  command:
+                    - python3
+                    - -c
+                    - raise SystemExit(0 if __import__('pathlib').Path('/work/package-ready').is_file() else 1)
+                periodSeconds: 2
+                timeoutSeconds: 1
+                failureThreshold: 1800
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: mempalace-data
+                  mountPath: /metadata
+                  readOnly: true
+                - name: work
+                  mountPath: /work
+                - name: kubernetes-api-access
+                  mountPath: /var/run/secrets/solidstats-memory
+                  readOnly: true
+            - name: upload-package
+              image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST
+              imagePullPolicy: IfNotPresent
+              command: ["aws"]
+              args:
+                - --endpoint-url
+                - $(S3_ENDPOINT)
+                - s3
+                - cp
+                - --recursive
+                - /work/upload
+                - s3://$(S3_BUCKET)/$(S3_PREFIX)$(POD_NAME)/
+                - --only-show-errors
+              env: &aws-transfer-env
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
                 - name: S3_ENDPOINT
                   value: https://s3.twcstorage.ru
                 - name: S3_PREFIX
@@ -107,27 +450,280 @@ spec:
                       key: AWS_SECRET_ACCESS_KEY
                 - name: AWS_EC2_METADATA_DISABLED
                   value: "true"
-              resources:
+              resources: &aws-transfer-resources
                 requests:
                   cpu: 100m
                   memory: 256Mi
                 limits:
                   cpu: "1"
                   memory: 1Gi
-              securityContext:
+              securityContext: &restricted-container
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
                 capabilities:
                   drop: ["ALL"]
               volumeMounts:
-                - name: mempalace-data
-                  mountPath: /metadata
+                - name: work
+                  mountPath: /work
+            - name: download-package
+              image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST
+              imagePullPolicy: IfNotPresent
+              command: ["aws"]
+              args:
+                - --endpoint-url
+                - $(S3_ENDPOINT)
+                - s3
+                - cp
+                - --recursive
+                - s3://$(S3_BUCKET)/$(S3_PREFIX)$(POD_NAME)/
+                - /work/download
+                - --only-show-errors
+              env: *aws-transfer-env
+              resources: *aws-transfer-resources
+              securityContext: *restricted-container
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+          containers:
+            - name: verify-and-release
+              image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST
+              imagePullPolicy: IfNotPresent
+              command: ["python3", "-c"]
+              args:
+                - |
+                  import hashlib
+                  import json
+                  import os
+                  from pathlib import Path
+                  import shutil
+                  import sys
+                  import tarfile
+                  import time
+                  from urllib import request
+
+                  sys.path.insert(0, "/opt/solidstats-memory-oracle")
+                  from solidstats_memory_backup_oracle import (
+                      tool_data,
+                      validate_delete_result,
+                      validate_not_found_result,
+                  )
+
+                  work = Path("/work")
+                  downloaded = work / "download"
+                  controller_failed = work / "controller-failed"
+                  verification_passed = work / "verification-passed"
+                  writer_restored = work / "writer-restored"
+
+                  def file_sha256(path):
+                      digest = hashlib.sha256()
+                      with Path(path).open("rb") as source:
+                          for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                              digest.update(chunk)
+                      return digest.hexdigest()
+
+                  def canonical_tree_digest(root):
+                      root = Path(root)
+                      resolved_root = root.resolve(strict=True)
+                      digest = hashlib.sha256()
+                      for path in sorted(root.rglob("*")):
+                          relative = path.relative_to(root).as_posix().encode()
+                          if path.is_symlink():
+                              target = os.readlink(path)
+                              if Path(target).is_absolute():
+                                  raise RuntimeError("absolute metadata symlink is not allowed")
+                              try:
+                                  resolved = path.resolve(strict=True)
+                                  resolved.relative_to(resolved_root)
+                              except (OSError, ValueError) as exc:
+                                  raise RuntimeError(
+                                      "escaping metadata symlink is not allowed"
+                                  ) from exc
+                              if not resolved.is_file():
+                                  raise RuntimeError(
+                                      "metadata symlink target must be a regular file"
+                                  )
+                              digest.update(relative + b"\0L\0")
+                              digest.update(target.encode("utf-8") + b"\0")
+                              digest.update(
+                                  hashlib.sha256(resolved.read_bytes()).digest()
+                              )
+                              continue
+                          if not path.is_file():
+                              continue
+                          digest.update(relative + b"\0F\0")
+                          digest.update(hashlib.sha256(path.read_bytes()).digest())
+                      return digest.hexdigest()
+
+                  expected = {
+                      "SHA256SUMS",
+                      "manifest.json",
+                      "mempalace-metadata.tar",
+                      "qdrant.snapshot",
+                  }
+                  if {path.name for path in downloaded.iterdir()} != expected:
+                      raise RuntimeError("downloaded package inventory is invalid")
+                  checksum_lines = (downloaded / "SHA256SUMS").read_text(
+                      encoding="ascii"
+                  ).splitlines()
+                  checksums = {}
+                  for line in checksum_lines:
+                      checksum, name = line.split("  ", 1)
+                      checksums[name] = checksum
+                  if set(checksums) != expected - {"SHA256SUMS"}:
+                      raise RuntimeError("checksum inventory is invalid")
+                  for name, checksum in checksums.items():
+                      if file_sha256(downloaded / name) != checksum:
+                          raise RuntimeError("downloaded checksum mismatch")
+                  manifest = json.loads(
+                      (downloaded / "manifest.json").read_text(encoding="utf-8")
+                  )
+                  if manifest.get("schema") != "solidstats-memory-recurring-backup/v1":
+                      raise RuntimeError("backup manifest schema is invalid")
+                  before = manifest.get("metadata_source_before_sha256")
+                  after = manifest.get("metadata_source_after_sha256")
+                  archive_digest = manifest.get("metadata_archive_sha256")
+                  if not before == after == archive_digest:
+                      raise RuntimeError("metadata digest evidence is inconsistent")
+                  extracted = work / "verifier-extracted"
+                  extracted.mkdir(mode=0o700)
+                  with tarfile.open(downloaded / "mempalace-metadata.tar") as archive:
+                      archive.extractall(extracted, filter="data")
+                  if canonical_tree_digest(extracted / "palace") != archive_digest:
+                      raise RuntimeError("extracted archive digest mismatch")
+                  shutil.rmtree(extracted)
+                  members = manifest.get("members", {})
+                  if members != {
+                      "mempalace-metadata.tar": file_sha256(
+                          downloaded / "mempalace-metadata.tar"
+                      ),
+                      "qdrant.snapshot": file_sha256(downloaded / "qdrant.snapshot"),
+                  }:
+                      raise RuntimeError("backup member digests are invalid")
+                  verification_passed.write_text("complete\n", encoding="ascii")
+                  deadline = time.monotonic() + 300
+                  while time.monotonic() < deadline:
+                      if controller_failed.exists():
+                          raise RuntimeError("backup controller failed")
+                      if writer_restored.exists():
+                          break
+                      time.sleep(1)
+                  else:
+                      raise RuntimeError("writer restoration was not confirmed")
+                  mcp_url = "http://mempalace:8765/mcp"
+                  token = os.environ["MEMPALACE_MCP_HTTP_TOKEN"]
+                  next_id = 1
+                  session = None
+
+                  def mcp(method, params, *, allow_tool_error=False):
+                      global next_id, session
+                      body = json.dumps({
+                          "jsonrpc": "2.0", "id": next_id,
+                          "method": method, "params": params,
+                      }, separators=(",", ":")).encode()
+                      headers = {
+                          "Authorization": "Bearer " + token,
+                          "Content-Type": "application/json",
+                          "Accept": "application/json, text/event-stream",
+                      }
+                      if session:
+                          headers["Mcp-Session-Id"] = session
+                          headers["MCP-Protocol-Version"] = "2025-06-18"
+                      operation = request.Request(mcp_url, body, headers, method="POST")
+                      with request.urlopen(operation, timeout=30) as response:
+                          raw = response.read(1024 * 1024)
+                          session = session or response.headers.get("Mcp-Session-Id")
+                      if raw.startswith(b"data:"):
+                          raw = next(line[5:].strip() for line in raw.splitlines() if line.startswith(b"data:"))
+                      payload = json.loads(raw)
+                      if payload.get("id") != next_id or "error" in payload:
+                          raise RuntimeError("behavior oracle MCP call failed")
+                      next_id += 1
+                      result = payload["result"]
+                      if not isinstance(result, dict) or (
+                          result.get("isError") is True and not allow_tool_error
+                      ):
+                          raise RuntimeError("behavior oracle MCP tool call failed")
+                      return result
+
+                  initialized = mcp("initialize", {
+                      "protocolVersion": "2025-06-18", "capabilities": {},
+                      "clientInfo": {"name": "backup-oracle", "version": "1"},
+                  })
+                  if initialized.get("protocolVersion") != "2025-06-18":
+                      raise RuntimeError("behavior oracle negotiation failed")
+                  marker = "phase21-backup-oracle:" + os.environ["POD_NAME"]
+                  created = mcp("tools/call", {"name": "mempalace_add_drawer", "arguments": {
+                      "wing": "infrastructure", "room": "migrations",
+                      "content": marker, "added_by": "backup-oracle",
+                  }})
+                  structured = tool_data(created)
+                  drawer_id = structured.get("drawer_id") or structured.get("id")
+                  if not drawer_id:
+                      raise RuntimeError("behavior oracle capture failed")
+                  read_back = tool_data(mcp("tools/call", {"name": "mempalace_get_drawer", "arguments": {"drawer_id": drawer_id}}))
+                  if read_back.get("content") != marker:
+                      raise RuntimeError("behavior oracle read-after-write failed")
+                  deleted = tool_data(mcp("tools/call", {"name": "mempalace_delete_drawer", "arguments": {"drawer_id": drawer_id}}))
+                  validate_delete_result(deleted, drawer_id=drawer_id)
+                  absent = tool_data(mcp("tools/call", {
+                      "name": "mempalace_get_drawer",
+                      "arguments": {"drawer_id": drawer_id},
+                  }))
+                  validate_not_found_result(absent, drawer_id=drawer_id)
+                  print("PASS: writer-restored=pass", flush=True)
+                  print("PASS: behavior-oracle=pass", flush=True)
+                  print("PASS: metadata-sha256=" + archive_digest, flush=True)
+                  inventory_raw = json.dumps(
+                      {name: checksums.get(name, file_sha256(downloaded / name)) for name in sorted(expected)},
+                      separators=(",", ":"), sort_keys=True,
+                  ).encode()
+                  print("PASS: package-file-count=4", flush=True)
+                  print("PASS: package-inventory-sha256=" + hashlib.sha256(inventory_raw).hexdigest(), flush=True)
+                  print("PASS: downloaded=pass", flush=True)
+                  print("PASS: checksums-rechecked=pass", flush=True)
+              env:
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: MEMPALACE_MCP_HTTP_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: mempalace-runtime
+                      key: MEMPALACE_MCP_HTTP_TOKEN
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext: *restricted-container
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+                - name: backup-oracle
+                  mountPath: /opt/solidstats-memory-oracle
                   readOnly: true
-                - name: tmp
-                  mountPath: /tmp
           volumes:
             - name: mempalace-data
               persistentVolumeClaim:
                 claimName: mempalace-data
-            - name: tmp
+            - name: work
               emptyDir: {}
+            - name: backup-oracle
+              configMap:
+                name: solidstats-memory-backup-oracle
+                defaultMode: 0444
+            - name: kubernetes-api-access
+              projected:
+                defaultMode: 0400
+                sources:
+                  - serviceAccountToken:
+                      path: token
+                      expirationSeconds: 600
+                  - configMap:
+                      name: kube-root-ca.crt
+                      items:
+                        - key: ca.crt
+                          path: ca.crt

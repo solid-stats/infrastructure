@@ -1,0 +1,11 @@
+[Unit]
+Description=Check every SolidStats memory backup Job
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Persistent=true
+Unit=solidstats-memory-backup-guard.service
+
+[Install]
+WantedBy=timers.target

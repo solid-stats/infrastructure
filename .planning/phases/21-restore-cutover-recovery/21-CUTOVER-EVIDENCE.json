@@ -1,0 +1,69 @@
+{
+  "checks": {
+    "final_probe": {
+      "archive_untrusted": true,
+      "capture_shape_valid": true,
+      "cleanup_exact": true,
+      "cleanup_supported": true,
+      "dedup_checked": true,
+      "invalid_rejected": true,
+      "missing_rejected": true,
+      "protocol_version_match": true,
+      "read_back_verified": true,
+      "required_tool_count": 7,
+      "schema_digest_recorded": true,
+      "schema_sha256": "2f71966085168fa2caec72a159ef90e069c8da73b907d17f7d0d7eb4ed26c9e9",
+      "scoped_recall": true,
+      "semantic_miss_fallback": true,
+      "session_propagated": true,
+      "stateless_session_contract": true,
+      "tool_count": 35,
+      "untrusted_origin_rejected": true,
+      "valid_accepted": true
+    },
+    "live_audit": {
+      "freeze_lock_running": true,
+      "journal_pending_none": true,
+      "legacy_client_present": true,
+      "legacy_runtime_stopped": true,
+      "logical_binding_exact": true,
+      "mcp_behavior_matrix": true,
+      "new_client_present": true,
+      "new_workload_ready": true,
+      "nginx_candidate_exact": true,
+      "personal_route_preserved": true,
+      "public_auth_matrix": true,
+      "public_qdrant_blocked": true,
+      "recurring_schedule_unchanged": true,
+      "rollback_actionable": true,
+      "stage_client_added": true,
+      "synthetic_cleanup_exact": true,
+      "target_count_exact": true
+    },
+    "predecessor": {
+      "backup_restore_exact": true,
+      "backup_restore_valid": true,
+      "record_count": 19534
+    },
+    "stage_lock": {
+      "acquired": true,
+      "owner_run_sha256": "c02d70af50ca50be02202db3169117184510150c03e80bb6f5508b9e3090cb63"
+    }
+  },
+  "completed_at": "2026-08-21T10:36:45Z",
+  "input_digests": {
+    "backup_restore_evidence_sha256": "31a155ce5a76381319cd82d37e6c4960c406ecbc571b3de8394a1ba5719dc448",
+    "cutover_journal_sha256": "e900acc4e17b7d0f6797105a426ae4fb566eb48b2e265da0711819c5984c044c",
+    "final_mcp_probe_sha256": "551dabe55d0485e2497dac4631392a364c94311447b545374aadf8f52bcb9223",
+    "live_audit_sha256": "9e4b595179da2bba9e7961a0430adec89994c6fcf6155c245625d95e05ee40f9",
+    "operator_locator_sha256": "cb83225b7c154b36a561259f3dee33c130572d2cd3b31947ead74f38423202ef",
+    "phase20_handoff_sha256": "8414aa77fa965e94b612d44c23483d6b8804b44c5a0c77d89e587a886ede1d1d",
+    "phase20_parity_report_sha256": "d871469b922cba75ef5933b1d900591399c168295e0d78a62c2c35da25aa2221"
+  },
+  "prior_evidence_sha256": "31a155ce5a76381319cd82d37e6c4960c406ecbc571b3de8394a1ba5719dc448",
+  "run_id": "phase21-cutover-20260821-r8",
+  "schema": "solidstats-memory-phase21-evidence/v1",
+  "stage": "CLIENT_ADDED",
+  "started_at": "2026-08-21T10:32:35Z",
+  "verdict": "pass"
+}

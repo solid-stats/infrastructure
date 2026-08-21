@@ -1,0 +1,59 @@
+# Operator-applied bootstrap manifest. CI validates but never applies this file.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: solidstats-memory-backup
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-backup
+    app.kubernetes.io/part-of: solidstats-memory
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["mempalace"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: ["mempalace"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: solidstats-memory-backup
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-backup
+    app.kubernetes.io/part-of: solidstats-memory
+subjects:
+  - kind: ServiceAccount
+    name: solidstats-memory-backup
+    namespace: solidstats-memory
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: solidstats-memory-backup
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backup-to-kubernetes-api
+  namespace: solidstats-memory
+  labels:
+    app.kubernetes.io/name: solidstats-memory-backup
+    app.kubernetes.io/part-of: solidstats-memory
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: solidstats-memory-backup
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR
+      ports:
+        - protocol: TCP
+          port: MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT

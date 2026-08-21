@@ -76,6 +76,8 @@ spec:
                 secretKeyRef:
                   name: qdrant-runtime
                   key: QDRANT_API_KEY
+            - name: QDRANT__SERVICE__JWT_RBAC
+              value: "true"
           readinessProbe:
             httpGet:
               path: /healthz
@@ -103,9 +105,14 @@ spec:
           volumeMounts:
             - name: qdrant-data
               mountPath: /qdrant/storage
+            - name: snapshots
+              mountPath: /qdrant/snapshots
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: snapshots
+          emptyDir:
+            sizeLimit: 1Gi
         - name: tmp
           emptyDir: {}
   volumeClaimTemplates:
