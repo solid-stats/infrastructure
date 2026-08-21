@@ -196,6 +196,7 @@ write_result() {
     printf 'schema=solidstats-memory-remote-operation-result/v1\n'
     printf 'operation=%s\n' "${operation}"
     printf 'config_sha256=%s\n' "${CONFIG_SHA256}"
+    printf 'run_id_sha256=%s\n' "${RUN_ID_SHA256}"
     for item in "$@"; do
       [[ "${item}" =~ ^[a-z][a-z0-9_]{0,63}=(true|false|[0-9]+|[0-9a-f]{64}|service|endpoint)$ ]] || fatal
       printf '%s\n' "${item}"
@@ -764,9 +765,11 @@ print(hashlib.sha256(raw).hexdigest())
 }
 
 capture_backup_template_digest() {
-  local digest
+  local digest candidate
   digest=$(backup_template_digest)
+  candidate=$(<"${RUN_ROOT}/guard-package/candidate-template.sha256")
   [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || fatal
+  [[ "${digest}" == "${candidate}" ]] || fatal
   printf '%s\n' "${digest}" | private_write "${RUN_ROOT}/backup-template.sha256"
   write_result capture-backup-template-digest "template_sha256=${digest}" \
     "schedule_suspended=true"
@@ -777,7 +780,13 @@ set_backup_schedule() {
   local operation="$1" desired="$2"
   [[ "${desired}" == true || "${desired}" == false ]] || fatal
   if [[ "$(operation_status "${operation}" 2>/dev/null || true)" == complete ]]; then
+    if [[ "$(backup_schedule_state)" != "${desired}:Forbid" ]]; then
+      kube_quiet patch cronjob "${BACKUP_CRONJOB}" --type=merge \
+        -p "{\"spec\":{\"suspend\":${desired}}}"
+    fi
     [[ "$(backup_schedule_state)" == "${desired}:Forbid" ]] || fatal
+    write_result "${operation}" "schedule_suspended=${desired}" \
+      "concurrency_forbid=true"
     require_operation_complete "${operation}"
     return 0
   fi
@@ -898,10 +907,11 @@ install_backup_guard() {
     return 0
   fi
   local guard_source service_source timer_source config_source
-  guard_source="${SCRIPT_DIR}/guard-solidstats-memory-backup.sh"
-  service_source="${SCRIPT_DIR}/solidstats-memory-backup-guard.service"
-  timer_source="${SCRIPT_DIR}/solidstats-memory-backup-guard.timer"
-  config_source="${SCRIPT_DIR}/guard-solidstats-memory-backup.sh.config"
+  require_operation_complete verify-guard-package
+  guard_source="${RUN_ROOT}/guard-package/guard-solidstats-memory-backup.sh"
+  service_source="${RUN_ROOT}/guard-package/solidstats-memory-backup-guard.service"
+  timer_source="${RUN_ROOT}/guard-package/solidstats-memory-backup-guard.timer"
+  config_source="${RUN_ROOT}/guard-package/guard-solidstats-memory-backup.sh.config"
   require_binary "${guard_source}"
   require_regular_private_file "${config_source}"
   [[ -f "${service_source}" && ! -L "${service_source}" &&
@@ -948,6 +958,51 @@ install_backup_guard() {
   record_operation install-backup-guard complete
 }
 
+prepare_guard_package() {
+  local directory="${RUN_ROOT}/guard-package"
+  if [[ -e "${directory}" ]]; then
+    [[ -d "${directory}" && ! -L "${directory}" &&
+      "$(stat -c '%a:%u' "${directory}")" == "700:$(id -u)" ]] || fatal
+  else
+    mkdir -m 700 "${directory}"
+  fi
+  write_result prepare-guard-package "prepared=true"
+  record_operation prepare-guard-package complete
+}
+
+verify_guard_package() {
+  local directory="${RUN_ROOT}/guard-package" descriptor="${RUN_ROOT}/guard-package/SHA256SUMS" name
+  require_regular_private_file "${descriptor}"
+  [[ "$(wc -l <"${descriptor}")" -eq 5 ]] || fatal
+  for name in guard-solidstats-memory-backup.sh solidstats-memory-backup-guard.service solidstats-memory-backup-guard.timer guard-solidstats-memory-backup.sh.config 40-backup.active.yaml; do
+    [[ -f "${directory}/${name}" && ! -L "${directory}/${name}" ]] || fatal
+    case "${name}" in
+      *.config|*.yaml) [[ "$(stat -c '%a' "${directory}/${name}")" == 600 ]] || fatal ;;
+      *.sh) [[ "$(stat -c '%a' "${directory}/${name}")" == 755 ]] || fatal ;;
+      *) [[ "$(stat -c '%a' "${directory}/${name}")" == 644 ]] || fatal ;;
+    esac
+    grep -Eq "^[0-9a-f]{64}  ${name}$" "${descriptor}" || fatal
+  done
+  (cd "${directory}" && sha256sum -c SHA256SUMS >/dev/null 2>&1) || fatal
+  local rendered="${directory}/40-backup.rendered.json" digest
+  timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
+    "${KUBECTL_PATH}" create --dry-run=client -f "${directory}/40-backup.active.yaml" \
+    -o json >"${rendered}.tmp" 2>/dev/null || fatal
+  chmod 600 "${rendered}.tmp"
+  mv -f "${rendered}.tmp" "${rendered}"
+  digest=$("${PYTHON_PATH}" -c '
+import hashlib,json,sys
+value=json.load(open(sys.argv[1]))["spec"]["jobTemplate"]
+raw=json.dumps(value,separators=(",",":"),sort_keys=True).encode()
+print(hashlib.sha256(raw).hexdigest())
+' "${rendered}")
+  [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || fatal
+  printf '%s\n' "${digest}" | private_write "${directory}/candidate-template.sha256"
+  write_result verify-guard-package "verified=true" "file_count=5" \
+    "template_sha256=${digest}"
+  record_operation verify-guard-package complete
+}
+
 rollback_backup_guard() {
   local name destination state backup
   run_quiet "${SYSTEMCTL_PATH}" disable --now solidstats-memory-backup-guard.timer
@@ -992,6 +1047,18 @@ verify_backup_guard() {
   run_quiet "${SYSTEMCTL_PATH}" start solidstats-memory-backup-guard.service
   write_result verify-backup-guard "enabled=true" "active=true" "self_test_passed=true"
   record_operation verify-backup-guard complete
+}
+
+test_backup_guard_suspension() {
+  require_operation_complete install-backup-guard
+  set_backup_schedule guard-self-test-active false
+  run_quiet env SOLIDSTATS_MEMORY_GUARD_SELF_TEST=1 \
+    /usr/local/libexec/solidstats-memory-backup-guard \
+    /etc/solidstats-memory-backup-guard.conf
+  [[ "$(backup_schedule_state)" == true:Forbid ]] || fatal
+  write_result test-backup-guard-suspension "temporary_activation=true" \
+    "schedule_suspended=true" "guard_passed=true"
+  record_operation test-backup-guard-suspension complete
 }
 
 capture_kube_json() {
@@ -1458,7 +1525,7 @@ main() {
   [[ "$#" -ge 2 && "$#" -le 3 ]] || usage
   local operation="$1" run_id_sha256="$2" reconnect_timeout=""
   case "${operation}" in
-    capture-prestate|stop-legacy-start-new|install-nginx|rollback-nginx|stop-new|start-legacy|rearm-forward-cycle|restart-mempalace|restart-qdrant|measure-backup-api-egress|prove-backup-api-positive|prove-backup-api-network-negative|prove-backup-api-rbac-negative|recheck-backup-api-access|capture-backup-template-digest|prove-backup-consistency|restore-backup-writer|suspend-backup-schedule|capture-boot-identity|reboot-host|verify-legacy-behavior|verify-retained-collections|install-backup-guard|verify-backup-guard|rollback-backup-guard|activate-backup-schedule)
+    capture-prestate|stop-legacy-start-new|install-nginx|rollback-nginx|stop-new|start-legacy|rearm-forward-cycle|restart-mempalace|restart-qdrant|measure-backup-api-egress|prove-backup-api-positive|prove-backup-api-network-negative|prove-backup-api-rbac-negative|recheck-backup-api-access|capture-backup-template-digest|prove-backup-consistency|restore-backup-writer|suspend-backup-schedule|capture-boot-identity|reboot-host|verify-legacy-behavior|verify-retained-collections|prepare-guard-package|verify-guard-package|install-backup-guard|verify-backup-guard|test-backup-guard-suspension|rollback-backup-guard|activate-backup-schedule)
       [[ "$#" -eq 2 ]] || usage
       ;;
     verify-reboot-recovery)
@@ -1526,8 +1593,11 @@ main() {
     verify-reboot-recovery) verify_reboot_recovery "${reconnect_timeout}" ;;
     verify-legacy-behavior) verify_legacy_behavior ;;
     verify-retained-collections) verify_retained_collections ;;
+    prepare-guard-package) prepare_guard_package ;;
+    verify-guard-package) verify_guard_package ;;
     install-backup-guard) install_backup_guard ;;
     verify-backup-guard) verify_backup_guard ;;
+    test-backup-guard-suspension) test_backup_guard_suspension ;;
     rollback-backup-guard) rollback_backup_guard ;;
     activate-backup-schedule)
       require_operation_complete restart-mempalace
@@ -1537,6 +1607,7 @@ main() {
       require_operation_complete verify-reboot-recovery
       require_operation_complete verify-retained-collections
       require_operation_complete verify-backup-guard
+      require_operation_complete test-backup-guard-suspension
       require_operation_complete capture-backup-template-digest
       [[ "$(backup_template_digest)" == "$(<"${RUN_ROOT}/backup-template.sha256")" ]] || fatal
       set_backup_schedule "${operation}" false

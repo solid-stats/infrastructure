@@ -54,6 +54,9 @@ EVIDENCE_KEYS = {
     "required_tool_count",
     "schema_digest_recorded",
     "schema_sha256",
+    "schema",
+    "run_id_sha256",
+    "verdict",
     "scoped_recall",
     "semantic_miss_fallback",
     "session_contract",
@@ -756,6 +759,10 @@ def _validate_evidence_node(value: object, *, key: str = "root", depth: int = 0)
             return
         if key == "session_contract" and value in {"stateless", "sessionful"}:
             return
+        if key == "schema" and value == "solidstats-memory-probe-evidence/v1":
+            return
+        if key == "verdict" and value == "pass":
+            return
         if key.endswith("code") and SAFE_CODE.fullmatch(value):
             return
     raise ProbeError("probe evidence contains a private or unsupported value")
@@ -863,7 +870,13 @@ def main(argv: list[str] | None = None) -> int:
             archive_wing=args.archive_wing,
             synthetic_content=_synthetic_content(args.run_id),
         )
-        evidence = {"auth_checks": auth, "mcp_checks": behavior}
+        evidence = {
+            "schema": "solidstats-memory-probe-evidence/v1",
+            "run_id_sha256": hashlib.sha256(args.run_id.encode()).hexdigest(),
+            "auth_checks": auth,
+            "mcp_checks": behavior,
+            "verdict": "pass",
+        }
         validate_probe_evidence(evidence)
         if args.evidence is not None:
             write_probe_evidence(args.evidence, evidence)

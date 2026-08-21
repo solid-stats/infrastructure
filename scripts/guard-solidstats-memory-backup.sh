@@ -4,7 +4,22 @@ set -Eeuo pipefail
 fatal() { echo "FATAL: backup guard failed closed" >&2; return 1; }
 [[ "$#" -eq 1 ]] || fatal
 config="$1"
-[[ "${config}" == /* && -f "${config}" && ! -L "${config}" &&
+fallback_suspend() {
+  local status=$? fallback_kubectl
+  trap - ERR
+  if [[ -x /usr/local/bin/kubectl && ! -L /usr/local/bin/kubectl ]]; then
+    fallback_kubectl=/usr/local/bin/kubectl
+  else
+    fallback_kubectl=/usr/bin/kubectl
+  fi
+  timeout 30s "${fallback_kubectl}" --kubeconfig /etc/rancher/k3s/k3s.yaml \
+    -n solidstats-memory patch cronjob solidstats-memory-backup --type=merge \
+    -p '{"spec":{"suspend":true}}' >/dev/null 2>&1 || status=1
+  exit "${status}"
+}
+trap fallback_suspend ERR
+[[ "${config}" == /etc/solidstats-memory-backup-guard.conf &&
+  -f "${config}" && ! -L "${config}" &&
   "$(stat -c '%a' "${config}")" == 600 &&
   "$(stat -c '%u' "${config}")" == 0 ]] || fatal
 declare -A values=()
@@ -23,9 +38,19 @@ install -d -m 700 -o 0 -g 0 "${state_root}"
 [[ -d "${state_root}" && ! -L "${state_root}" &&
   "$(stat -c '%a:%u' "${state_root}")" == 700:0 ]] || fatal
 kubectl="${values[kubectl_path]:-}"
-[[ "${kubectl}" == /* && -x "${kubectl}" && ! -L "${kubectl}" ]] || fatal
+[[ "${kubectl}" =~ ^/usr(/local)?/bin/kubectl$ && -x "${kubectl}" && ! -L "${kubectl}" &&
+  "$(stat -c '%u:%a' "${kubectl}")" =~ ^0:(755|750)$ ]] || fatal
 kubeconfig="${values[kubeconfig_path]:-}"
-[[ "${kubeconfig}" == /* && -f "${kubeconfig}" && ! -L "${kubeconfig}" ]] || fatal
+[[ "${kubeconfig}" == /etc/rancher/k3s/k3s.yaml && -f "${kubeconfig}" &&
+  ! -L "${kubeconfig}" && "$(stat -c '%u:%a' "${kubeconfig}")" =~ ^0:(600|640)$ ]] || fatal
+for trusted in /etc /etc/rancher /etc/rancher/k3s /usr /usr/bin /usr/local /usr/local/bin; do
+  [[ ! -e "${trusted}" || ( -d "${trusted}" && ! -L "${trusted}" &&
+    "$(stat -c '%u' "${trusted}")" == 0 &&
+    $((8#$(stat -c '%a' "${trusted}") & 8#022)) -eq 0 ) ]] || fatal
+done
+if grep -Eq '(^|[[:space:]])(exec:|auth-provider:)|(^|[[:space:]])(certificate-authority|client-certificate|client-key):[[:space:]]*[^/[:space:]]' "${kubeconfig}"; then
+  fatal
+fi
 on_error() {
   local status=$?
   trap - ERR
@@ -36,6 +61,17 @@ on_error() {
   exit "${status}"
 }
 trap on_error ERR
+if [[ "${SOLIDSTATS_MEMORY_GUARD_SELF_TEST:-0}" == 1 ]]; then
+  timeout 30s "${kubectl}" --kubeconfig "${kubeconfig}" \
+    --context "${values[kube_context]}" -n solidstats-memory \
+    patch cronjob solidstats-memory-backup --type=merge \
+    -p '{"spec":{"suspend":true}}' >/dev/null 2>&1
+  [[ "$(timeout 30s "${kubectl}" --kubeconfig "${kubeconfig}" \
+    --context "${values[kube_context]}" -n solidstats-memory get cronjob \
+    solidstats-memory-backup -o 'jsonpath={.spec.suspend}:{.spec.concurrencyPolicy}')" == true:Forbid ]]
+  echo "PASS: backup guard suspension self-test"
+  exit 0
+fi
 tmp=$(mktemp "${state_root}/jobs.XXXXXX")
 log_file=""
 trap 'rm -f -- "${tmp}"; [[ -z "${log_file}" ]] || rm -f -- "${log_file}"' EXIT

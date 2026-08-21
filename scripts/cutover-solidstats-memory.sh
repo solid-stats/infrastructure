@@ -202,9 +202,27 @@ run_remote_batch() {
       <"${input_path}" >"${output_path}.tmp" 2>/dev/null; then
       chmod 600 "${output_path}.tmp"
       if ! grep -Eq '^PASS: remote cutover boundary acknowledged$' "${output_path}.tmp" ||
-        grep -Ev '^(PASS: remote cutover boundary acknowledged|schema=solidstats-memory-remote-operation-result/v1|operation=[a-z0-9-]+|config_sha256=[0-9a-f]{64}|[a-z][a-z0-9_]{0,63}=(true|false|[0-9]+|[0-9a-f]{64}|service|endpoint))$' "${output_path}.tmp" | grep -q .; then
+        grep -Ev '^(PASS: remote cutover boundary acknowledged|schema=solidstats-memory-remote-operation-result/v1|operation=[a-z0-9-]+|config_sha256=[0-9a-f]{64}|run_id_sha256=[0-9a-f]{64}|[a-z][a-z0-9_]{0,63}=(true|false|[0-9]+|[0-9a-f]{64}|service|endpoint))$' "${output_path}.tmp" | grep -q .; then
         rm -f "${output_path}.tmp"
         return 1
+      fi
+      local result_count
+      result_count=$(grep -c '^schema=solidstats-memory-remote-operation-result/v1$' "${output_path}.tmp" || true)
+      [[ "${result_count}" -eq 0 || "${result_count}" -eq 1 ]] || return 1
+      if [[ "${result_count}" -eq 1 ]]; then
+        [[ "$(grep -c '^operation=' "${output_path}.tmp")" -eq 1 &&
+          "$(sed -n 's/^operation=//p' "${output_path}.tmp")" == "${operation}" &&
+          "$(grep -c '^config_sha256=' "${output_path}.tmp")" -eq 1 &&
+          "$(grep -c '^run_id_sha256=' "${output_path}.tmp")" -eq 1 &&
+          "$(sed -n 's/^run_id_sha256=//p' "${output_path}.tmp")" == "${RUN_ID_SHA256}" ]] || return 1
+        local observed_config config_binding="${STATE_DIR}/remote-config.sha256"
+        observed_config=$(sed -n 's/^config_sha256=//p' "${output_path}.tmp")
+        if [[ -f "${config_binding}" ]]; then
+          [[ "$(<"${config_binding}")" == "${observed_config}" ]] || return 1
+        else
+          printf '%s\n' "${observed_config}" >"${config_binding}"
+          chmod 600 "${config_binding}"
+        fi
       fi
       mv -f "${output_path}.tmp" "${output_path}"
       return 0
@@ -298,6 +316,14 @@ register_client() {
     --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
     --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
     --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" >/dev/null
+  {
+    printf 'schema=solidstats-memory-client-retirement/v1\n'
+    printf 'legacy_client_absent=true\n'
+    printf 'new_client_live=true\n'
+    printf 'unrelated_unchanged=true\n'
+  } >"${STATE_DIR}/client-retired.result.tmp"
+  chmod 600 "${STATE_DIR}/client-retired.result.tmp"
+  mv -f "${STATE_DIR}/client-retired.result.tmp" "${STATE_DIR}/client-retired.result"
 }
 
 remove_new_client() {
@@ -430,9 +456,12 @@ prove_backup_api_access() {
 
 prove_backup_consistency() {
   require_recovery_gate backup-api
+  prepare_backup_activation
+  stage_guard_package
   run_remote_batch capture-backup-template-digest
   run_remote_batch install-backup-guard
   run_remote_batch verify-backup-guard
+  run_remote_batch test-backup-guard-suspension
   if ! run_remote_batch prove-backup-consistency; then
     recover_backup_failure
     echo "FATAL: backup consistency failed; recovery was verified" >&2
@@ -455,6 +484,22 @@ recover_backup_failure() {
     echo "FATAL: mandatory backup recovery is incomplete" >&2
     return 1
   }
+}
+
+activation_compensate() {
+  local original_status="${1:-$?}" failed=0
+  trap - ERR INT TERM
+  if ! run_remote_batch suspend-backup-schedule; then failed=1; fi
+  if [[ "${ACTIVATION_SOURCE_PROMOTED:-0}" == 1 ]] &&
+    ! restore_suspended_backup_source; then failed=1; fi
+  if [[ "${ACTIVATION_CLIENT_CHANGED:-0}" == 1 ]] &&
+    ! remove_new_client; then failed=1; fi
+  if ! run_remote_batch restore-backup-writer; then failed=1; fi
+  if [[ "${failed}" -ne 0 ]]; then
+    echo "FATAL: activation compensation is incomplete" >&2
+    return 1
+  fi
+  return "${original_status}"
 }
 
 reboot_recovery() {
@@ -492,29 +537,77 @@ activate_backup_schedule() {
     write_recovery_gate activated
     return 0
   fi
+  ACTIVATION_SOURCE_PROMOTED=0
+  ACTIVATION_CLIENT_CHANGED=0
+  trap 'activation_compensate $?' ERR INT TERM
+  stage_guard_package
   run_remote_batch install-backup-guard
   run_remote_batch verify-backup-guard
   collect_recovery_evidence
-  prepare_backup_activation
+  ACTIVATION_SOURCE_PROMOTED=1
   commit_backup_activation
-  if ! run_remote_batch activate-backup-schedule; then
-    restore_suspended_backup_source
-    run_remote_batch suspend-backup-schedule
-    return 1
-  fi
+  run_remote_batch activate-backup-schedule
   if [[ "${CUTOVER_SELF_TEST:-}" != "1" ]]; then
-    if ! retire_legacy_client; then
-      if ! run_remote_batch suspend-backup-schedule; then
-        echo "FATAL: client retirement and schedule suspension both failed" >&2
-        return 1
-      fi
-      restore_suspended_backup_source
-      echo "FATAL: client retirement failed; backup schedule was suspended" >&2
-      return 1
-    fi
+    ACTIVATION_CLIENT_CHANGED=1
+    retire_legacy_client
   fi
   collect_cutover_seal
   write_recovery_gate activated
+  trap - ERR INT TERM
+}
+
+stage_guard_package() {
+  if [[ "${CUTOVER_SELF_TEST:-}" == 1 ]]; then
+    run_remote_batch prepare-guard-package
+    run_remote_batch verify-guard-package
+    return 0
+  fi
+  local gate="${STATE_DIR}/guard-package.gate" descriptor="${STATE_DIR}/guard-package.SHA256SUMS"
+  if [[ -f "${gate}" && ! -L "${gate}" && "$(<"${gate}")" == pass ]]; then
+    run_remote_batch verify-guard-package
+    return 0
+  fi
+  required SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT
+  required SOLIDSTATS_MEMORY_BACKUP_GUARD_CONFIG
+  [[ "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" == /* &&
+    "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" != *..* ]] || return 1
+  local -a sources=(
+    "${SCRIPT_DIR}/guard-solidstats-memory-backup.sh"
+    "${SCRIPT_DIR}/solidstats-memory-backup-guard.service"
+    "${SCRIPT_DIR}/solidstats-memory-backup-guard.timer"
+    "${SOLIDSTATS_MEMORY_BACKUP_GUARD_CONFIG}"
+    "${BACKUP_RENDERED_CANDIDATE}"
+  )
+  local source remote_dir="${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}/${RUN_ID_SHA256}/guard-package"
+  for source in "${sources[@]}"; do
+    [[ -f "${source}" && ! -L "${source}" ]] || return 1
+  done
+  [[ "$(stat -c '%a' "${SOLIDSTATS_MEMORY_BACKUP_GUARD_CONFIG}")" == 600 ]] || return 1
+  {
+    sha256sum "${sources[0]}" | sed 's#  .*#  guard-solidstats-memory-backup.sh#'
+    sha256sum "${sources[1]}" | sed 's#  .*#  solidstats-memory-backup-guard.service#'
+    sha256sum "${sources[2]}" | sed 's#  .*#  solidstats-memory-backup-guard.timer#'
+    sha256sum "${sources[3]}" | sed 's#  .*#  guard-solidstats-memory-backup.sh.config#'
+    sha256sum "${sources[4]}" | sed 's#  .*#  40-backup.active.yaml#'
+  } >"${descriptor}"
+  chmod 600 "${descriptor}"
+  run_remote_batch prepare-guard-package
+  local -a scp_options=(-p -F /dev/null -i "${SOLIDSTATS_MEMORY_SSH_IDENTITY_FILE}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=${SOLIDSTATS_MEMORY_SSH_KNOWN_HOSTS_FILE}" -o BatchMode=yes)
+  timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
+    "${sources[0]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/guard-solidstats-memory-backup.sh" >/dev/null 2>&1
+  timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
+    "${sources[1]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/solidstats-memory-backup-guard.service" >/dev/null 2>&1
+  timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
+    "${sources[2]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/solidstats-memory-backup-guard.timer" >/dev/null 2>&1
+  timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
+    "${sources[3]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/guard-solidstats-memory-backup.sh.config" >/dev/null 2>&1
+  timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
+    "${sources[4]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/40-backup.active.yaml" >/dev/null 2>&1
+  timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
+    "${descriptor}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/SHA256SUMS" >/dev/null 2>&1
+  run_remote_batch verify-guard-package
+  printf 'pass\n' >"${gate}"
+  chmod 600 "${gate}"
 }
 
 collect_recovery_evidence() {
@@ -530,6 +623,7 @@ collect_recovery_evidence() {
 }
 
 prepare_backup_activation() {
+  [[ "${CUTOVER_SELF_TEST:-}" != 1 ]] || return 0
   local source="${SCRIPT_DIR}/../k8s/memory/40-backup.yaml"
   required SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR
   timeout "${LOCAL_TIMEOUT}" python3 "${SCRIPT_DIR}/validate-memory-manifests.py" \
@@ -538,11 +632,20 @@ prepare_backup_activation() {
     --manifest-dir "${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}" >/dev/null
   BACKUP_SOURCE_PRESTATE="${STATE_DIR}/40-backup.suspended.yaml"
   BACKUP_SOURCE_CANDIDATE="${STATE_DIR}/40-backup.active.yaml"
+  BACKUP_RENDERED_PRESTATE="${STATE_DIR}/40-backup.rendered-suspended.yaml"
+  BACKUP_RENDERED_CANDIDATE="${STATE_DIR}/40-backup.rendered-active.yaml"
   [[ "$(grep -c '^  suspend: true$' "${source}")" -eq 1 ]] || return 1
   install -m 600 "${source}" "${BACKUP_SOURCE_PRESTATE}"
   sed 's/^  suspend: true$/  suspend: false/' "${source}" >"${BACKUP_SOURCE_CANDIDATE}"
   chmod 600 "${BACKUP_SOURCE_CANDIDATE}"
-  sha256sum "${source}" "${BACKUP_SOURCE_CANDIDATE}" >"${STATE_DIR}/backup-activation.digests"
+  local rendered="${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}/40-backup.yaml"
+  [[ -f "${rendered}" && ! -L "${rendered}" &&
+    "$(grep -c '^  suspend: true$' "${rendered}")" -eq 1 ]] || return 1
+  install -m 600 "${rendered}" "${BACKUP_RENDERED_PRESTATE}"
+  sed 's/^  suspend: true$/  suspend: false/' "${rendered}" >"${BACKUP_RENDERED_CANDIDATE}"
+  chmod 600 "${BACKUP_RENDERED_CANDIDATE}"
+  sha256sum "${source}" "${BACKUP_SOURCE_CANDIDATE}" \
+    "${rendered}" "${BACKUP_RENDERED_CANDIDATE}" >"${STATE_DIR}/backup-activation.digests"
   chmod 600 "${STATE_DIR}/backup-activation.digests"
 }
 
@@ -551,13 +654,25 @@ commit_backup_activation() {
   [[ -f "${BACKUP_SOURCE_CANDIDATE}" && ! -L "${BACKUP_SOURCE_CANDIDATE}" ]] || return 1
   install -m "$(stat -c '%a' "${source}")" "${BACKUP_SOURCE_CANDIDATE}" "${source}.tmp"
   mv -f "${source}.tmp" "${source}"
+  local rendered="${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}/40-backup.yaml"
+  install -m "$(stat -c '%a' "${rendered}")" "${BACKUP_RENDERED_CANDIDATE}" "${rendered}.tmp"
+  mv -f "${rendered}.tmp" "${rendered}"
+  timeout "${LOCAL_TIMEOUT}" python3 "${SCRIPT_DIR}/validate-memory-manifests.py" \
+    --manifest-dir "${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}" >/dev/null
 }
 
 restore_suspended_backup_source() {
+  if [[ "${CUTOVER_SELF_TEST:-}" == 1 ]]; then
+    printf 'source ' >>"${EVENT_LOG}"
+    return 0
+  fi
   local source="${SCRIPT_DIR}/../k8s/memory/40-backup.yaml"
   [[ -f "${BACKUP_SOURCE_PRESTATE}" && ! -L "${BACKUP_SOURCE_PRESTATE}" ]] || return 1
   install -m "$(stat -c '%a' "${source}")" "${BACKUP_SOURCE_PRESTATE}" "${source}.tmp"
   mv -f "${source}.tmp" "${source}"
+  local rendered="${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}/40-backup.yaml"
+  install -m "$(stat -c '%a' "${rendered}")" "${BACKUP_RENDERED_PRESTATE}" "${rendered}.tmp"
+  mv -f "${rendered}.tmp" "${rendered}"
 }
 
 collect_cutover_seal() {
@@ -734,6 +849,30 @@ self_test() {
     echo "SELF_TEST FAILED: client policy rollback order mismatch" >&2
     return 1
   }
+  local boundary expected compensation_status
+  for boundary in prepared source-promoted live-activated legacy-retired seal; do
+    : >"${EVENT_LOG}"
+    ACTIVATION_SOURCE_PROMOTED=0
+    ACTIVATION_CLIENT_CHANGED=0
+    expected="suspend-backup-schedule restore-backup-writer"
+    if [[ "${boundary}" != prepared ]]; then
+      ACTIVATION_SOURCE_PROMOTED=1
+      expected="suspend-backup-schedule source restore-backup-writer"
+    fi
+    if [[ "${boundary}" == legacy-retired || "${boundary}" == seal ]]; then
+      ACTIVATION_CLIENT_CHANGED=1
+      expected="suspend-backup-schedule source client restore-backup-writer"
+    fi
+    set +e
+    (activation_compensate 1) >/dev/null 2>&1
+    compensation_status=$?
+    set -e
+    [[ "${compensation_status}" -ne 0 &&
+      "$(sed -e 's/[[:space:]]*$//' "${EVENT_LOG}")" == "${expected}" ]] || {
+      echo "SELF_TEST FAILED: activation compensation order mismatch" >&2
+      return 1
+    }
+  done
   CURRENT_STAGE="CLIENT_ADDED"
   PENDING_MUTATION="none"
   RECONNECT_TIMEOUT=30

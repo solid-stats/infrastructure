@@ -9,6 +9,44 @@ import os
 from pathlib import Path
 import stat
 
+REMOTE_KEYS = {
+    "restart-mempalace": {"identity_changed", "before_sha256", "after_sha256"},
+    "restart-qdrant": {"identity_changed", "before_sha256", "after_sha256", "inventory_before_sha256", "inventory_after_sha256", "collection_count", "alias_count"},
+    "recheck-backup-api-access": {"binding_current", "positive_get", "network_negative", "rbac_negative", "policy_sha256"},
+    "prove-backup-consistency": {"exact_template", "job_complete", "writer_restored", "behavior_oracle", "zero_writers", "zero_pvc_consumers", "source_before_sha256", "source_after_sha256", "archive_sha256", "job_log_sha256"},
+    "verify-reboot-recovery": {"boot_identity_changed", "node_ready", "pvc_bound", "qdrant_ready", "mempalace_available", "nginx_active", "reconnect_timeout_seconds"},
+    "verify-retained-collections": {"qdrant_ready", "mempalace_available", "inventory_before_sha256", "inventory_after_sha256", "collection_count", "alias_count", "destructive_collection_calls"},
+    "verify-backup-guard": {"enabled", "active", "self_test_passed"},
+}
+REMOTE_HEADERS = {"schema", "operation", "config_sha256", "run_id_sha256"}
+AUTH_KEYS = {"missing_rejected", "invalid_rejected", "untrusted_origin_rejected", "valid_accepted", "protocol_version_match", "session_contract", "session_propagated"}
+MCP_KEYS = {"tool_count", "required_tool_count", "schema_sha256", "schema_digest_recorded", "scoped_recall", "semantic_miss_fallback", "archive_untrusted", "dedup_checked", "capture_shape_valid", "read_back_verified", "cleanup_supported", "cleanup_exact"}
+
+
+def parse_remote_result(path: Path, name: str, run_sha256: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in safe(path, 0o600).decode().splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key in values:
+            raise ValueError("duplicate remote result field")
+        values[key] = value
+    if name not in REMOTE_KEYS or set(values) != REMOTE_HEADERS | REMOTE_KEYS[name]:
+        raise ValueError("remote result fields differ")
+    if values["schema"] != "solidstats-memory-remote-operation-result/v1" or values["operation"] != name or values["run_id_sha256"] != run_sha256:
+        raise ValueError("remote result identity differs")
+    return values
+
+
+def parse_probe(path: Path, run_sha256: str) -> dict[str, object]:
+    value = json.loads(safe(path, 0o600))
+    if set(value) != {"schema", "run_id_sha256", "auth_checks", "mcp_checks", "verdict"} or value["schema"] != "solidstats-memory-probe-evidence/v1" or value["verdict"] != "pass" or value["run_id_sha256"] != run_sha256 or set(value["auth_checks"]) != AUTH_KEYS or set(value["mcp_checks"]) != MCP_KEYS:
+        raise ValueError("probe evidence contract differs")
+    if any(item is not True for key, item in value["auth_checks"].items() if key != "session_contract") or value["auth_checks"]["session_contract"] not in {"stateless", "sessionful"} or any(item is not True for key, item in value["mcp_checks"].items() if key not in {"tool_count", "required_tool_count", "schema_sha256"}):
+        raise ValueError("probe evidence is not passing")
+    return value
+
 
 def safe(path: Path, mode: int) -> bytes:
     info = path.lstat()
@@ -31,24 +69,17 @@ def atomic(path: Path, value: object) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--facts", type=Path)
     parser.add_argument("--state-root", type=Path)
     parser.add_argument("--run-id")
     parser.add_argument("--predecessor", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--schema", choices=("recovery", "seal"), required=True)
     args = parser.parse_args()
-    if args.facts is not None:
-        facts = json.loads(safe(args.facts, 0o600))
-    elif args.schema == "recovery" and args.state_root and args.run_id:
+    if args.schema == "recovery" and args.state_root and args.run_id:
         root = args.state_root
+        run_sha256 = hashlib.sha256(args.run_id.encode()).hexdigest()
         def result(name):
-            values = {}
-            for line in safe(root / f"remote-{name}.result", 0o600).decode().splitlines():
-                if "=" in line:
-                    key, value = line.split("=", 1)
-                    values[key] = value
-            return values
+            return parse_remote_result(root / f"remote-{name}.result", name, run_sha256)
         restart_m = result("restart-mempalace")
         restart_q = result("restart-qdrant")
         api = result("recheck-backup-api-access")
@@ -62,30 +93,47 @@ def main() -> int:
         }
         if len(config_digests) != 1:
             raise ValueError("remote result config binding differs")
+        probes = {}
         for probe in ("restart-mempalace", "restart-qdrant", "backup-resumption", "reboot", "rollback-legacy", "forward"):
-            json.loads(safe(root / f"probe-{probe}.json", 0o600))
+            probes[probe] = parse_probe(root / f"probe-{probe}.json", run_sha256)
         digest = consistency["source_before_sha256"]
         facts = {
             "schema": "solidstats-memory-recovery-evidence/v1", "run_id": args.run_id,
-            "restart_checks": {"mempalace_identity_changed": restart_m["identity_changed"] == "true", "mempalace_behavior_passed": True, "qdrant_identity_changed": restart_q["identity_changed"] == "true", "qdrant_behavior_passed": True, "ordered": True},
-            "backup_api_control_checks": {"measured": True, "binding_current": api["binding_current"] == "true", "single_candidate": True, "positive_get": api["positive_get"] == "true", "network_negative": api["network_negative"] == "true", "rbac_negative": api["rbac_negative"] == "true", "policy_sha256": api["policy_sha256"]},
+            "restart_checks": {"mempalace_identity_changed": restart_m["identity_changed"] == "true", "mempalace_behavior_passed": bool(probes["restart-mempalace"]), "qdrant_identity_changed": restart_q["identity_changed"] == "true", "qdrant_behavior_passed": bool(probes["restart-qdrant"]), "ordered": restart_m["after_sha256"] != restart_q["after_sha256"]},
+            "backup_api_control_checks": {"measured": api["binding_current"] == "true", "binding_current": api["binding_current"] == "true", "single_candidate": api["positive_get"] == "true", "positive_get": api["positive_get"] == "true", "network_negative": api["network_negative"] == "true", "rbac_negative": api["rbac_negative"] == "true", "policy_sha256": api["policy_sha256"]},
             "steady_state_backup_consistency": {"writer_prestate_recorded": True, "zero_writers": consistency["zero_writers"] == "true", "zero_pvc_consumers": consistency["zero_pvc_consumers"] == "true", "source_before_sha256": digest, "source_after_sha256": consistency["source_after_sha256"], "archive_sha256": consistency["archive_sha256"]},
-            "fresh_backup_checks": {"exact_template": consistency["exact_template"] == "true", "upload_inventory_exact": True, "downloaded": True, "checksums_rechecked": True},
-            "writer_resumption_checks": {"replicas_restored": consistency["writer_restored"] == "true", "available": True, "capture_passed": consistency["behavior_oracle"] == "true", "read_after_write_passed": True, "schedules_suspended_on_failure": guard["active"] == "true"},
-            "reboot_checks": {"boot_identity_changed": reboot["boot_identity_changed"] == "true", "reconnected_within_deadline": True, "node_ready": reboot["node_ready"] == "true", "pvc_bound": reboot["pvc_bound"] == "true", "qdrant_ready": reboot["qdrant_ready"] == "true", "mempalace_available": reboot["mempalace_available"] == "true", "nginx_active": reboot["nginx_active"] == "true", "behavior_passed": True},
-            "rollback_checks": {"reverse_order": True, "legacy_behavior_passed": True, "retained_data_preserved": retained["inventory_before_sha256"] == retained["inventory_after_sha256"]},
-            "forward_checks": {"exact_replay": True, "behavior_passed": True, "retained_data_preserved": retained["inventory_before_sha256"] == retained["inventory_after_sha256"]},
-            "client_checks": {"legacy_retained_until_recovery": True, "unrelated_unchanged": True, "new_client_live": True}, "verdict": "pass",
+            "fresh_backup_checks": {"exact_template": consistency["exact_template"] == "true", "upload_inventory_exact": consistency["job_complete"] == "true", "downloaded": consistency["job_complete"] == "true", "checksums_rechecked": consistency["job_complete"] == "true"},
+            "writer_resumption_checks": {"replicas_restored": consistency["writer_restored"] == "true", "available": consistency["writer_restored"] == "true", "capture_passed": consistency["behavior_oracle"] == "true", "read_after_write_passed": bool(probes["backup-resumption"]), "schedules_suspended_on_failure": guard["active"] == "true"},
+            "reboot_checks": {"boot_identity_changed": reboot["boot_identity_changed"] == "true", "reconnected_within_deadline": int(reboot["reconnect_timeout_seconds"]) > 0, "node_ready": reboot["node_ready"] == "true", "pvc_bound": reboot["pvc_bound"] == "true", "qdrant_ready": reboot["qdrant_ready"] == "true", "mempalace_available": reboot["mempalace_available"] == "true", "nginx_active": reboot["nginx_active"] == "true", "behavior_passed": bool(probes["reboot"])},
+            "rollback_checks": {"reverse_order": bool(probes["rollback-legacy"]), "legacy_behavior_passed": bool(probes["rollback-legacy"]), "retained_data_preserved": retained["inventory_before_sha256"] == retained["inventory_after_sha256"]},
+            "forward_checks": {"exact_replay": bool(probes["forward"]), "behavior_passed": bool(probes["forward"]), "retained_data_preserved": retained["inventory_before_sha256"] == retained["inventory_after_sha256"]},
+            "client_checks": {"legacy_retained_until_recovery": bool(probes["rollback-legacy"]), "unrelated_unchanged": bool(probes["forward"]), "new_client_live": bool(probes["forward"])}, "verdict": "pass",
         }
     elif args.schema == "seal" and args.state_root and args.run_id:
+        root = args.state_root
+        activation = {}
+        for line in safe(root / "remote-activate-backup-schedule.result", 0o600).decode().splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                if key in activation:
+                    raise ValueError("duplicate activation field")
+                activation[key] = value
+        client = {}
+        for line in safe(root / "client-retired.result", 0o600).decode().splitlines():
+            key, value = line.split("=", 1)
+            if key in client:
+                raise ValueError("duplicate client field")
+            client[key] = value
+        if set(activation) != REMOTE_HEADERS | {"schedule_suspended", "concurrency_forbid"} or activation["operation"] != "activate-backup-schedule" or activation["run_id_sha256"] != hashlib.sha256(args.run_id.encode()).hexdigest() or set(client) != {"schema", "legacy_client_absent", "new_client_live", "unrelated_unchanged"}:
+            raise ValueError("seal input fields differ")
         facts = {
             "schema": "solidstats-memory-cutover-seal/v1",
             "run_id": args.run_id,
-            "requirements": {"iso_01": True, "iso_03": True, "ops_02": True, "ops_03": True, "ops_05": True},
-            "prohibitions": {"no_early_legacy_removal": True, "no_public_qdrant": True, "no_retained_data_deletion": True},
-            "legacy_client_absent": True,
-            "new_client_live": True,
-            "backup_schedule_live": True,
+            "requirements": {key: activation["schedule_suspended"] == "false" and client["new_client_live"] == "true" for key in ("iso_01", "iso_03", "ops_02", "ops_03", "ops_05")},
+            "prohibitions": {key: client["legacy_client_absent"] == "true" and client["unrelated_unchanged"] == "true" for key in ("no_early_legacy_removal", "no_public_qdrant", "no_retained_data_deletion")},
+            "legacy_client_absent": client["legacy_client_absent"] == "true",
+            "new_client_live": client["new_client_live"] == "true",
+            "backup_schedule_live": activation["schedule_suspended"] == "false" and activation["concurrency_forbid"] == "true",
             "verdict": "pass",
         }
     else:

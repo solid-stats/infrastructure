@@ -46,6 +46,11 @@ REMOTE_CUTOVER_PATH = (
 BACKUP_GUARD_PATH = ROOT / "scripts" / "guard-solidstats-memory-backup.sh"
 EVIDENCE_COLLECTOR_PATH = ROOT / "scripts" / "collect-phase-21-recovery-evidence.py"
 CLIENT_POLICY_PATH = ROOT / "scripts" / "configure-solidstats-memory-client.py"
+COLLECTOR_PATH = ROOT / "scripts" / "collect-phase-21-recovery-evidence.py"
+COLLECTOR_SPEC = importlib.util.spec_from_file_location("phase21_collector", COLLECTOR_PATH)
+assert COLLECTOR_SPEC and COLLECTOR_SPEC.loader
+COLLECTOR = importlib.util.module_from_spec(COLLECTOR_SPEC)
+COLLECTOR_SPEC.loader.exec_module(COLLECTOR)
 
 STAGES = (
     "PREPARED",
@@ -2674,6 +2679,13 @@ class MemoryCutoverContractTests(unittest.TestCase):
 
         self.assertEqual(0, run("suspend-backup-schedule").returncode)
         self.assertEqual("true", backup_schedule.read_text().strip())
+        package = run_root / "guard-package"
+        package.mkdir(mode=0o700)
+        candidate_digest = hashlib.sha256(b'{"spec":{}}').hexdigest()
+        (package / "candidate-template.sha256").write_text(
+            candidate_digest + "\n", encoding="ascii"
+        )
+        (package / "candidate-template.sha256").chmod(0o600)
         self.assertEqual(0, run("capture-backup-template-digest").returncode)
 
         config_sha = hashlib.sha256(config.read_bytes()).hexdigest()
@@ -3292,6 +3304,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "prove-backup-api-positive",
                 "prove-backup-api-rbac-negative",
                 "prove-backup-consistency",
+                "prepare-guard-package",
                 "reboot-host",
                 "recheck-backup-api-access",
                 "rearm-forward-cycle",
@@ -3307,6 +3320,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "verify-reboot-recovery",
                 "verify-retained-collections",
                 "verify-backup-guard",
+                "verify-guard-package",
+                "test-backup-guard-suspension",
             },
             emitted,
         )
@@ -3410,6 +3425,79 @@ class MemoryCutoverContractTests(unittest.TestCase):
         with redirect_stderr(stderr):
             self.assertEqual(1, VALIDATOR.main(["--evidence", str(path)]))
         self.assertIn("recovery", stderr.getvalue())
+
+    def test_evidence_collector_rejects_result_and_probe_near_misses(self) -> None:
+        run_sha = "a" * 64
+        valid = "\n".join(
+            (
+                "schema=solidstats-memory-remote-operation-result/v1",
+                "operation=restart-mempalace",
+                "config_sha256=" + "b" * 64,
+                "run_id_sha256=" + run_sha,
+                "identity_changed=true",
+                "before_sha256=" + "c" * 64,
+                "after_sha256=" + "d" * 64,
+            )
+        ) + "\n"
+        path = self.root / "remote.result"
+        path.write_text(valid, encoding="ascii")
+        path.chmod(0o600)
+        self.assertEqual(
+            "restart-mempalace",
+            COLLECTOR.parse_remote_result(path, "restart-mempalace", run_sha)[
+                "operation"
+            ],
+        )
+        for near_miss in (
+            "",
+            valid + "operation=restart-mempalace\n",
+            valid.replace("operation=restart-mempalace", "operation=restart-qdrant"),
+            valid.replace("run_id_sha256=" + run_sha, "run_id_sha256=" + "e" * 64),
+        ):
+            path.write_text(near_miss, encoding="ascii")
+            with self.assertRaises(ValueError):
+                COLLECTOR.parse_remote_result(path, "restart-mempalace", run_sha)
+        probe = self.root / "probe.json"
+        probe.write_text("{}\n", encoding="ascii")
+        probe.chmod(0o600)
+        with self.assertRaises(ValueError):
+            COLLECTOR.parse_probe(probe, run_sha)
+
+    def test_artifact_chain_uses_exact_recovery_file_digest(self) -> None:
+        source = ROOT / ".planning/phases/21-restore-cutover-recovery"
+        chain = self.root / "chain"
+        chain.mkdir()
+        for artifact in source.glob("*.json"):
+            shutil.copy2(artifact, chain / artifact.name)
+        cutover_path = chain / "21-CUTOVER-EVIDENCE.json"
+        recovery = self.recovery_evidence()
+        recovery["run_id"] = json.loads(cutover_path.read_text())["run_id"]
+        recovery["cutover_evidence_sha256"] = hashlib.sha256(
+            cutover_path.read_bytes()
+        ).hexdigest()
+        recovery_path = chain / "21-RECOVERY-EVIDENCE.json"
+        recovery_path.write_bytes(VALIDATOR.canonical_json_bytes(recovery) + b"\n")
+        seal = {
+            "schema": "solidstats-memory-cutover-seal/v1",
+            "run_id": recovery["run_id"],
+            "recovery_evidence_sha256": hashlib.sha256(
+                recovery_path.read_bytes()
+            ).hexdigest(),
+            "requirements": {
+                key: True for key in VALIDATOR.CUTOVER_SEAL_REQUIREMENTS
+            },
+            "prohibitions": {
+                key: True for key in VALIDATOR.CUTOVER_SEAL_PROHIBITIONS
+            },
+            "legacy_client_absent": True,
+            "new_client_live": True,
+            "backup_schedule_live": True,
+            "verdict": "pass",
+        }
+        (chain / "21-CUTOVER-SEAL.json").write_bytes(
+            VALIDATOR.canonical_json_bytes(seal) + b"\n"
+        )
+        self.assertEqual("SEALED", VALIDATOR.validate_phase_artifact_chain(chain)["stage"])
 
 
 if __name__ == "__main__":

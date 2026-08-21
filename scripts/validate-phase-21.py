@@ -851,7 +851,9 @@ def validate_phase_artifact_chain(directory: Path) -> dict[str, object]:
         stage = "RECOVERY_PROVEN"
         if seal_path.exists():
             seal = validate_cutover_seal(
-                _load_json(seal_path), recovery_payload=recovery
+                _load_json(seal_path),
+                recovery_payload=recovery,
+                recovery_sha256=sha256_file(recovery_path),
             )
             if seal.get("recovery_evidence_sha256") != sha256_file(recovery_path):
                 raise Phase21ValidationError("seal recovery file digest differs")
