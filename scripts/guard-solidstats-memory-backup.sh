@@ -5,21 +5,15 @@ fatal() { echo "FATAL: backup guard failed closed" >&2; return 1; }
 [[ "$#" -eq 1 ]] || fatal
 config="$1"
 fallback_suspend() {
-  local status=$? fallback_kubectl
+  local status=$? trusted helper=/usr/local/libexec/solidstats-memory-backup-suspend
   trap - ERR
-  if [[ -x /usr/local/bin/kubectl && ! -L /usr/local/bin/kubectl ]]; then
-    fallback_kubectl=/usr/local/bin/kubectl
-  else
-    fallback_kubectl=/usr/bin/kubectl
-  fi
-  [[ -x "${fallback_kubectl}" && ! -L "${fallback_kubectl}" &&
-    "$(stat -c '%u:%a' "${fallback_kubectl}")" =~ ^0:(755|750)$ &&
-    -f /etc/rancher/k3s/k3s.yaml && ! -L /etc/rancher/k3s/k3s.yaml &&
-    "$(stat -c '%u:%a' /etc/rancher/k3s/k3s.yaml)" =~ ^0:(600|640)$ ]] || exit 1
-  ! grep -Eq '(^|[[:space:]])(exec:|auth-provider:)|(^|[[:space:]])(certificate-authority|client-certificate|client-key):[[:space:]]*[^/[:space:]]' /etc/rancher/k3s/k3s.yaml || exit 1
-  timeout 30s "${fallback_kubectl}" --kubeconfig /etc/rancher/k3s/k3s.yaml \
-    -n solidstats-memory patch cronjob solidstats-memory-backup --type=merge \
-    -p '{"spec":{"suspend":true}}' >/dev/null 2>&1 || status=1
+  for trusted in /usr /usr/local /usr/local/libexec; do
+    [[ -d "${trusted}" && ! -L "${trusted}" && "$(stat -c '%u' -- "${trusted}")" == 0 &&
+      $((8#$(stat -c '%a' -- "${trusted}") & 8#022)) -eq 0 ]] || exit 1
+  done
+  [[ -x "${helper}" && -f "${helper}" && ! -L "${helper}" &&
+    "$(stat -c '%u:%a' -- "${helper}")" =~ ^0:(755|750)$ ]] || exit 1
+  timeout 30s "${helper}" >/dev/null 2>&1 || status=1
   exit "${status}"
 }
 trap fallback_suspend ERR
@@ -48,7 +42,7 @@ kubectl="${values[kubectl_path]:-}"
 kubeconfig="${values[kubeconfig_path]:-}"
 [[ "${kubeconfig}" == /etc/rancher/k3s/k3s.yaml && -f "${kubeconfig}" &&
   ! -L "${kubeconfig}" && "$(stat -c '%u:%a' "${kubeconfig}")" =~ ^0:(600|640)$ ]] || fatal
-for trusted in /etc /etc/rancher /etc/rancher/k3s /usr /usr/bin /usr/local /usr/local/bin; do
+for trusted in /etc /etc/rancher /etc/rancher/k3s /usr /usr/bin /usr/local /usr/local/bin /usr/local/libexec; do
   [[ ! -e "${trusted}" || ( -d "${trusted}" && ! -L "${trusted}" &&
     "$(stat -c '%u' "${trusted}")" == 0 &&
     $((8#$(stat -c '%a' "${trusted}") & 8#022)) -eq 0 ) ]] || fatal
@@ -59,18 +53,13 @@ fi
 on_error() {
   local status=$?
   trap - ERR
-  timeout 30s "${kubectl}" --kubeconfig "${kubeconfig}" \
-    --context "${values[kube_context]}" -n solidstats-memory \
-    patch cronjob solidstats-memory-backup --type=merge \
-    -p '{"spec":{"suspend":true}}' >/dev/null 2>&1 || status=1
+  timeout 30s /usr/local/libexec/solidstats-memory-backup-suspend \
+    >/dev/null 2>&1 || status=1
   exit "${status}"
 }
 trap on_error ERR
 if [[ "${SOLIDSTATS_MEMORY_GUARD_SELF_TEST:-0}" == 1 ]]; then
-  timeout 30s "${kubectl}" --kubeconfig "${kubeconfig}" \
-    --context "${values[kube_context]}" -n solidstats-memory \
-    patch cronjob solidstats-memory-backup --type=merge \
-    -p '{"spec":{"suspend":true}}' >/dev/null 2>&1
+  timeout 30s /usr/local/libexec/solidstats-memory-backup-suspend >/dev/null
   [[ "$(timeout 30s "${kubectl}" --kubeconfig "${kubeconfig}" \
     --context "${values[kube_context]}" -n solidstats-memory get cronjob \
     solidstats-memory-backup -o 'jsonpath={.spec.suspend}:{.spec.concurrencyPolicy}')" == true:Forbid ]]

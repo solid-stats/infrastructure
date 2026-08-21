@@ -12,6 +12,7 @@ ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/solidstats-memory-backup-guard
 BindReadOnlyPaths=/etc/solidstats-memory-backup-guard.conf /etc/rancher/k3s/k3s.yaml
+BindReadOnlyPaths=/usr/local/libexec/solidstats-memory-backup-suspend
 BindReadOnlyPaths=-/usr/bin/kubectl -/usr/local/bin/kubectl
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallFilter=@system-service

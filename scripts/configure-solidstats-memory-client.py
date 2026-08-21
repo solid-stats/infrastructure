@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
+from typing import Callable
 
 
 CLIENT_NAME = "solidstats_memory"
@@ -323,14 +325,133 @@ def authorize_current(config: Path, prestate: Path) -> None:
     _atomic_replace(metadata, updated, mode)
 
 
+def _remove_registration(raw: bytes, name: str) -> bytes:
+    if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name) is None:
+        raise PolicyError("legacy client name is invalid")
+    heading = re.compile(
+        rb"(?m)^\[mcp_servers\." + re.escape(name.encode("ascii")) + rb"\][ \t]*(?:#.*)?$"
+    )
+    matches = list(heading.finditer(raw))
+    if len(matches) != 1:
+        raise PolicyError("legacy client registration is missing or ambiguous")
+    start = matches[0].start()
+    following = re.search(rb"(?m)^\[", raw[matches[0].end() :])
+    end = len(raw) if following is None else matches[0].end() + following.start()
+    return raw[:start] + raw[end:]
+
+
+def _authorize_exact_states(prestate: Path, states: tuple[bytes, ...]) -> None:
+    metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
+    raw, mode = _safe_file(metadata)
+    try:
+        decoded = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PolicyError("client policy rollback metadata is malformed") from error
+    accepted = decoded.get("accepted_sha256")
+    if decoded.get("schema") != "solidstats-memory-client-policy/v1" or not isinstance(
+        accepted, list
+    ):
+        raise PolicyError("client policy rollback metadata is malformed")
+    if any(not isinstance(item, str) or re.fullmatch(r"[0-9a-f]{64}", item) is None for item in accepted):
+        raise PolicyError("client policy rollback metadata is malformed")
+    decoded["accepted_sha256"] = sorted(set(accepted) | {_sha256(item) for item in states})
+    updated = json.dumps(decoded, separators=(",", ":"), sort_keys=True).encode("ascii") + b"\n"
+    _atomic_replace(metadata, updated, mode)
+
+
+def retire_transaction(
+    config: Path,
+    prestate: Path,
+    result: Path,
+    *,
+    url: str,
+    token_env: str,
+    legacy_name: str = "mempalace",
+    timeout_seconds: int = 30,
+    remove: Callable[[bytes], object] | None = None,
+    stage: Callable[[str], None] | None = None,
+) -> None:
+    """Retire one exact registration with pre-authorized exact rollback."""
+    current, mode = _safe_file(config)
+    _safe_file(prestate)
+    inspect_policy(current, url=url, token_env=token_env, require_policy=True)
+    retired = _remove_registration(current, legacy_name)
+    inspect_policy(retired, url=url, token_env=token_env, require_policy=True)
+    retirement_prestate = result.with_suffix(result.suffix + ".prestate")
+    if retirement_prestate.exists() and not retirement_prestate.is_symlink():
+        previous, _ = _safe_file(retirement_prestate)
+        if previous != current:
+            raise PolicyError("client retirement prestate is drifted")
+    else:
+        _exclusive_write(retirement_prestate, current)
+    _authorize_exact_states(prestate, (current, retired))
+    stage_hook = stage or (lambda _name: None)
+
+    def external_remove(_expected: bytes) -> None:
+        try:
+            completed = subprocess.run(
+                ["codex", "mcp", "remove", legacy_name],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise PolicyError("legacy client removal command failed") from error
+        if completed.returncode != 0:
+            raise PolicyError("legacy client removal command failed")
+
+    remove_callback = remove or external_remove
+    try:
+        remove_callback(retired)
+        stage_hook("removed")
+        observed, _ = _safe_file(config)
+        stage_hook("readback")
+        if observed != retired:
+            raise PolicyError("legacy client retirement read-back differs")
+        inspect_policy(observed, url=url, token_env=token_env, require_policy=True)
+        stage_hook("policy")
+        evidence = (
+            b"schema=solidstats-memory-client-retirement/v2\n"
+            + b"sequence=1\n"
+            + f"prestate_sha256={_sha256(current)}\n".encode("ascii")
+            + f"retired_sha256={_sha256(retired)}\n".encode("ascii")
+            + b"legacy_client_absent=true\nnew_client_live=true\n"
+            + b"unrelated_unchanged=true\nretirement_readback=true\n"
+        )
+        _exclusive_write(result, evidence)
+        stage_hook("evidence")
+    except BaseException as error:
+        try:
+            observed, _ = _safe_file(config)
+            if observed not in (current, retired):
+                raise PolicyError("client drift prevents retirement rollback")
+            if observed != current:
+                _atomic_replace(config, current, mode)
+            restored, _ = _safe_file(config)
+            if restored != current:
+                raise PolicyError("client retirement rollback read-back failed")
+            if result.exists() and not result.is_symlink():
+                result.unlink()
+        except (OSError, PolicyError) as rollback_error:
+            raise PolicyError("client retirement failed and exact rollback failed") from rollback_error
+        if isinstance(error, PolicyError):
+            raise
+        raise PolicyError("client retirement transaction failed") from error
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback", "authorize-current"))
+    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback", "authorize-current", "retire"))
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--prestate", type=Path)
     parser.add_argument("--name", default=CLIENT_NAME)
     parser.add_argument("--url")
     parser.add_argument("--token-env")
+    parser.add_argument("--result", type=Path)
+    parser.add_argument("--legacy-name", default="mempalace")
+    parser.add_argument("--timeout-seconds", type=int, default=30)
     return parser
 
 
@@ -339,12 +460,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.name != CLIENT_NAME:
             raise PolicyError("target client name is invalid")
-        if args.command in {"capture", "apply", "rollback", "authorize-current"} and args.prestate is None:
+        if args.command in {"capture", "apply", "rollback", "authorize-current", "retire"} and args.prestate is None:
             raise PolicyError("client config prestate path is required")
-        if args.command in {"apply", "validate"} and (
+        if args.command in {"apply", "validate", "retire"} and (
             args.url is None or args.token_env is None
         ):
             raise PolicyError("target client binding is required")
+        if args.command == "retire" and args.result is None:
+            raise PolicyError("client retirement result path is required")
         if args.command == "capture":
             capture(args.config, args.prestate)
         elif args.command == "authorize-current":
@@ -353,6 +476,18 @@ def main(argv: list[str] | None = None) -> int:
             apply(args.config, args.prestate, url=args.url, token_env=args.token_env)
         elif args.command == "validate":
             validate(args.config, url=args.url, token_env=args.token_env)
+        elif args.command == "retire":
+            if args.timeout_seconds < 1 or args.timeout_seconds > 3600:
+                raise PolicyError("client retirement timeout is invalid")
+            retire_transaction(
+                args.config,
+                args.prestate,
+                args.result,
+                url=args.url,
+                token_env=args.token_env,
+                legacy_name=args.legacy_name,
+                timeout_seconds=args.timeout_seconds,
+            )
         else:
             rollback(args.config, args.prestate)
         print(f"PASS: client policy {args.command} completed")

@@ -188,6 +188,25 @@ result_field() {
   printf '%s\n' "${value}"
 }
 
+operation_sequence() {
+  case "$1" in
+    capture-prestate) echo 10 ;; stop-legacy-start-new) echo 20 ;; install-nginx) echo 30 ;;
+    restart-mempalace) echo 100 ;; restart-qdrant) echo 110 ;;
+    measure-backup-api-egress) echo 200 ;; prove-backup-api-positive) echo 210 ;;
+    prove-backup-api-network-negative) echo 220 ;; prove-backup-api-rbac-negative) echo 230 ;;
+    recheck-backup-api-access) echo 240 ;; capture-backup-template-digest) echo 250 ;;
+    prepare-guard-package) echo 260 ;; verify-guard-package) echo 270 ;;
+    install-backup-guard) echo 280 ;; verify-backup-guard) echo 290 ;;
+    guard-self-test-active) echo 294 ;; test-backup-guard-suspension) echo 295 ;; prove-backup-consistency) echo 300 ;;
+    restore-backup-writer) echo 310 ;; suspend-backup-schedule) echo 320 ;;
+    capture-boot-identity) echo 400 ;; reboot-host) echo 410 ;; verify-reboot-recovery) echo 420 ;;
+    rollback-nginx) echo 500 ;; stop-new) echo 510 ;; start-legacy) echo 520 ;;
+    verify-legacy-behavior) echo 530 ;; rearm-forward-cycle) echo 540 ;;
+    verify-retained-collections) echo 570 ;; activate-backup-schedule) echo 600 ;;
+    rollback-backup-guard) echo 610 ;; *) fatal ;;
+  esac
+}
+
 write_result() {
   local operation="$1"
   shift
@@ -195,6 +214,7 @@ write_result() {
   {
     printf 'schema=solidstats-memory-remote-operation-result/v1\n'
     printf 'operation=%s\n' "${operation}"
+    printf 'sequence=%s\n' "$(operation_sequence "${operation}")"
     printf 'config_sha256=%s\n' "${CONFIG_SHA256}"
     printf 'run_id_sha256=%s\n' "${RUN_ID_SHA256}"
     for item in "$@"; do
@@ -785,8 +805,15 @@ set_backup_schedule() {
         -p "{\"spec\":{\"suspend\":${desired}}}"
     fi
     [[ "$(backup_schedule_state)" == "${desired}:Forbid" ]] || fatal
-    write_result "${operation}" "schedule_suspended=${desired}" \
-      "concurrency_forbid=true"
+    if [[ "${operation}" == activate-backup-schedule ]]; then
+      local active_digest
+      active_digest=$(backup_template_digest)
+      [[ "${active_digest}" == "$(<"${RUN_ROOT}/guard-package/candidate-template.sha256")" ]] || fatal
+      write_result "${operation}" "schedule_suspended=${desired}" \
+        "concurrency_forbid=true" "active_template_sha256=${active_digest}"
+    else
+      write_result "${operation}" "schedule_suspended=${desired}" "concurrency_forbid=true"
+    fi
     require_operation_complete "${operation}"
     return 0
   fi
@@ -794,8 +821,15 @@ set_backup_schedule() {
   kube_quiet patch cronjob "${BACKUP_CRONJOB}" --type=merge \
     -p "{\"spec\":{\"suspend\":${desired}}}"
   [[ "$(backup_schedule_state)" == "${desired}:Forbid" ]] || fatal
-  write_result "${operation}" "schedule_suspended=${desired}" \
-    "concurrency_forbid=true"
+  if [[ "${operation}" == activate-backup-schedule ]]; then
+    local active_digest
+    active_digest=$(backup_template_digest)
+    [[ "${active_digest}" == "$(<"${RUN_ROOT}/guard-package/candidate-template.sha256")" ]] || fatal
+    write_result "${operation}" "schedule_suspended=${desired}" \
+      "concurrency_forbid=true" "active_template_sha256=${active_digest}"
+  else
+    write_result "${operation}" "schedule_suspended=${desired}" "concurrency_forbid=true"
+  fi
   record_operation "${operation}" complete
 }
 
@@ -906,13 +940,15 @@ install_backup_guard() {
     require_operation_complete install-backup-guard
     return 0
   fi
-  local guard_source service_source timer_source config_source
+  local guard_source suspend_source service_source timer_source config_source
   require_operation_complete verify-guard-package
   guard_source="${RUN_ROOT}/guard-package/guard-solidstats-memory-backup.sh"
+  suspend_source="${RUN_ROOT}/guard-package/suspend-solidstats-memory-backup.sh"
   service_source="${RUN_ROOT}/guard-package/solidstats-memory-backup-guard.service"
   timer_source="${RUN_ROOT}/guard-package/solidstats-memory-backup-guard.timer"
   config_source="${RUN_ROOT}/guard-package/guard-solidstats-memory-backup.sh.config"
   require_binary "${guard_source}"
+  require_binary "${suspend_source}"
   require_regular_private_file "${config_source}"
   [[ -f "${service_source}" && ! -L "${service_source}" &&
     -f "${timer_source}" && ! -L "${timer_source}" ]] || fatal
@@ -928,9 +964,10 @@ install_backup_guard() {
   else
     printf 'false\n' | private_write "${RUN_ROOT}/guard-prestate/active"
   fi
-  for name in script service timer config; do
+  for name in script suspend service timer config; do
     case "${name}" in
       script) destination=/usr/local/libexec/solidstats-memory-backup-guard ;;
+      suspend) destination=/usr/local/libexec/solidstats-memory-backup-suspend ;;
       service) destination=/etc/systemd/system/solidstats-memory-backup-guard.service ;;
       timer) destination=/etc/systemd/system/solidstats-memory-backup-guard.timer ;;
       config) destination=/etc/solidstats-memory-backup-guard.conf ;;
@@ -948,6 +985,7 @@ install_backup_guard() {
     fi
   done
   install -m 0755 "${guard_source}" /usr/local/libexec/solidstats-memory-backup-guard
+  install -m 0755 "${suspend_source}" /usr/local/libexec/solidstats-memory-backup-suspend
   install -m 0644 "${service_source}" /etc/systemd/system/solidstats-memory-backup-guard.service
   install -m 0644 "${timer_source}" /etc/systemd/system/solidstats-memory-backup-guard.timer
   install -m 0600 "${config_source}" /etc/solidstats-memory-backup-guard.conf
@@ -973,11 +1011,11 @@ prepare_guard_package() {
 verify_guard_package() {
   local directory="${RUN_ROOT}/guard-package" descriptor="${RUN_ROOT}/guard-package/SHA256SUMS" name
   require_regular_private_file "${descriptor}"
-  [[ "$(wc -l <"${descriptor}")" -eq 5 ]] || fatal
-  for name in guard-solidstats-memory-backup.sh solidstats-memory-backup-guard.service solidstats-memory-backup-guard.timer guard-solidstats-memory-backup.sh.config 40-backup.active.yaml; do
+  [[ "$(wc -l <"${descriptor}")" -eq 7 ]] || fatal
+  for name in guard-solidstats-memory-backup.sh suspend-solidstats-memory-backup.sh solidstats-memory-backup-guard.service solidstats-memory-backup-guard.timer guard-solidstats-memory-backup.sh.config 40-backup.active.yaml backup-activation.provenance.json; do
     [[ -f "${directory}/${name}" && ! -L "${directory}/${name}" ]] || fatal
     case "${name}" in
-      *.config|*.yaml) [[ "$(stat -c '%a' "${directory}/${name}")" == 600 ]] || fatal ;;
+      *.config|*.yaml|*.json) [[ "$(stat -c '%a' "${directory}/${name}")" == 600 ]] || fatal ;;
       *.sh) [[ "$(stat -c '%a' "${directory}/${name}")" == 755 ]] || fatal ;;
       *) [[ "$(stat -c '%a' "${directory}/${name}")" == 644 ]] || fatal ;;
     esac
@@ -997,8 +1035,22 @@ raw=json.dumps(value,separators=(",",":"),sort_keys=True).encode()
 print(hashlib.sha256(raw).hexdigest())
 ' "${rendered}")
   [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || fatal
+  local candidate_sha provenance_status
+  candidate_sha=$(sha256sum -- "${directory}/40-backup.active.yaml" | cut -d' ' -f1)
+  provenance_status=$("${PYTHON_PATH}" -c '
+import json,sys
+value=json.load(open(sys.argv[1]))
+expected={"schema","source_suspended_sha256","rendered_suspended_sha256","active_candidate_sha256","canonical_job_template_sha256","source_render_exact"}
+ok=set(value)==expected and value["schema"]=="solidstats-memory-backup-activation-render/v1" and value["source_render_exact"] is True and value["source_suspended_sha256"]==value["rendered_suspended_sha256"] and value["active_candidate_sha256"]==sys.argv[2] and value["canonical_job_template_sha256"]==sys.argv[3]
+print("true" if ok else "false")
+' "${directory}/backup-activation.provenance.json" "${candidate_sha}" "${digest}")
+  [[ "${provenance_status}" == true ]] || fatal
   printf '%s\n' "${digest}" | private_write "${directory}/candidate-template.sha256"
-  write_result verify-guard-package "verified=true" "file_count=5" \
+  local package_sha
+  package_sha=$(sha256sum -- "${descriptor}" | cut -d' ' -f1)
+  write_result verify-guard-package "verified=true" "file_count=7" \
+    "package_sha256=${package_sha}" \
+    "provenance_verified=true" "active_candidate_sha256=${candidate_sha}" \
     "template_sha256=${digest}"
   record_operation verify-guard-package complete
 }
@@ -1006,9 +1058,10 @@ print(hashlib.sha256(raw).hexdigest())
 rollback_backup_guard() {
   local name destination state backup
   run_quiet "${SYSTEMCTL_PATH}" disable --now solidstats-memory-backup-guard.timer
-  for name in script service timer config; do
+  for name in script suspend service timer config; do
     case "${name}" in
       script) destination=/usr/local/libexec/solidstats-memory-backup-guard ;;
+      suspend) destination=/usr/local/libexec/solidstats-memory-backup-suspend ;;
       service) destination=/etc/systemd/system/solidstats-memory-backup-guard.service ;;
       timer) destination=/etc/systemd/system/solidstats-memory-backup-guard.timer ;;
       config) destination=/etc/solidstats-memory-backup-guard.conf ;;
@@ -1363,7 +1416,7 @@ read_api_binding() {
 
 measure_backup_api_egress() {
   local candidates selected_mode="" selected_cidr="" selected_port=""
-  local mode cidr port passing_endpoints=0 candidate_count=0
+  local mode cidr port passing_endpoints=0 candidate_count=0 candidate_ordinal=0 selected_ordinal=0
   if [[ "$(operation_status measure-backup-api-egress 2>/dev/null || true)" == complete ]]; then
     local binding
     binding=$(read_api_binding)
@@ -1374,21 +1427,25 @@ measure_backup_api_egress() {
   fi
   discover_api_candidates
   candidates="${RUN_ROOT}/api-candidates"
+  candidate_count=$(wc -l <"${candidates}")
+  [[ "${candidate_count}" =~ ^[1-9][0-9]*$ ]] || fatal
   while read -r mode cidr port; do
     validate_api_binding_values "${mode}" "${cidr}" "${port}"
-    candidate_count=$((candidate_count + 1))
+    candidate_ordinal=$((candidate_ordinal + 1))
     apply_api_binding "${mode}" "${cidr}" "${port}"
     if run_api_control positive; then
       if [[ "${mode}" == service ]]; then
         selected_mode="${mode}"
         selected_cidr="${cidr}"
         selected_port="${port}"
+        selected_ordinal="${candidate_ordinal}"
         break
       fi
       passing_endpoints=$((passing_endpoints + 1))
       selected_mode="${mode}"
       selected_cidr="${cidr}"
       selected_port="${port}"
+      selected_ordinal="${candidate_ordinal}"
     fi
   done <"${candidates}"
   if [[ -z "${selected_mode}" || \
@@ -1407,7 +1464,8 @@ measure_backup_api_egress() {
   policy_sha=$(sha256sum -- "${RUN_ROOT}/api-bootstrap.yaml" | cut -d' ' -f1)
   write_result measure-backup-api-egress \
     "measured=true" "single_candidate=true" "mode=${selected_mode}" \
-    "candidate_count=${candidate_count}" "policy_sha256=${policy_sha}"
+    "candidate_count=${candidate_count}" "selected_ordinal=${selected_ordinal}" \
+    "policy_sha256=${policy_sha}"
   record_operation measure-backup-api-egress complete
 }
 
@@ -1495,7 +1553,7 @@ prove_backup_consistency() {
     "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
     wait --for=condition=Complete "job/${job}" \
     "--timeout=${BACKUP_TIMEOUT_SECONDS}s" </dev/null >/dev/null 2>&1 || fatal
-  local log_sha metadata_sha logs="${RUN_ROOT}/backup-job.log"
+  local log_sha metadata_sha inventory_sha file_count logs="${RUN_ROOT}/backup-job.log"
   timeout --signal=TERM --kill-after=5s "${BACKUP_TIMEOUT_SECONDS}s" \
     "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
     logs "job/${job}" >"${logs}.tmp" 2>/dev/null || fatal
@@ -1506,6 +1564,11 @@ prove_backup_consistency() {
   grep -qx 'PASS: behavior-oracle=pass' "${logs}" || fatal
   metadata_sha=$(sed -n 's/^PASS: metadata-sha256=//p' "${logs}")
   [[ "${metadata_sha}" =~ ^[0-9a-f]{64}$ ]] || fatal
+  inventory_sha=$(sed -n 's/^PASS: package-inventory-sha256=//p' "${logs}")
+  file_count=$(sed -n 's/^PASS: package-file-count=//p' "${logs}")
+  [[ "${inventory_sha}" =~ ^[0-9a-f]{64}$ && "${file_count}" == 4 ]] || fatal
+  grep -qx 'PASS: downloaded=pass' "${logs}" || fatal
+  grep -qx 'PASS: checksums-rechecked=pass' "${logs}" || fatal
   log_sha=$(sha256sum "${logs}" | cut -d' ' -f1)
   [[ "${log_sha}" =~ ^[0-9a-f]{64}$ ]] || fatal
   restore_backup_writer
@@ -1517,6 +1580,8 @@ prove_backup_consistency() {
     "zero_writers=true" "zero_pvc_consumers=true" \
     "source_before_sha256=${metadata_sha}" \
     "source_after_sha256=${metadata_sha}" "archive_sha256=${metadata_sha}" \
+    "upload_file_count=${file_count}" "upload_inventory_sha256=${inventory_sha}" \
+    "downloaded=true" "checksums_rechecked=true" \
     "job_log_sha256=${log_sha}"
   record_operation prove-backup-consistency complete
 }
@@ -1615,6 +1680,9 @@ main() {
   esac
   local public_result
   public_result=$(operation_path "${operation}" result)
+  if [[ ! -f "${public_result}" ]]; then
+    write_result "${operation}" "completed=true"
+  fi
   if [[ -f "${public_result}" ]]; then
     require_regular_private_file "${public_result}"
     cat "${public_result}"

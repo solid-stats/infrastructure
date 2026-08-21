@@ -613,6 +613,14 @@ spec:
                   print("PASS: writer-restored=pass", flush=True)
                   print("PASS: behavior-oracle=pass", flush=True)
                   print("PASS: metadata-sha256=" + archive_digest, flush=True)
+                  inventory_raw = json.dumps(
+                      {name: checksums.get(name, file_sha256(downloaded / name)) for name in sorted(expected)},
+                      separators=(",", ":"), sort_keys=True,
+                  ).encode()
+                  print("PASS: package-file-count=4", flush=True)
+                  print("PASS: package-inventory-sha256=" + hashlib.sha256(inventory_raw).hexdigest(), flush=True)
+                  print("PASS: downloaded=pass", flush=True)
+                  print("PASS: checksums-rechecked=pass", flush=True)
               env:
                 - name: POD_NAME
                   valueFrom:

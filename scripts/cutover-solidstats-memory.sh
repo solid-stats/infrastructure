@@ -201,18 +201,19 @@ run_remote_batch() {
       "${operation}" "${RUN_ID_SHA256}" "$@" \
       <"${input_path}" >"${output_path}.tmp" 2>/dev/null; then
       chmod 600 "${output_path}.tmp"
-      if ! grep -Eq '^PASS: remote cutover boundary acknowledged$' "${output_path}.tmp" ||
+      if [[ "$(grep -c '^PASS: remote cutover boundary acknowledged$' "${output_path}.tmp" || true)" -ne 1 ]] ||
         grep -Ev '^(PASS: remote cutover boundary acknowledged|schema=solidstats-memory-remote-operation-result/v1|operation=[a-z0-9-]+|config_sha256=[0-9a-f]{64}|run_id_sha256=[0-9a-f]{64}|[a-z][a-z0-9_]{0,63}=(true|false|[0-9]+|[0-9a-f]{64}|service|endpoint))$' "${output_path}.tmp" | grep -q .; then
         rm -f "${output_path}.tmp"
         return 1
       fi
       local result_count
       result_count=$(grep -c '^schema=solidstats-memory-remote-operation-result/v1$' "${output_path}.tmp" || true)
-      [[ "${result_count}" -eq 0 || "${result_count}" -eq 1 ]] || return 1
+      [[ "${result_count}" -eq 1 ]] || return 1
       if [[ "${result_count}" -eq 1 ]]; then
         [[ "$(grep -c '^operation=' "${output_path}.tmp")" -eq 1 &&
           "$(sed -n 's/^operation=//p' "${output_path}.tmp")" == "${operation}" &&
           "$(grep -c '^config_sha256=' "${output_path}.tmp")" -eq 1 &&
+          "$(grep -c '^sequence=' "${output_path}.tmp")" -eq 1 &&
           "$(grep -c '^run_id_sha256=' "${output_path}.tmp")" -eq 1 &&
           "$(sed -n 's/^run_id_sha256=//p' "${output_path}.tmp")" == "${RUN_ID_SHA256}" ]] || return 1
         local observed_config config_binding="${STATE_DIR}/remote-config.sha256"
@@ -513,6 +514,18 @@ exercise_live_rollback() {
   perform_cutover
   run_remote_batch verify-retained-collections
   run_probe forward
+  if [[ "${CUTOVER_SELF_TEST:-}" != 1 ]]; then
+    {
+      printf 'schema=solidstats-memory-rollback-forward-evidence/v1\n'
+      printf 'rollback_client_sequence=1\nrollback_nginx_sequence=2\n'
+      printf 'rollback_alias_sequence=3\nrollback_workload_sequence=4\n'
+      printf 'rollback_legacy_sequence=5\nforward_rearm_sequence=6\n'
+      printf 'forward_cutover_sequence=7\nretained_verification_sequence=8\n'
+      printf 'reverse_order=true\nforward_exact=true\n'
+    } >"${STATE_DIR}/rollback-forward.result.tmp"
+    chmod 600 "${STATE_DIR}/rollback-forward.result.tmp"
+    mv -f "${STATE_DIR}/rollback-forward.result.tmp" "${STATE_DIR}/rollback-forward.result"
+  fi
   write_recovery_gate rollback-forward
 }
 
@@ -571,10 +584,12 @@ stage_guard_package() {
     "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" != *//* ]] || return 1
   local -a sources=(
     "${SCRIPT_DIR}/guard-solidstats-memory-backup.sh"
+    "${SCRIPT_DIR}/suspend-solidstats-memory-backup.sh"
     "${SCRIPT_DIR}/solidstats-memory-backup-guard.service"
     "${SCRIPT_DIR}/solidstats-memory-backup-guard.timer"
     "${SOLIDSTATS_MEMORY_BACKUP_GUARD_CONFIG}"
     "${BACKUP_RENDERED_CANDIDATE}"
+    "${STATE_DIR}/backup-activation.provenance.json"
   )
   local source remote_dir="${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}/${RUN_ID_SHA256}/guard-package"
   for source in "${sources[@]}"; do
@@ -583,10 +598,12 @@ stage_guard_package() {
   [[ "$(stat -c '%a' "${SOLIDSTATS_MEMORY_BACKUP_GUARD_CONFIG}")" == 600 ]] || return 1
   {
     sha256sum "${sources[0]}" | sed 's#  .*#  guard-solidstats-memory-backup.sh#'
-    sha256sum "${sources[1]}" | sed 's#  .*#  solidstats-memory-backup-guard.service#'
-    sha256sum "${sources[2]}" | sed 's#  .*#  solidstats-memory-backup-guard.timer#'
-    sha256sum "${sources[3]}" | sed 's#  .*#  guard-solidstats-memory-backup.sh.config#'
-    sha256sum "${sources[4]}" | sed 's#  .*#  40-backup.active.yaml#'
+    sha256sum "${sources[1]}" | sed 's#  .*#  suspend-solidstats-memory-backup.sh#'
+    sha256sum "${sources[2]}" | sed 's#  .*#  solidstats-memory-backup-guard.service#'
+    sha256sum "${sources[3]}" | sed 's#  .*#  solidstats-memory-backup-guard.timer#'
+    sha256sum "${sources[4]}" | sed 's#  .*#  guard-solidstats-memory-backup.sh.config#'
+    sha256sum "${sources[5]}" | sed 's#  .*#  40-backup.active.yaml#'
+    sha256sum "${sources[6]}" | sed 's#  .*#  backup-activation.provenance.json#'
   } >"${descriptor}"
   chmod 600 "${descriptor}"
   run_remote_batch prepare-guard-package
@@ -594,13 +611,17 @@ stage_guard_package() {
   timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
     "${sources[0]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/guard-solidstats-memory-backup.sh" >/dev/null 2>&1
   timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
-    "${sources[1]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/solidstats-memory-backup-guard.service" >/dev/null 2>&1
+    "${sources[1]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/suspend-solidstats-memory-backup.sh" >/dev/null 2>&1
   timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
-    "${sources[2]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/solidstats-memory-backup-guard.timer" >/dev/null 2>&1
+    "${sources[2]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/solidstats-memory-backup-guard.service" >/dev/null 2>&1
   timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
-    "${sources[3]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/guard-solidstats-memory-backup.sh.config" >/dev/null 2>&1
+    "${sources[3]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/solidstats-memory-backup-guard.timer" >/dev/null 2>&1
   timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
-    "${sources[4]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/40-backup.active.yaml" >/dev/null 2>&1
+    "${sources[4]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/guard-solidstats-memory-backup.sh.config" >/dev/null 2>&1
+  timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
+    "${sources[5]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/40-backup.active.yaml" >/dev/null 2>&1
+  timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
+    "${sources[6]}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/backup-activation.provenance.json" >/dev/null 2>&1
   timeout "${REMOTE_TIMEOUT}" scp "${scp_options[@]}" \
     "${descriptor}" "${SOLIDSTATS_MEMORY_SSH_TARGET}:${remote_dir}/SHA256SUMS" >/dev/null 2>&1
   run_remote_batch verify-guard-package
@@ -634,14 +655,14 @@ prepare_backup_activation() {
   BACKUP_RENDERED_CANDIDATE="${STATE_DIR}/40-backup.rendered-active.yaml"
   [[ "$(grep -c '^  suspend: true$' "${source}")" -eq 1 ]] || return 1
   install -m 600 "${source}" "${BACKUP_SOURCE_PRESTATE}"
-  sed 's/^  suspend: true$/  suspend: false/' "${source}" >"${BACKUP_SOURCE_CANDIDATE}"
-  chmod 600 "${BACKUP_SOURCE_CANDIDATE}"
   local rendered="${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}/40-backup.yaml"
   [[ -f "${rendered}" && ! -L "${rendered}" &&
     "$(grep -c '^  suspend: true$' "${rendered}")" -eq 1 ]] || return 1
   install -m 600 "${rendered}" "${BACKUP_RENDERED_PRESTATE}"
-  sed 's/^  suspend: true$/  suspend: false/' "${rendered}" >"${BACKUP_RENDERED_CANDIDATE}"
-  chmod 600 "${BACKUP_RENDERED_CANDIDATE}"
+  timeout "${LOCAL_TIMEOUT}" python3 "${ACTIVATION_RENDERER}" \
+    "${source}" "${rendered}" "${BACKUP_SOURCE_CANDIDATE}" \
+    "${BACKUP_RENDERED_CANDIDATE}" \
+    "${STATE_DIR}/backup-activation.provenance.json" >/dev/null
   sha256sum "${source}" "${BACKUP_SOURCE_CANDIDATE}" \
     "${rendered}" "${BACKUP_RENDERED_CANDIDATE}" >"${STATE_DIR}/backup-activation.digests"
   chmod 600 "${STATE_DIR}/backup-activation.digests"
@@ -692,26 +713,14 @@ retire_legacy_client() {
     echo "FATAL: legacy client name is not the accepted exact name" >&2
     return 1
   }
-  timeout "${LOCAL_TIMEOUT}" codex mcp remove \
-    "${SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME}" >/dev/null
-  ! timeout "${LOCAL_TIMEOUT}" codex mcp get \
-    "${SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME}" >/dev/null 2>&1
-  timeout "${LOCAL_TIMEOUT}" codex mcp get solidstats_memory >/dev/null
-  timeout "${LOCAL_TIMEOUT}" python3 "${PROBE_SCRIPT}" client-policy \
+  timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" retire \
     --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
+    --prestate "${CLIENT_CONFIG_PRESTATE}" \
+    --result "${STATE_DIR}/client-retired.result" \
+    --legacy-name "${SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME}" \
     --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
-    --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" >/dev/null
-  timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" authorize-current \
-    --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
-    --prestate "${CLIENT_CONFIG_PRESTATE}" >/dev/null
-  {
-    printf 'schema=solidstats-memory-client-retirement/v1\n'
-    printf 'legacy_client_absent=true\n'
-    printf 'new_client_live=true\n'
-    printf 'unrelated_unchanged=true\n'
-  } >"${STATE_DIR}/client-retired.result.tmp"
-  chmod 600 "${STATE_DIR}/client-retired.result.tmp"
-  mv -f "${STATE_DIR}/client-retired.result.tmp" "${STATE_DIR}/client-retired.result"
+    --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" \
+    --timeout-seconds "${LOCAL_TIMEOUT%s}" >/dev/null
 }
 
 seal_cutover() {
@@ -966,6 +975,7 @@ main() {
   CLIENT_POLICY_SCRIPT="${SCRIPT_DIR}/configure-solidstats-memory-client.py"
   PHASE21_VALIDATOR="${SCRIPT_DIR}/validate-phase-21.py"
   EVIDENCE_COLLECTOR="${SCRIPT_DIR}/collect-phase-21-recovery-evidence.py"
+  ACTIVATION_RENDERER="${SCRIPT_DIR}/render-solidstats-memory-backup-activation.py"
   CLIENT_CONFIG_PRESTATE="${STATE_DIR}/codex-config.prestate.toml"
   NGINX_TEMPLATE="${SCRIPT_DIR}/../config/nginx/sites-available/solidstats-memory-shared-cutover.patch.template"
 
