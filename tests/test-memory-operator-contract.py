@@ -289,6 +289,36 @@ class MemoryOperatorContractTests(unittest.TestCase):
         )
         head_response.close.assert_called_once_with()
 
+    def test_server_dry_run_uses_the_existing_substitute_namespace(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.state_root = self.root
+        runtime.render_root = self.root / "rendered"
+        runtime.render_root.mkdir(mode=0o700)
+        runtime.source_secret_namespace = "existing-runtime"
+        for relative in OPERATOR.TARGETS:
+            (runtime.render_root / Path(relative).name).write_text(
+                f"metadata:\n  namespace: {OPERATOR.NAMESPACE}\n",
+                encoding="utf-8",
+            )
+        with (
+            mock.patch.object(runtime, "_require_rendered", return_value={}),
+            mock.patch.object(runtime, "_namespace_exists", return_value=False),
+            mock.patch.object(runtime, "_kubectl") as kubectl,
+        ):
+            result = runtime.validate_manifests({"rendered": {}, "mode": "server"})
+
+        self.assertEqual({"valid": True}, result)
+        arguments = kubectl.call_args.args[0]
+        self.assertEqual(["-n", "existing-runtime", "apply"], arguments[:3])
+        self.assertEqual("--server-side", arguments[3])
+        self.assertEqual("--dry-run=server", arguments[4])
+        for relative in OPERATOR.TARGETS:
+            rendered = (
+                runtime.state_root / "server-dry-run" / Path(relative).name
+            ).read_text(encoding="utf-8")
+            self.assertIn("namespace: existing-runtime", rendered)
+            self.assertNotIn(f"namespace: {OPERATOR.NAMESPACE}", rendered)
+
     def test_client_state_matches_only_exact_solidstats_registrations(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
         entries = [

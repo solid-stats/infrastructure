@@ -1127,6 +1127,7 @@ class Runtime:
             manifest_root = private_directory(
                 self.state_root / "server-dry-run", create=True
             )
+            arguments[1] = self.source_secret_namespace
             for relative in TARGETS:
                 source = self.render_root / Path(relative).name
                 target = manifest_root / source.name
