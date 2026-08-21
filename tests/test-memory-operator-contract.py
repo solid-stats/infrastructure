@@ -73,6 +73,7 @@ class MemoryOperatorContractTests(unittest.TestCase):
             "qdrant-request": {"method": "GET", "path": "/collections", "body": None},
             "run-phase20-parity": {},
             "run-exact-image-probe": {},
+            "bootstrap-runtime-palace": {},
             "verify-prestate": {"prestate": self.prestate},
         }
 
@@ -660,7 +661,256 @@ class MemoryOperatorContractTests(unittest.TestCase):
             },
         )
         self.assertNotIn("synthetic-target-collection", json.dumps(claims))
+        self.assertEqual(
+            "synthetic-logical-alias",
+            by_name["mempalace-runtime"]["SOLIDSTATS_MEMORY_LOGICAL_ALIAS"],
+        )
+        self.assertEqual(
+            "synthetic-target-collection",
+            by_name["mempalace-runtime"]["SOLIDSTATS_MEMORY_PHYSICAL_COLLECTION"],
+        )
 
+    def test_runtime_bootstrap_job_uses_exact_script_alias_and_offline_cache(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.repo_root = ROOT
+        runtime.config = {
+            "probe_alias": "synthetic-logical-alias",
+            "target_collection": "synthetic-physical-collection",
+            "expected_count": 19534,
+            "mempalace_image": OPERATOR.OFFICIAL_MEMPALACE_IMAGE,
+        }
+
+        config_map, job = runtime._runtime_bootstrap_objects()
+
+        source = (ROOT / "scripts/bootstrap-solidstats-memory-palace.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(source, config_map["data"]["bootstrap.py"])
+        self.assertEqual(
+            hashlib.sha256(source.encode()).hexdigest(),
+            config_map["metadata"]["annotations"][
+                "solidstats.io/bootstrap-script-sha256"
+            ],
+        )
+        container = job["spec"]["template"]["spec"]["containers"][0]
+        environment = {entry["name"]: entry for entry in container["env"]}
+        self.assertEqual(["online"], container["args"])
+        self.assertEqual(OPERATOR.OFFICIAL_MEMPALACE_IMAGE, container["image"])
+        self.assertEqual("1", environment["HF_HUB_OFFLINE"]["value"])
+        self.assertEqual(
+            "embeddinggemma",
+            environment["MEMPALACE_EMBEDDING_MODEL"]["value"],
+        )
+        self.assertEqual(
+            "synthetic-logical-alias",
+            environment["SOLIDSTATS_MEMORY_LOGICAL_ALIAS"]["value"],
+        )
+        self.assertEqual(
+            "synthetic-physical-collection",
+            environment["SOLIDSTATS_MEMORY_PHYSICAL_COLLECTION"]["value"],
+        )
+        self.assertEqual(
+            "19534", environment["SOLIDSTATS_MEMORY_EXPECTED_COUNT"]["value"]
+        )
+        pod = job["spec"]["template"]["spec"]
+        self.assertFalse(pod["automountServiceAccountToken"])
+        self.assertEqual(
+            "mempalace-data",
+            pod["volumes"][0]["persistentVolumeClaim"]["claimName"],
+        )
+
+    def test_runtime_bootstrap_restores_absent_alias_after_success(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.config = {
+            "probe_alias": "synthetic-logical-alias",
+            "target_collection": "synthetic-physical-collection",
+            "expected_count": 19534,
+        }
+        config_map = {"kind": "ConfigMap", "metadata": {"name": "bootstrap"}}
+        job = {
+            "kind": "Job",
+            "metadata": {"name": "synthetic-runtime-bootstrap"},
+        }
+        aliases = {"unrelated-alias": "unrelated-collection"}
+        qdrant_calls = []
+
+        def qdrant(method, path, body=None):
+            qdrant_calls.append((method, path, body))
+            if method == "GET":
+                return {
+                    "result": {
+                        "aliases": [
+                            {"alias_name": alias, "collection_name": collection}
+                            for alias, collection in aliases.items()
+                        ]
+                    }
+                }
+            action = body["actions"][0]
+            if "create_alias" in action:
+                create = action["create_alias"]
+                aliases[create["alias_name"]] = create["collection_name"]
+            else:
+                aliases.pop(action["delete_alias"]["alias_name"])
+            return {"status": "ok"}
+
+        with (
+            mock.patch.object(runtime, "_qdrant", side_effect=qdrant),
+            mock.patch.object(
+                runtime,
+                "_kubectl_json",
+                return_value={"spec": {"replicas": 0}},
+            ),
+            mock.patch.object(
+                runtime,
+                "_runtime_bootstrap_objects",
+                return_value=(config_map, job),
+            ),
+            mock.patch.object(runtime, "_seed_runtime_cache"),
+            mock.patch.object(runtime, "_kubectl") as kubectl,
+        ):
+            result = runtime.bootstrap_runtime_palace({})
+
+        self.assertTrue(result["bootstrap_complete"])
+        self.assertEqual(0, result["synthetic_residue"])
+        self.assertEqual({"unrelated-alias": "unrelated-collection"}, aliases)
+        applied = [
+            call.kwargs["input_value"]
+            for call in kubectl.call_args_list
+            if "input_value" in call.kwargs
+        ]
+        self.assertEqual([config_map, job], applied)
+        self.assertEqual(2, sum(call[0] == "POST" for call in qdrant_calls))
+
+    def test_runtime_bootstrap_failure_restores_alias_and_workload(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.config = {
+            "probe_alias": "synthetic-logical-alias",
+            "target_collection": "synthetic-physical-collection",
+            "expected_count": 19534,
+        }
+        aliases = {}
+
+        def qdrant(method, _path, body=None):
+            if method == "GET":
+                return {
+                    "result": {
+                        "aliases": [
+                            {"alias_name": alias, "collection_name": collection}
+                            for alias, collection in aliases.items()
+                        ]
+                    }
+                }
+            action = body["actions"][0]
+            if "create_alias" in action:
+                create = action["create_alias"]
+                aliases[create["alias_name"]] = create["collection_name"]
+            else:
+                aliases.pop(action["delete_alias"]["alias_name"])
+            return {"status": "ok"}
+
+        config_map = {"kind": "ConfigMap", "metadata": {"name": "bootstrap"}}
+        job = {"kind": "Job", "metadata": {"name": "bootstrap-job"}}
+
+        def kubectl(arguments, **_kwargs):
+            if "job/bootstrap-job" in arguments:
+                raise RuntimeError("synthetic job failure")
+            return b""
+
+        with (
+            mock.patch.object(runtime, "_qdrant", side_effect=qdrant),
+            mock.patch.object(
+                runtime,
+                "_kubectl_json",
+                return_value={"spec": {"replicas": 1}},
+            ),
+            mock.patch.object(
+                runtime,
+                "_runtime_bootstrap_objects",
+                return_value=(config_map, job),
+            ),
+            mock.patch.object(runtime, "_seed_runtime_cache"),
+            mock.patch.object(runtime, "_wait_mempalace_scaled_down"),
+            mock.patch.object(runtime, "_kubectl", side_effect=kubectl) as invoked,
+        ):
+            with self.assertRaisesRegex(OPERATOR.OperatorError, "bootstrap failed"):
+                runtime.bootstrap_runtime_palace({})
+
+        self.assertEqual({}, aliases)
+        commands = [call.args[0] for call in invoked.call_args_list]
+        self.assertIn(
+            [
+                "-n",
+                OPERATOR.NAMESPACE,
+                "scale",
+                "deployment/mempalace",
+                "--replicas=0",
+            ],
+            commands,
+        )
+        self.assertIn(
+            [
+                "-n",
+                OPERATOR.NAMESPACE,
+                "scale",
+                "deployment/mempalace",
+                "--replicas=1",
+            ],
+            commands,
+        )
+
+    def test_runtime_cache_seed_streams_private_archive_and_rechecks_ready(self) -> None:
+        archive = self.root / "embeddinggemma-cache.tar"
+        archive.write_bytes(b"synthetic-private-cache-archive")
+        archive.chmod(0o600)
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.embedding_cache_archive = archive
+        runtime.config = {
+            "mempalace_image": OPERATOR.OFFICIAL_MEMPALACE_IMAGE,
+            "embedding_cache_revision": OPERATOR.EMBEDDINGGEMMA_REVISION,
+            "embedding_cache_archive_sha256": hashlib.sha256(
+                archive.read_bytes()
+            ).hexdigest(),
+            "embedding_cache_archive_bytes": archive.stat().st_size,
+        }
+        calls = []
+        ready_attempts = 0
+
+        def kubectl(arguments, **kwargs):
+            nonlocal ready_attempts
+            calls.append((arguments, kwargs))
+            if arguments[-1] == "cache-ready":
+                ready_attempts += 1
+                if ready_attempts == 1:
+                    raise OPERATOR.OperatorError("synthetic cache miss")
+            return b""
+
+        with mock.patch.object(runtime, "_kubectl", side_effect=kubectl):
+            runtime._seed_runtime_cache()
+
+        seed_calls = [
+            (arguments, kwargs)
+            for arguments, kwargs in calls
+            if arguments[-1] == "seed-cache"
+        ]
+        self.assertEqual(1, len(seed_calls))
+        self.assertIs(seed_calls[0][1]["input_file"], archive)
+        self.assertEqual(2, ready_attempts)
+        self.assertEqual(
+            ["delete", "apply", "wait", "exec", "exec", "exec", "delete"],
+            [
+                next(
+                    value
+                    for value in (
+                        "delete",
+                        "apply",
+                        "wait",
+                        "exec",
+                    )
+                    if value in arguments
+                )
+                for arguments, _kwargs in calls
+            ],
+        )
     def test_capacity_uses_retained_snapshot_and_live_node_not_bundle_total(self) -> None:
         bundle = self.root / "bundle"
         bundle.mkdir(mode=0o700)

@@ -37,6 +37,7 @@ OPERATIONS = {
     "render-manifests",
     "validate-manifests",
     "apply-manifests",
+    "bootstrap-runtime-palace",
     "inspect-runtime",
     "load-backup-inputs",
     "apply-backup-job",
@@ -86,6 +87,7 @@ OFFICIAL_AWS_CLI_IMAGE = (
     "sha256:f611429c1fcd094bf04f748f0be1e5d604aa28214ea0f54c0bf8242ec2ef7cd3"
 )
 RESTORE_RESERVE_BYTES = 1024 * 1024 * 1024
+EMBEDDINGGEMMA_REVISION = "5090578d9565bb06545b4552f76e6bc2c93e4a66"
 
 
 class OperatorError(ValueError):
@@ -107,6 +109,17 @@ def canonical(value: object) -> bytes:
 
 def digest(value: object) -> str:
     return hashlib.sha256(canonical(value)).hexdigest()
+
+
+def file_sha256(path: Path) -> str:
+    value = hashlib.sha256()
+    try:
+        with path.open("rb") as source:
+            while chunk := source.read(1024 * 1024):
+                value.update(chunk)
+    except OSError as error:
+        raise OperatorError("private artifact verification failed") from error
+    return value.hexdigest()
 
 
 def qdrant_jwt(secret_value: str, payload: Mapping[str, object]) -> str:
@@ -263,6 +276,7 @@ def validate_operation_payload(operation: str, payload: object) -> dict[str, obj
         "render-manifests": {"operator_markers", "target_set"},
         "validate-manifests": {"rendered", "mode"},
         "apply-manifests": {"rendered"},
+        "bootstrap-runtime-palace": set(),
         "inspect-runtime": set(),
         "load-backup-inputs": set(),
         "apply-backup-job": {"job_path"},
@@ -390,6 +404,10 @@ class Runtime:
             "probe_alias",
             "expected_count",
             "expected_vector_config",
+            "embedding_cache_archive_path",
+            "embedding_cache_archive_sha256",
+            "embedding_cache_archive_bytes",
+            "embedding_cache_revision",
         }
         if set(config) != required or config.get("schema") != CONFIG_SCHEMA:
             raise OperatorError("private operator configuration is invalid")
@@ -402,6 +420,22 @@ class Runtime:
         baseline_details = regular_file(self.baseline_snapshot)
         if stat.S_IMODE(baseline_details.st_mode) != 0o600:
             raise OperatorError("baseline snapshot mode is unsafe")
+        self.embedding_cache_archive = Path(
+            str(config["embedding_cache_archive_path"])
+        ).resolve(strict=True)
+        cache_details = regular_file(self.embedding_cache_archive)
+        if (
+            stat.S_IMODE(cache_details.st_mode) != 0o600
+            or config["embedding_cache_revision"] != EMBEDDINGGEMMA_REVISION
+            or not isinstance(config["embedding_cache_archive_sha256"], str)
+            or not SHA256.fullmatch(config["embedding_cache_archive_sha256"])
+            or isinstance(config["embedding_cache_archive_bytes"], bool)
+            or not isinstance(config["embedding_cache_archive_bytes"], int)
+            or config["embedding_cache_archive_bytes"] != cache_details.st_size
+            or file_sha256(self.embedding_cache_archive)
+            != config["embedding_cache_archive_sha256"]
+        ):
+            raise OperatorError("embedding cache artifact binding is invalid")
         self.context = safe_name(config["kube_context"], "Kubernetes context is invalid")
         self.source_secret_namespace = safe_name(
             config["source_secret_namespace"], "source Secret binding is invalid"
@@ -471,13 +505,20 @@ class Runtime:
         *,
         timeout: float,
         input_bytes: bytes | None = None,
+        input_file: Path | None = None,
         stdout_file: Path | None = None,
         environment: Mapping[str, str] | None = None,
     ) -> bytes:
         if timeout <= 0 or timeout > 3600:
             raise OperatorError("operator command timeout is invalid")
         output_handle = None
+        input_handle = None
         try:
+            if input_bytes is not None and input_file is not None:
+                raise OperatorError("operator command input is invalid")
+            if input_file is not None:
+                regular_file(input_file)
+                input_handle = input_file.open("rb")
             if stdout_file is not None:
                 private_directory(stdout_file.parent, create=True)
                 output_handle = stdout_file.open("xb")
@@ -485,6 +526,7 @@ class Runtime:
             result = subprocess.run(
                 command,
                 input=input_bytes,
+                stdin=input_handle,
                 stdout=output_handle or subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 env=None if environment is None else {**os.environ, **environment},
@@ -496,6 +538,8 @@ class Runtime:
         finally:
             if output_handle is not None:
                 output_handle.close()
+            if input_handle is not None:
+                input_handle.close()
         if result.returncode != 0:
             raise OperatorError("bounded operator command failed")
         payload = b"" if stdout_file is not None else result.stdout
@@ -509,12 +553,14 @@ class Runtime:
         *,
         timeout: float = 180,
         input_value: object | None = None,
+        input_file: Path | None = None,
     ) -> bytes:
         command = ["kubectl", "--context", self.context, *args]
         return self._run(
             command,
             timeout=timeout,
             input_bytes=None if input_value is None else canonical(input_value) + b"\n",
+            input_file=input_file,
         )
 
     def _kubectl_json(self, args: list[str], *, timeout: float = 180) -> object:
@@ -1211,6 +1257,10 @@ class Runtime:
                 {
                     "MEMPALACE_QDRANT_API_KEY": mempalace_token,
                     "MEMPALACE_MCP_HTTP_TOKEN": self.mcp_token.read_text(encoding="ascii"),
+                    "SOLIDSTATS_MEMORY_LOGICAL_ALIAS": self.config["probe_alias"],
+                    "SOLIDSTATS_MEMORY_PHYSICAL_COLLECTION": self.config[
+                        "target_collection"
+                    ],
                 },
             ),
             (
@@ -1311,6 +1361,511 @@ class Runtime:
             "target_count": len(TARGETS),
             "marker_count": 6,
             "recurring_schedule_changed": False,
+        }
+
+    @staticmethod
+    def _alias_bindings(value: object) -> dict[str, str]:
+        result = value.get("result") if isinstance(value, Mapping) else None
+        aliases = result.get("aliases") if isinstance(result, Mapping) else None
+        if not isinstance(aliases, list):
+            raise OperatorError("Qdrant alias inventory is invalid")
+        bindings: dict[str, str] = {}
+        for entry in aliases:
+            if (
+                not isinstance(entry, Mapping)
+                or set(entry) != {"alias_name", "collection_name"}
+                or not isinstance(entry.get("alias_name"), str)
+                or not isinstance(entry.get("collection_name"), str)
+                or entry["alias_name"] in bindings
+            ):
+                raise OperatorError("Qdrant alias inventory is invalid")
+            bindings[entry["alias_name"]] = entry["collection_name"]
+        return bindings
+
+    def _runtime_bootstrap_objects(self) -> tuple[dict[str, object], dict[str, object]]:
+        script_path = self.repo_root / "scripts/bootstrap-solidstats-memory-palace.py"
+        details = regular_file(script_path, max_bytes=256 * 1024)
+        if details.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise OperatorError("runtime bootstrap source mode is unsafe")
+        script = script_path.read_text(encoding="utf-8")
+        script_sha256 = hashlib.sha256(script.encode("utf-8")).hexdigest()
+        binding = digest(
+            {
+                "script_sha256": script_sha256,
+                "logical_alias": self.config["probe_alias"],
+                "physical_collection": self.config["target_collection"],
+                "expected_count": self.config["expected_count"],
+            }
+        )
+        config_map = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": "mempalace-runtime-bootstrap",
+                "namespace": NAMESPACE,
+                "labels": {
+                    "app.kubernetes.io/name": "mempalace",
+                    "app.kubernetes.io/part-of": "solidstats-memory",
+                },
+                "annotations": {
+                    "solidstats.io/bootstrap-script-sha256": script_sha256,
+                },
+            },
+            "data": {"bootstrap.py": script},
+        }
+        environment = [
+            {"name": "MEMPALACE_PALACE_PATH", "value": "/data/palace"},
+            {"name": "MEMPALACE_EMBEDDING_MODEL", "value": "embeddinggemma"},
+            {"name": "MEMPALACE_EMBEDDING_DEVICE", "value": "cpu"},
+            {"name": "MEMPALACE_QDRANT_URL", "value": "http://qdrant:6333"},
+            {"name": "MEMPALACE_QDRANT_NAMESPACE", "value": "SolidStats"},
+            {
+                "name": "MEMPALACE_QDRANT_API_KEY",
+                "valueFrom": {
+                    "secretKeyRef": {
+                        "name": "mempalace-runtime",
+                        "key": "MEMPALACE_QDRANT_API_KEY",
+                    }
+                },
+            },
+            {"name": "HF_HOME", "value": "/data/palace/.cache/huggingface"},
+            {"name": "HF_HUB_OFFLINE", "value": "1"},
+            {"name": "HF_HUB_DISABLE_TELEMETRY", "value": "1"},
+            {
+                "name": "SOLIDSTATS_MEMORY_LOGICAL_ALIAS",
+                "value": self.config["probe_alias"],
+            },
+            {
+                "name": "SOLIDSTATS_MEMORY_PHYSICAL_COLLECTION",
+                "value": self.config["target_collection"],
+            },
+            {
+                "name": "SOLIDSTATS_MEMORY_EXPECTED_COUNT",
+                "value": str(self.config["expected_count"]),
+            },
+        ]
+        job = {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "name": f"mempalace-runtime-bootstrap-{binding[:12]}",
+                "namespace": NAMESPACE,
+                "labels": {
+                    "app.kubernetes.io/name": "mempalace",
+                    "app.kubernetes.io/component": "runtime-bootstrap",
+                    "app.kubernetes.io/part-of": "solidstats-memory",
+                },
+                "annotations": {"solidstats.io/bootstrap-binding-sha256": binding},
+            },
+            "spec": {
+                "backoffLimit": 0,
+                "activeDeadlineSeconds": 900,
+                "ttlSecondsAfterFinished": 600,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "app.kubernetes.io/name": "mempalace",
+                            "app.kubernetes.io/component": "runtime-bootstrap",
+                            "app.kubernetes.io/part-of": "solidstats-memory",
+                        }
+                    },
+                    "spec": {
+                        "restartPolicy": "Never",
+                        "serviceAccountName": "mempalace",
+                        "automountServiceAccountToken": False,
+                        "securityContext": {
+                            "runAsNonRoot": True,
+                            "runAsUser": 1000,
+                            "runAsGroup": 1000,
+                            "fsGroup": 1000,
+                            "seccompProfile": {"type": "RuntimeDefault"},
+                        },
+                        "containers": [
+                            {
+                                "name": "runtime-bootstrap",
+                                "image": self.config["mempalace_image"],
+                                "imagePullPolicy": "IfNotPresent",
+                                "command": [
+                                    "python",
+                                    "/opt/mempalace-bootstrap/bootstrap.py",
+                                ],
+                                "args": ["online"],
+                                "env": environment,
+                                "resources": {
+                                    "requests": {"cpu": "250m", "memory": "512Mi"},
+                                    "limits": {"cpu": "1", "memory": "1Gi"},
+                                },
+                                "securityContext": {
+                                    "allowPrivilegeEscalation": False,
+                                    "readOnlyRootFilesystem": True,
+                                    "capabilities": {"drop": ["ALL"]},
+                                },
+                                "volumeMounts": [
+                                    {"name": "mempalace-data", "mountPath": "/data"},
+                                    {
+                                        "name": "mempalace-bootstrap",
+                                        "mountPath": "/opt/mempalace-bootstrap",
+                                        "readOnly": True,
+                                    },
+                                    {"name": "tmp", "mountPath": "/tmp"},
+                                ],
+                            }
+                        ],
+                        "volumes": [
+                            {
+                                "name": "mempalace-data",
+                                "persistentVolumeClaim": {
+                                    "claimName": "mempalace-data"
+                                },
+                            },
+                            {
+                                "name": "mempalace-bootstrap",
+                                "configMap": {
+                                    "name": "mempalace-runtime-bootstrap",
+                                    "defaultMode": 0o444,
+                                },
+                            },
+                            {"name": "tmp", "emptyDir": {}},
+                        ],
+                    },
+                },
+            },
+        }
+        return config_map, job
+
+    def _runtime_cache_seed_pod(self) -> dict[str, object]:
+        environment = [
+            {"name": "MEMPALACE_PALACE_PATH", "value": "/data/palace"},
+            {"name": "MEMPALACE_EMBEDDING_MODEL", "value": "embeddinggemma"},
+            {
+                "name": "SOLIDSTATS_MEMORY_MODEL_REVISION",
+                "value": self.config["embedding_cache_revision"],
+            },
+            {
+                "name": "SOLIDSTATS_MEMORY_MODEL_ARCHIVE_SHA256",
+                "value": self.config["embedding_cache_archive_sha256"],
+            },
+            {
+                "name": "SOLIDSTATS_MEMORY_MODEL_ARCHIVE_BYTES",
+                "value": str(self.config["embedding_cache_archive_bytes"]),
+            },
+        ]
+        return {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": "mempalace-cache-seed",
+                "namespace": NAMESPACE,
+                "labels": {
+                    "app.kubernetes.io/name": "mempalace",
+                    "app.kubernetes.io/component": "cache-seed",
+                    "app.kubernetes.io/part-of": "solidstats-memory",
+                },
+            },
+            "spec": {
+                "restartPolicy": "Never",
+                "serviceAccountName": "mempalace",
+                "automountServiceAccountToken": False,
+                "terminationGracePeriodSeconds": 5,
+                "securityContext": {
+                    "runAsNonRoot": True,
+                    "runAsUser": 1000,
+                    "runAsGroup": 1000,
+                    "fsGroup": 1000,
+                    "seccompProfile": {"type": "RuntimeDefault"},
+                },
+                "containers": [
+                    {
+                        "name": "cache-seed",
+                        "image": self.config["mempalace_image"],
+                        "imagePullPolicy": "IfNotPresent",
+                        "command": [
+                            "python",
+                            "-c",
+                            "import time; time.sleep(900)",
+                        ],
+                        "env": environment,
+                        "resources": {
+                            "requests": {"cpu": "100m", "memory": "128Mi"},
+                            "limits": {"cpu": "500m", "memory": "512Mi"},
+                        },
+                        "securityContext": {
+                            "allowPrivilegeEscalation": False,
+                            "readOnlyRootFilesystem": True,
+                            "capabilities": {"drop": ["ALL"]},
+                        },
+                        "volumeMounts": [
+                            {"name": "mempalace-data", "mountPath": "/data"},
+                            {
+                                "name": "mempalace-bootstrap",
+                                "mountPath": "/opt/mempalace-bootstrap",
+                                "readOnly": True,
+                            },
+                            {"name": "tmp", "mountPath": "/tmp"},
+                        ],
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "mempalace-data",
+                        "persistentVolumeClaim": {"claimName": "mempalace-data"},
+                    },
+                    {
+                        "name": "mempalace-bootstrap",
+                        "configMap": {
+                            "name": "mempalace-runtime-bootstrap",
+                            "defaultMode": 0o444,
+                        },
+                    },
+                    {"name": "tmp", "emptyDir": {}},
+                ],
+            },
+        }
+
+    def _seed_runtime_cache(self) -> None:
+        pod = self._runtime_cache_seed_pod()
+        name = str(pod["metadata"]["name"])
+        self._kubectl(
+            ["-n", NAMESPACE, "delete", "pod", name, "--ignore-not-found=true"],
+            timeout=60,
+        )
+        try:
+            self._kubectl(
+                ["-n", NAMESPACE, "apply", "--server-side", "-f", "-"],
+                input_value=pod,
+            )
+            self._kubectl(
+                [
+                    "-n",
+                    NAMESPACE,
+                    "wait",
+                    "--for=condition=Ready",
+                    f"pod/{name}",
+                    "--timeout=300s",
+                ],
+                timeout=330,
+            )
+            command = [
+                "-n",
+                NAMESPACE,
+                "exec",
+                name,
+                "--",
+                "python",
+                "/opt/mempalace-bootstrap/bootstrap.py",
+            ]
+            try:
+                self._kubectl([*command, "cache-ready"], timeout=60)
+            except OperatorError:
+                self._kubectl(
+                    [
+                        "-n",
+                        NAMESPACE,
+                        "exec",
+                        "-i",
+                        name,
+                        "--",
+                        "python",
+                        "/opt/mempalace-bootstrap/bootstrap.py",
+                        "seed-cache",
+                    ],
+                    timeout=900,
+                    input_file=self.embedding_cache_archive,
+                )
+            self._kubectl([*command, "cache-ready"], timeout=60)
+        finally:
+            self._kubectl(
+                [
+                    "-n",
+                    NAMESPACE,
+                    "delete",
+                    "pod",
+                    name,
+                    "--wait=true",
+                    "--timeout=120s",
+                ],
+                timeout=150,
+            )
+
+    def _wait_mempalace_scaled_down(self) -> None:
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            deployment = self._kubectl_json(
+                ["-n", NAMESPACE, "get", "deployment", "mempalace"],
+                timeout=30,
+            )
+            status = (
+                deployment.get("status")
+                if isinstance(deployment, Mapping)
+                else None
+            )
+            if isinstance(status, Mapping) and all(
+                status.get(field, 0) == 0
+                for field in ("replicas", "readyReplicas", "availableReplicas")
+            ):
+                return
+            time.sleep(2)
+        raise OperatorError("runtime bootstrap workload did not stop")
+
+    def bootstrap_runtime_palace(self, payload: dict[str, object]) -> object:
+        exact_mapping(payload, set(), "runtime bootstrap request is invalid")
+        alias = str(self.config["probe_alias"])
+        target = str(self.config["target_collection"])
+        if alias == target:
+            raise OperatorError("runtime bootstrap binding is invalid")
+        prestate = self._alias_bindings(self._qdrant("GET", "/aliases"))
+        if alias in prestate:
+            raise OperatorError("runtime bootstrap alias is not absent")
+        deployment = self._kubectl_json(
+            ["-n", NAMESPACE, "get", "deployment", "mempalace"]
+        )
+        spec = deployment.get("spec") if isinstance(deployment, Mapping) else None
+        replicas = spec.get("replicas") if isinstance(spec, Mapping) else None
+        if isinstance(replicas, bool) or not isinstance(replicas, int) or replicas < 0:
+            raise OperatorError("runtime bootstrap workload pre-state is invalid")
+        config_map, job = self._runtime_bootstrap_objects()
+        scaled = False
+        alias_created = False
+        job_applied = False
+        completed = False
+        cleanup_failed = False
+        failure: Exception | None = None
+        try:
+            if replicas:
+                self._kubectl(
+                    [
+                        "-n",
+                        NAMESPACE,
+                        "scale",
+                        "deployment/mempalace",
+                        "--replicas=0",
+                    ]
+                )
+                self._wait_mempalace_scaled_down()
+                scaled = True
+            self._kubectl(
+                ["-n", NAMESPACE, "apply", "--server-side", "-f", "-"],
+                input_value=config_map,
+            )
+            self._seed_runtime_cache()
+            self._qdrant(
+                "POST",
+                "/collections/aliases",
+                {
+                    "actions": [
+                        {
+                            "create_alias": {
+                                "alias_name": alias,
+                                "collection_name": target,
+                            }
+                        }
+                    ]
+                },
+            )
+            alias_created = True
+            if self._alias_bindings(self._qdrant("GET", "/aliases")) != {
+                **prestate,
+                alias: target,
+            }:
+                raise OperatorError("runtime bootstrap alias read-back failed")
+            self._kubectl(
+                [
+                    "-n",
+                    NAMESPACE,
+                    "delete",
+                    "job",
+                    str(job["metadata"]["name"]),
+                    "--ignore-not-found=true",
+                    "--wait=true",
+                ],
+                timeout=150,
+            )
+            job_applied = True
+            self._kubectl(
+                ["-n", NAMESPACE, "apply", "--server-side", "-f", "-"],
+                input_value=job,
+            )
+            self._kubectl(
+                [
+                    "-n",
+                    NAMESPACE,
+                    "wait",
+                    "--for=condition=complete",
+                    f"job/{job['metadata']['name']}",
+                    "--timeout=900s",
+                ],
+                timeout=930,
+            )
+            completed = True
+        except Exception as error:
+            failure = error
+        finally:
+            if job_applied:
+                try:
+                    self._kubectl(
+                        [
+                            "-n",
+                            NAMESPACE,
+                            "delete",
+                            "job",
+                            str(job["metadata"]["name"]),
+                            "--wait=true",
+                            "--timeout=120s",
+                        ],
+                        timeout=150,
+                    )
+                except Exception:
+                    cleanup_failed = True
+            if alias_created:
+                try:
+                    self._qdrant(
+                        "POST",
+                        "/collections/aliases",
+                        {"actions": [{"delete_alias": {"alias_name": alias}}]},
+                    )
+                except Exception:
+                    cleanup_failed = True
+            try:
+                if self._alias_bindings(self._qdrant("GET", "/aliases")) != prestate:
+                    cleanup_failed = True
+            except Exception:
+                cleanup_failed = True
+            if scaled:
+                try:
+                    self._kubectl(
+                        [
+                            "-n",
+                            NAMESPACE,
+                            "scale",
+                            "deployment/mempalace",
+                            f"--replicas={replicas}",
+                        ]
+                    )
+                    self._kubectl(
+                        [
+                            "-n",
+                            NAMESPACE,
+                            "rollout",
+                            "status",
+                            "deployment/mempalace",
+                            "--timeout=300s",
+                        ],
+                        timeout=330,
+                    )
+                except Exception:
+                    cleanup_failed = True
+        if cleanup_failed:
+            raise OperatorError("runtime bootstrap rollback failed")
+        if failure is not None:
+            raise OperatorError("runtime bootstrap failed") from failure
+        if not completed:
+            raise OperatorError("runtime bootstrap did not complete")
+        return {
+            "bootstrap_complete": True,
+            "alias_prestate_restored": True,
+            "workload_prestate_restored": True,
+            "expected_count": self.config["expected_count"],
+            "synthetic_residue": 0,
         }
 
     def inspect_runtime(self, payload: dict[str, object]) -> object:

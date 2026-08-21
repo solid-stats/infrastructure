@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import os
 import re
+import importlib.util
 import base64
 import hashlib
 import hmac
+import io
 import json
 import shutil
 import signal
 import subprocess
 import tempfile
+import tarfile
 import time
 import unittest
 from copy import deepcopy
@@ -28,6 +31,13 @@ TUNNEL = ROOT / "scripts" / "ssh-tunnel-up.sh"
 MANIFEST_RENDERER = ROOT / "scripts" / "render-memory-manifests.py"
 SECRET_RENDERER = ROOT / "scripts" / "render-memory-secrets.py"
 VALIDATOR = ROOT / "scripts" / "validate-memory-manifests.py"
+BOOTSTRAP_PATH = ROOT / "scripts" / "bootstrap-solidstats-memory-palace.py"
+BOOTSTRAP_SPEC = importlib.util.spec_from_file_location(
+    "solidstats_memory_runtime_bootstrap", BOOTSTRAP_PATH
+)
+assert BOOTSTRAP_SPEC and BOOTSTRAP_SPEC.loader
+BOOTSTRAP = importlib.util.module_from_spec(BOOTSTRAP_SPEC)
+BOOTSTRAP_SPEC.loader.exec_module(BOOTSTRAP)
 
 
 def synthetic_environment(**values: str) -> dict[str, str]:
@@ -87,6 +97,23 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
         )
         deployment = next(document for document in documents if document["kind"] == "Deployment")
         container = deployment["spec"]["template"]["spec"]["containers"][0]
+        init_container = deployment["spec"]["template"]["spec"]["initContainers"][0]
+        self.assertEqual(init_container["name"], "runtime-bootstrap")
+        self.assertEqual(
+            init_container["image"], "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST"
+        )
+        self.assertEqual(
+            init_container["command"],
+            ["python", "/opt/mempalace-bootstrap/bootstrap.py"],
+        )
+        self.assertEqual(init_container["args"], ["offline"])
+        init_env = {entry["name"]: entry for entry in init_container["env"]}
+        self.assertEqual(init_env["MEMPALACE_EMBEDDING_MODEL"]["value"], "embeddinggemma")
+        self.assertEqual(init_env["MEMPALACE_EMBEDDING_DEVICE"]["value"], "cpu")
+        self.assertEqual(init_env["HF_HUB_OFFLINE"]["value"], "1")
+        self.assertEqual(
+            init_env["HF_HOME"]["value"], "/data/palace/.cache/huggingface"
+        )
         self.assertEqual(container["command"], ["mempalace-mcp"])
         self.assertEqual(
             container["args"],
@@ -103,6 +130,318 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
                 "8765",
             ],
         )
+        main_env = {entry["name"]: entry for entry in container["env"]}
+        self.assertEqual(main_env["MEMPALACE_EMBEDDING_MODEL"]["value"], "embeddinggemma")
+        self.assertEqual(main_env["HF_HUB_OFFLINE"]["value"], "1")
+        volumes = {
+            volume["name"]: volume
+            for volume in deployment["spec"]["template"]["spec"]["volumes"]
+        }
+        self.assertEqual(
+            volumes["mempalace-bootstrap"]["configMap"],
+            {"name": "mempalace-runtime-bootstrap", "defaultMode": 0o444},
+        )
+
+
+class RuntimePalaceBootstrapContractTests(unittest.TestCase):
+    class Identity:
+        def __init__(self, model_name: str, dimension: int):
+            self.model_name = model_name
+            self.dimension = dimension
+
+        def __eq__(self, other: object) -> bool:
+            return (
+                isinstance(other, RuntimePalaceBootstrapContractTests.Identity)
+                and (self.model_name, self.dimension)
+                == (other.model_name, other.dimension)
+            )
+
+    class Result:
+        def __init__(self, ids: list[str]):
+            self.ids = ids
+
+    class Backend:
+        def __init__(self, palace: Path, initial_ids: list[str]):
+            self.palace = palace
+            self.ids = list(initial_ids)
+            self.upserts = 0
+            self.deletes = 0
+            self.collection = RuntimePalaceBootstrapContractTests.Collection(self)
+
+        def _marker_target(self, reference, config):
+            palace_hash = hashlib.sha256(str(self.palace).encode()).hexdigest()[:16]
+            return {
+                "url": config.url,
+                "namespace": config.namespace,
+                "palace_hash": palace_hash,
+                "remote_prefix": f"mempalace_SolidStats_{palace_hash}",
+            }
+
+        def _read_marker(self, _reference):
+            return json.loads((self.palace / "qdrant_backend.json").read_text())
+
+        def _validate_marker_target(self, reference, config):
+            marker = self._read_marker(reference)
+            if marker.get("qdrant") != self._marker_target(reference, config):
+                raise ValueError("marker mismatch")
+
+        def _get_embedder_identity(self, _reference, _collection):
+            value = json.loads((self.palace / "mempalace_embedder.json").read_text())[
+                BOOTSTRAP.COLLECTION
+            ]
+            return RuntimePalaceBootstrapContractTests.Identity(**value)
+
+        def get_collection(self, **_kwargs):
+            return self.collection
+
+    class Collection:
+        def __init__(self, backend):
+            self.backend = backend
+
+        def count(self):
+            return len(self.backend.ids)
+
+        def get(self, *, ids, include):
+            return RuntimePalaceBootstrapContractTests.Result(
+                [value for value in ids if value in self.backend.ids]
+            )
+
+        def upsert(self, *, documents, ids, metadatas, embeddings):
+            self.backend.upserts += 1
+            self.backend.ids.extend(ids)
+            target = self.backend._marker_target(None, self.backend.config)
+            marker = {
+                "backend": "qdrant",
+                "schema_version": 1,
+                "created_at": "2026-08-21T00:00:00+00:00",
+                "palace_id": str(self.backend.palace),
+                "qdrant": target,
+            }
+            path = self.backend.palace / "qdrant_backend.json"
+            path.write_text(json.dumps(marker))
+            path.chmod(0o600)
+
+        def delete(self, *, ids):
+            self.backend.deletes += 1
+            self.backend.ids = [value for value in self.backend.ids if value not in ids]
+
+        def set_embedder_identity(self, identity):
+            path = self.backend.palace / "mempalace_embedder.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        BOOTSTRAP.COLLECTION: {
+                            "model_name": identity.model_name,
+                            "dimension": identity.dimension,
+                        }
+                    }
+                )
+            )
+            path.chmod(0o600)
+
+    class Config:
+        url = BOOTSTRAP.QDRANT_URL
+        api_key = "synthetic-alias-only-token"
+        namespace = BOOTSTRAP.NAMESPACE
+
+    def handles(self, palace: Path, backend):
+        backend.config = self.Config()
+        reference = object()
+        return backend, reference, backend.config, self.Identity
+
+    @staticmethod
+    def cache_archive(*, unsafe_link: bool = False) -> bytes:
+        output = io.BytesIO()
+        repository = (
+            "huggingface/hub/"
+            "models--onnx-community--embeddinggemma-300m-ONNX"
+        )
+        revision = f"{repository}/snapshots/{BOOTSTRAP.MODEL_REVISION}"
+        directories = [
+            "huggingface",
+            "huggingface/hub",
+            repository,
+            f"{repository}/blobs",
+            f"{repository}/snapshots",
+            revision,
+            f"{revision}/onnx",
+            "huggingface/assets",
+            "huggingface/xet",
+            "huggingface/xet/logs",
+            "huggingface/xet/https___cas_serv-tGqkUaZf_CBPHQ6h",
+            "huggingface/xet/https___cas_serv-tGqkUaZf_CBPHQ6h/staging",
+            "huggingface/hub/.locks",
+            "huggingface/hub/.locks/models--onnx-community--embeddinggemma-300m-ONNX",
+        ]
+        with tarfile.open(fileobj=output, mode="w") as archive:
+            for name in directories:
+                member = tarfile.TarInfo(name)
+                member.type = tarfile.DIRTYPE
+                archive.addfile(member)
+            for name in "abcdef":
+                payload = name.encode()
+                member = tarfile.TarInfo(f"{repository}/blobs/{name}")
+                member.size = len(payload)
+                archive.addfile(member, io.BytesIO(payload))
+            links = [
+                (f"{revision}/onnx/model.onnx", "../../../blobs/a"),
+                (f"{revision}/onnx/model.onnx_data", "../../../blobs/b"),
+                (
+                    f"{revision}/tokenizer.json",
+                    "/outside" if unsafe_link else "../../blobs/c",
+                ),
+            ]
+            for name, target in links:
+                member = tarfile.TarInfo(name)
+                member.type = tarfile.SYMTYPE
+                member.linkname = target
+                archive.addfile(member)
+        return output.getvalue()
+
+    def test_cache_seed_verifies_exact_archive_and_is_idempotent(self) -> None:
+        archive = self.cache_archive()
+        archive_sha256 = hashlib.sha256(archive).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            with patch.object(
+                BOOTSTRAP.sys, "stdin", mock_stdin := unittest.mock.Mock()
+            ):
+                mock_stdin.buffer = io.BytesIO(archive)
+                BOOTSTRAP.seed_cache(palace, archive_sha256, len(archive))
+            BOOTSTRAP.cache_ready(palace, archive_sha256)
+            marker = (
+                palace
+                / ".cache"
+                / "huggingface"
+                / BOOTSTRAP.MODEL_SEED_MARKER
+            )
+            self.assertEqual(0o600, marker.stat().st_mode & 0o777)
+            tokenizer = (
+                palace
+                / ".cache"
+                / "huggingface"
+                / "hub"
+                / "models--onnx-community--embeddinggemma-300m-ONNX"
+                / "snapshots"
+                / BOOTSTRAP.MODEL_REVISION
+                / "tokenizer.json"
+            )
+            self.assertTrue(tokenizer.is_symlink())
+            self.assertEqual("../../blobs/c", os.readlink(tokenizer))
+
+            with patch.object(
+                BOOTSTRAP.sys, "stdin", mock_stdin := unittest.mock.Mock()
+            ):
+                mock_stdin.buffer = io.BytesIO(b"")
+                BOOTSTRAP.seed_cache(palace, archive_sha256, len(archive))
+            self.assertTrue(tokenizer.is_symlink())
+
+    def test_cache_seed_refuses_escaping_symlink_without_partial_install(self) -> None:
+        archive = self.cache_archive(unsafe_link=True)
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            with patch.object(
+                BOOTSTRAP.sys, "stdin", mock_stdin := unittest.mock.Mock()
+            ):
+                mock_stdin.buffer = io.BytesIO(archive)
+                with self.assertRaises(BOOTSTRAP.BootstrapError):
+                    BOOTSTRAP.seed_cache(
+                        palace, hashlib.sha256(archive).hexdigest(), len(archive)
+                    )
+            self.assertFalse((palace / ".cache" / "huggingface").exists())
+            self.assertFalse((palace / ".cache" / "huggingface.seed").exists())
+
+    def test_online_bootstrap_uses_official_write_path_and_leaves_zero_residue(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            backend = self.Backend(palace, ["one", "two", "three"])
+            with (
+                patch.object(
+                    BOOTSTRAP,
+                    "backend_handles",
+                    return_value=self.handles(palace, backend),
+                ),
+                patch.object(BOOTSTRAP, "model_vector", return_value=[0.0] * 384),
+            ):
+                BOOTSTRAP.online_bootstrap(palace, 3)
+                self.assertEqual(backend.ids, ["one", "two", "three"])
+                self.assertEqual((backend.upserts, backend.deletes), (1, 1))
+                BOOTSTRAP.online_bootstrap(palace, 3)
+            self.assertEqual((backend.upserts, backend.deletes), (1, 1))
+            marker = json.loads((palace / "qdrant_backend.json").read_text())
+            self.assertNotIn("collection_name", marker)
+            self.assertEqual(
+                json.loads((palace / "mempalace_embedder.json").read_text())[
+                    BOOTSTRAP.COLLECTION
+                ],
+                {"model_name": "embeddinggemma", "dimension": 384},
+            )
+
+    def test_online_bootstrap_refuses_count_drift_and_corrupt_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            backend = self.Backend(palace, ["one"])
+            with patch.object(
+                BOOTSTRAP,
+                "backend_handles",
+                return_value=self.handles(palace, backend),
+            ):
+                with self.assertRaises(BOOTSTRAP.BootstrapError):
+                    BOOTSTRAP.online_bootstrap(palace, 2)
+            self.assertEqual((backend.upserts, backend.deletes), (0, 0))
+
+            marker = palace / "qdrant_backend.json"
+            marker.write_text('{"backend":"qdrant","collection_name":"physical"}')
+            marker.chmod(0o600)
+            sidecar = palace / "mempalace_embedder.json"
+            sidecar.write_text(
+                json.dumps(
+                    {
+                        BOOTSTRAP.COLLECTION: {
+                            "model_name": "embeddinggemma",
+                            "dimension": 384,
+                        }
+                    }
+                )
+            )
+            sidecar.chmod(0o600)
+            with patch.object(
+                BOOTSTRAP,
+                "backend_handles",
+                return_value=self.handles(palace, backend),
+            ):
+                with self.assertRaises(BOOTSTRAP.BootstrapError):
+                    BOOTSTRAP.online_bootstrap(palace, 1)
+
+    def test_online_bootstrap_removes_probe_and_new_marker_after_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            backend = self.Backend(palace, ["one", "two"])
+            with (
+                patch.object(
+                    BOOTSTRAP,
+                    "backend_handles",
+                    return_value=self.handles(palace, backend),
+                ),
+                patch.object(BOOTSTRAP, "model_vector", return_value=[0.0] * 384),
+                patch.object(
+                    backend.collection,
+                    "set_embedder_identity",
+                    side_effect=RuntimeError("synthetic sidecar failure"),
+                ),
+            ):
+                with self.assertRaises(RuntimeError):
+                    BOOTSTRAP.online_bootstrap(palace, 2)
+
+            self.assertEqual(["one", "two"], backend.ids)
+            self.assertEqual((backend.upserts, backend.deletes), (1, 1))
+            self.assertFalse((palace / "qdrant_backend.json").exists())
+            self.assertFalse((palace / "mempalace_embedder.json").exists())
 
     def test_qdrant_has_a_bounded_writable_snapshot_mount(self) -> None:
         documents = list(
@@ -151,7 +490,23 @@ class MemorySecretRendererContractTests(unittest.TestCase):
         self.assertEqual([document["metadata"]["name"] for document in documents], ["qdrant-runtime", "mempalace-runtime", "memory-backup-runtime", "memory-observer-runtime"])
         self.assertTrue(all(document["metadata"]["namespace"] == "solidstats-memory" for document in documents))
         self.assertEqual(set(documents[0]["stringData"]), {"QDRANT_API_KEY"})
-        self.assertEqual(set(documents[1]["stringData"]), {"MEMPALACE_QDRANT_API_KEY", "MEMPALACE_MCP_HTTP_TOKEN"})
+        self.assertEqual(
+            set(documents[1]["stringData"]),
+            {
+                "MEMPALACE_QDRANT_API_KEY",
+                "MEMPALACE_MCP_HTTP_TOKEN",
+                "SOLIDSTATS_MEMORY_LOGICAL_ALIAS",
+                "SOLIDSTATS_MEMORY_PHYSICAL_COLLECTION",
+            },
+        )
+        self.assertEqual(
+            documents[1]["stringData"]["SOLIDSTATS_MEMORY_LOGICAL_ALIAS"],
+            self.values["MEMORY_QDRANT_LOGICAL_ALIAS"],
+        )
+        self.assertEqual(
+            documents[1]["stringData"]["SOLIDSTATS_MEMORY_PHYSICAL_COLLECTION"],
+            self.values["MEMORY_QDRANT_COLLECTION"],
+        )
         self.assertEqual(set(documents[2]["stringData"]), {"QDRANT_API_KEY", "S3_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"})
         self.assertEqual(set(documents[3]["stringData"]), {"QDRANT_API_KEY"})
         self.assertEqual(

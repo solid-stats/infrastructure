@@ -105,6 +105,8 @@ print(
                 {
                     "MEMPALACE_QDRANT_API_KEY": mempalace_qdrant_token,
                     "MEMPALACE_MCP_HTTP_TOKEN": mcp_http_token,
+                    "SOLIDSTATS_MEMORY_LOGICAL_ALIAS": qdrant_logical_alias,
+                    "SOLIDSTATS_MEMORY_PHYSICAL_COLLECTION": qdrant_collection,
                 },
             ),
             secret(

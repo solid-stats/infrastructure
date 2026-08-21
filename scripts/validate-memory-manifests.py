@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST_DIR = ROOT / "k8s" / "memory"
 WORKFLOW = ROOT / ".github" / "workflows" / "deploy-memory.yml"
+RUNTIME_BOOTSTRAP = ROOT / "scripts" / "bootstrap-solidstats-memory-palace.py"
 NAMESPACE = "solidstats-memory"
 EXPECTED = {
     "00-namespace.yaml",
@@ -117,6 +118,42 @@ def require_workload_safety(docs: dict[str, str]) -> None:
     require("persistentVolumeClaimRetentionPolicy:" in docs["StatefulSet/qdrant"], "Qdrant PVC Retain policy is missing")
     require("name: MEMPALACE_BACKEND\n              value: qdrant" in docs["Deployment/mempalace"], "MemPalace backend is not Qdrant")
     require("name: MEMPALACE_QDRANT_NAMESPACE\n              value: SolidStats" in docs["Deployment/mempalace"], "MemPalace namespace is incorrect")
+    mempalace = docs["Deployment/mempalace"]
+    for required in (
+        "name: runtime-bootstrap",
+        'command: ["python", "/opt/mempalace-bootstrap/bootstrap.py"]',
+        'args: ["offline"]',
+        "name: MEMPALACE_EMBEDDING_MODEL\n              value: embeddinggemma",
+        "name: MEMPALACE_EMBEDDING_DEVICE\n              value: cpu",
+        "name: HF_HOME\n              value: /data/palace/.cache/huggingface",
+        'name: HF_HUB_OFFLINE\n              value: "1"',
+        'name: HF_HUB_DISABLE_TELEMETRY\n              value: "1"',
+        "name: mempalace-runtime-bootstrap\n            defaultMode: 0444",
+    ):
+        require(required in mempalace, f"MemPalace runtime bootstrap misses: {required}")
+    bootstrap = RUNTIME_BOOTSTRAP.read_text(encoding="utf-8")
+    for required in (
+        "QdrantBackend",
+        "collection.upsert(",
+        "collection.delete(ids=[PROBE_ID])",
+        "collection.set_embedder_identity(",
+        "backend._validate_marker_target(",
+        'HF_HUB_OFFLINE") != "1"',
+    ):
+        require(required in bootstrap, f"runtime bootstrap source misses: {required}")
+    require(
+        "_write_marker(" not in bootstrap and "json.dump(" not in bootstrap,
+        "runtime bootstrap must use the pinned library marker writer",
+    )
+    operator = (ROOT / "scripts" / "operate-solidstats-memory.py").read_text(
+        encoding="utf-8"
+    )
+    for required in (
+        '"bootstrap-runtime-palace"',
+        '"synthetic_residue": 0',
+        '"alias_prestate_restored": True',
+    ):
+        require(required in operator, f"runtime bootstrap operator misses: {required}")
 
 
 def require_network_contract(docs: dict[str, str], source_has_placeholders: bool) -> None:
@@ -246,9 +283,9 @@ def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
 def require_operator_placeholder_positions(docs: dict[str, str]) -> list[str]:
     """Keep each evidence gate in its owning field, never in comments."""
     expected = {
-        "StatefulSet/qdrant": ["storage: MEMORY_OPERATOR_MEASURED_QDRANT_PVC_SIZE"],
-        "PersistentVolumeClaim/mempalace-data": ["storage: MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE"],
-        "Deployment/mempalace": ["image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST"],
+        "StatefulSet/qdrant": {"storage: MEMORY_OPERATOR_MEASURED_QDRANT_PVC_SIZE": 1},
+        "PersistentVolumeClaim/mempalace-data": {"storage: MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE": 1},
+        "Deployment/mempalace": {"image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST": 2},
         "CronJob/solidstats-memory-backup": [
             "image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST",
             "value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
@@ -261,8 +298,9 @@ def require_operator_placeholder_positions(docs: dict[str, str]) -> list[str]:
         "NetworkPolicy/allow-host-nginx-to-mcp": ["cidr: MEMORY_OPERATOR_MEASURED_HOST_NGINX_SOURCE_CIDR"],
     }
     for resource, entries in expected.items():
-        for entry in entries:
-            require(docs[resource].count(entry) == 1, f"operator placeholders must retain expected field: {resource} {entry}")
+        counts = entries if isinstance(entries, dict) else {entry: 1 for entry in entries}
+        for entry, expected_count in counts.items():
+            require(docs[resource].count(entry) == expected_count, f"operator placeholders must retain expected field: {resource} {entry}")
     all_markers = PLACEHOLDER_RE.findall("\n".join(docs.values()))
     expected_markers = {
         "MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST",
@@ -275,7 +313,7 @@ def require_operator_placeholder_positions(docs: dict[str, str]) -> list[str]:
         "MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
     }
     require(set(all_markers) == expected_markers, "operator placeholders differ from the eight evidence gates")
-    require(len(all_markers) == 9, "operator placeholders are missing, duplicated, or misplaced")
+    require(len(all_markers) == 10, "operator placeholders are missing, duplicated, or misplaced")
     return sorted(set(all_markers))
 
 

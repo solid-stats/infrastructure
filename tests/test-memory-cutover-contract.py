@@ -97,6 +97,23 @@ class MemoryCutoverContractTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_preflight_bootstraps_runtime_before_capturing_final_alias_state(self) -> None:
+        source = CUTOVER_PATH.read_text(encoding="utf-8")
+        preflight_start = source.index("preflight()")
+        preflight_end = source.index("\n}", preflight_start)
+        preflight = source[preflight_start:preflight_end]
+        self.assertLess(
+            preflight.index("run_runtime_bootstrap"),
+            preflight.index("alias-prestate >/dev/null"),
+        )
+        self.assertLess(
+            preflight.index("run_runtime_bootstrap"),
+            source.index("run_remote_batch stop-legacy-start-new"),
+        )
+        self.assertIn("bootstrap-runtime-palace", source)
+        self.assertIn('chmod 600 "${request}"', source)
+        self.assertIn('stat -c \'%a\' "${response}"', source)
+
     def make_chain(self, limit: int = len(STAGES)) -> list[dict[str, object]]:
         chain: list[dict[str, object]] = []
         prior = self.handoff_digest

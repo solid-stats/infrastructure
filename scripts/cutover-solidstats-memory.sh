@@ -187,6 +187,39 @@ run_alias() {
   timeout "${LOCAL_TIMEOUT}" python3 "${RESTORE_SCRIPT}" "${operation}" >/dev/null
 }
 
+run_runtime_bootstrap() {
+  if [[ "${CUTOVER_SELF_TEST:-}" == "1" ]]; then
+    printf 'runtime-bootstrap ' >>"${EVENT_LOG}"
+    return 0
+  fi
+  required SOLIDSTATS_MEMORY_OPERATOR_CONFIG
+  local request="${STATE_DIR}/runtime-bootstrap.request.json"
+  local response="${STATE_DIR}/runtime-bootstrap.response.json"
+  if [[ ! -e "${request}" ]]; then
+    printf '{}\n' >"${request}"
+    chmod 600 "${request}"
+  fi
+  [[ -f "${request}" && ! -L "${request}" && "$(stat -c '%a' "${request}")" == "600" ]] || {
+    echo "FATAL: runtime bootstrap request is unsafe" >&2
+    return 1
+  }
+  if [[ -e "${response}" ]]; then
+    [[ -f "${response}" && ! -L "${response}" && "$(stat -c '%a' "${response}")" == "600" ]] || {
+      echo "FATAL: runtime bootstrap response is unsafe" >&2
+      return 1
+    }
+    rm -f "${response}"
+  fi
+  SOLIDSTATS_MEMORY_OPERATOR_CONFIG="${SOLIDSTATS_MEMORY_OPERATOR_CONFIG}" \
+    timeout "${PROBE_TIMEOUT}" python3 "${PRIVATE_OPERATOR_SCRIPT}" \
+      bootstrap-runtime-palace "${request}" "${response}" >/dev/null
+  [[ -s "${response}" && -f "${response}" && ! -L "${response}" &&
+    "$(stat -c '%a' "${response}")" == "600" ]] || {
+    echo "FATAL: runtime bootstrap evidence is unavailable" >&2
+    return 1
+  }
+}
+
 register_client() {
   if [[ "${CUTOVER_SELF_TEST:-}" == "1" ]]; then
     printf 'client-add ' >>"${EVENT_LOG}"
@@ -327,6 +360,7 @@ preflight() {
     timeout "${LOCAL_TIMEOUT}" python3 "${RESTORE_SCRIPT}" \
       rollback --check-only >/dev/null
     timeout "${LOCAL_TIMEOUT}" python3 "${PROBE_SCRIPT}" --help >/dev/null
+    run_runtime_bootstrap
     timeout "${LOCAL_TIMEOUT}" python3 "${RESTORE_SCRIPT}" \
       alias-prestate >/dev/null
   fi
@@ -482,6 +516,7 @@ main() {
   PROBE_TIMEOUT="${SOLIDSTATS_MEMORY_PROBE_TIMEOUT:-1800s}"
   SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
   RESTORE_SCRIPT="${SCRIPT_DIR}/restore-solidstats-memory.py"
+  PRIVATE_OPERATOR_SCRIPT="${SCRIPT_DIR}/operate-solidstats-memory.py"
   PROBE_SCRIPT="${SCRIPT_DIR}/probe-solidstats-memory.py"
   CLIENT_POLICY_SCRIPT="${SCRIPT_DIR}/configure-solidstats-memory-client.py"
   CLIENT_CONFIG_PRESTATE="${STATE_DIR}/codex-config.prestate.toml"
