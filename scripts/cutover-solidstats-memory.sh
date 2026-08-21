@@ -576,10 +576,6 @@ stage_guard_package() {
     return 0
   fi
   local gate="${STATE_DIR}/guard-package.gate" descriptor="${STATE_DIR}/guard-package.SHA256SUMS"
-  if [[ -f "${gate}" && ! -L "${gate}" && "$(<"${gate}")" == pass ]]; then
-    run_remote_batch verify-guard-package
-    return 0
-  fi
   required SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT
   required SOLIDSTATS_MEMORY_BACKUP_GUARD_CONFIG
   [[ "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" =~ ^/[A-Za-z0-9._/-]+$ &&
