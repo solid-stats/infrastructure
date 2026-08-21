@@ -561,6 +561,7 @@ activate_backup_schedule() {
   trap on_activation_error ERR
   trap on_activation_int INT
   trap on_activation_term TERM
+  prepare_backup_activation
   stage_guard_package
   run_remote_batch install-backup-guard
   run_remote_batch verify-backup-guard

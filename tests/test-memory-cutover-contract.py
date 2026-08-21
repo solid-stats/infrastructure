@@ -3752,6 +3752,11 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn("expected_error=-32001", remote)
         self.assertIn("Peer MCP writer active; this server is read-only", remote)
         self.assertIn("codex mcp get solidstats_memory", cutover)
+        activation = cutover[cutover.index("activate_backup_schedule()") : cutover.index("stage_guard_package()")]
+        self.assertLess(
+            activation.index("prepare_backup_activation"),
+            activation.index("stage_guard_package"),
+        )
         self.assertIn(
             'BACKUP_REMOTE_TIMEOUT_SECONDS="${SOLIDSTATS_MEMORY_BACKUP_REMOTE_TIMEOUT_SECONDS:-3600}"',
             cutover,
