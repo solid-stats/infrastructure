@@ -1643,6 +1643,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     return probe.HttpProbeResult(401, {}, None, "1" * 64)
                 if token_mode == "invalid":
                     return probe.HttpProbeResult(403, {}, None, "2" * 64)
+                if token_mode == "untrusted-origin":
+                    return probe.HttpProbeResult(403, {}, None, "7" * 64)
                 if method == "initialize":
                     return probe.HttpProbeResult(
                         200,
@@ -1750,6 +1752,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
 
         self.assertTrue(auth["missing_rejected"])
         self.assertTrue(auth["invalid_rejected"])
+        self.assertTrue(auth["untrusted_origin_rejected"])
         self.assertTrue(auth["valid_accepted"])
         self.assertTrue(auth["session_propagated"])
         self.assertTrue(behavior["schema_digest_recorded"])
@@ -1776,6 +1779,127 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 if mode == "valid" and method != "initialize"
             )
         )
+
+    def test_probe_accepts_stateless_streamable_http_contract(self) -> None:
+        probe = self.load_probe()
+
+        class StatelessTransport:
+            def request(
+                self,
+                message: dict[str, object],
+                *,
+                session_id: str | None,
+                token_mode: str,
+                protocol_version: str | None,
+            ) -> object:
+                if token_mode in {"missing", "invalid"}:
+                    return probe.HttpProbeResult(401, {}, None, "1" * 64)
+                if token_mode == "untrusted-origin":
+                    return probe.HttpProbeResult(403, {}, None, "2" * 64)
+                self.assertIsNone(session_id)
+                if message.get("method") == "initialize":
+                    return probe.HttpProbeResult(
+                        200,
+                        {},
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "result": {
+                                "protocolVersion": "2025-06-18",
+                                "capabilities": {"tools": {}},
+                                "serverInfo": {"name": "fixture", "version": "1"},
+                            },
+                        },
+                        "3" * 64,
+                    )
+                self.assertEqual("2025-06-18", protocol_version)
+                return probe.HttpProbeResult(202, {}, None, "4" * 64)
+
+            assertEqual = self.assertEqual
+            assertIsNone = self.assertIsNone
+
+        auth, session = probe.probe_auth_matrix(StatelessTransport())
+        self.assertIsNone(session.session_id)
+        self.assertEqual("stateless", auth["session_contract"])
+        self.assertTrue(auth["session_propagated"])
+
+    def test_probe_evidence_recursively_rejects_private_surfaces(self) -> None:
+        probe = self.load_probe()
+        for payload in (
+            {"auth_checks": {"token": "private"}},
+            {"mcp_checks": {"schema_sha256": "not-a-digest"}},
+            {"mcp_checks": {"raw_response_body": "private"}},
+            {"mcp_checks": ["private"]},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(probe.ProbeError):
+                probe.validate_probe_evidence(payload)
+
+    def test_http_transport_bounds_raw_storage_and_forwards_session(self) -> None:
+        probe = self.load_probe()
+        raw_root = self.root / "raw-probe"
+        raw_root.mkdir(mode=0o700)
+        observed_headers: list[dict[str, str]] = []
+
+        class Response:
+            status = 200
+
+            def __init__(self, payload: bytes) -> None:
+                self.payload = payload
+                self.headers = {"Content-Type": "application/json"}
+
+            def __enter__(self) -> "Response":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def read(self, limit: int) -> bytes:
+                return self.payload[:limit]
+
+        def opener(request: object, **_kwargs: object) -> Response:
+            observed_headers.append(
+                {key.lower(): value for key, value in request.header_items()}
+            )
+            payload = json.dumps(
+                {"jsonrpc": "2.0", "id": 9, "result": {"ok": True}},
+                separators=(",", ":"),
+            ).encode("utf-8")
+            return Response(payload)
+
+        transport = probe.StreamableHttpTransport(
+            "http://127.0.0.1/solidstats/mcp",
+            "private-fixture-token",
+            opener=opener,
+            raw_root=raw_root,
+        )
+        result = probe.http_probe(
+            transport,
+            {"jsonrpc": "2.0", "id": 9, "method": "ping"},
+            session_id="fixture-session",
+            protocol_version="2025-06-18",
+        )
+
+        self.assertEqual(200, result.status)
+        self.assertEqual([], list(raw_root.iterdir()))
+        self.assertEqual("Bearer private-fixture-token", observed_headers[0]["authorization"])
+        self.assertEqual("fixture-session", observed_headers[0]["mcp-session-id"])
+        self.assertEqual("2025-06-18", observed_headers[0]["mcp-protocol-version"])
+
+        def echoing_opener(_request: object, **_kwargs: object) -> Response:
+            return Response(b'"private-fixture-token"')
+
+        echoing = probe.StreamableHttpTransport(
+            "http://127.0.0.1/solidstats/mcp",
+            "private-fixture-token",
+            opener=echoing_opener,
+            raw_root=raw_root,
+        )
+        with self.assertRaisesRegex(probe.ProbeError, "authorization") as caught:
+            probe.http_probe(
+                echoing,
+                {"jsonrpc": "2.0", "id": 9, "method": "ping"},
+            )
+        self.assertNotIn("private-fixture-token", str(caught.exception))
 
     def test_client_command_builder_is_exact_and_preserves_legacy(self) -> None:
         probe = self.load_probe()

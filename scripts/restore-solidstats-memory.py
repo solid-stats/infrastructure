@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from copy import deepcopy
 import fcntl
 import hashlib
@@ -20,6 +21,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from typing import Callable, Mapping, Protocol
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
@@ -1256,14 +1258,110 @@ def verify_restored_collection(
 
 
 def _alias_action(request: Callable[..., object], action: Mapping[str, object]) -> None:
+    _alias_actions(request, [action])
+
+
+def _alias_actions(
+    request: Callable[..., object], actions: list[Mapping[str, object]]
+) -> None:
+    if not actions:
+        raise RestoreControlError("alias action batch is empty")
     response = _request(
         request,
         "POST",
         "/collections/aliases",
-        {"actions": [dict(action)]},
+        {"actions": [dict(action) for action in actions]},
     )
     if not isinstance(response, Mapping) or response.get("status") not in ("ok", None):
         raise RestoreControlError("alias action failed")
+
+
+def verify_alias_binding(
+    request: Callable[..., object],
+    *,
+    alias_name: str,
+    expected_collection: str,
+    expected_other_aliases: Mapping[str, str] | None = None,
+) -> dict[str, object]:
+    """Read back one alias binding while protecting every unrelated alias."""
+    alias = _require_name(alias_name, "cutover alias is invalid")
+    target = _require_name(expected_collection, "cutover target is invalid")
+    observed = _alias_map(_request(request, "GET", "/aliases"))
+    if observed.get(alias) != target:
+        raise RestoreControlError("alias read-back verification failed")
+    if expected_other_aliases is not None:
+        expected = dict(expected_other_aliases)
+        expected[alias] = target
+        if observed != expected:
+            raise RestoreControlError("unrelated alias changed during cutover")
+    return {
+        "read_back_verified": True,
+        "poststate_sha256": _digest(observed),
+    }
+
+
+def compare_and_switch_alias(
+    request: Callable[..., object],
+    *,
+    alias_name: str,
+    target_collection: str,
+    recorded_prestate: Mapping[str, str],
+) -> dict[str, object]:
+    """Atomically switch an alias only when immediate state matches the record."""
+    alias = _require_name(alias_name, "cutover alias is invalid")
+    target = _require_name(target_collection, "cutover target is invalid")
+    recorded = {
+        _require_name(name, "recorded alias prestate is invalid"): _require_name(
+            collection, "recorded alias prestate is invalid"
+        )
+        for name, collection in recorded_prestate.items()
+    }
+    immediate = _alias_map(_request(request, "GET", "/aliases"))
+    if immediate != recorded:
+        raise RestoreControlError("concurrent alias change detected")
+    if immediate.get(alias) == target:
+        verified = verify_alias_binding(
+            request,
+            alias_name=alias,
+            expected_collection=target,
+            expected_other_aliases={
+                name: collection
+                for name, collection in recorded.items()
+                if name != alias
+            },
+        )
+        return {
+            "switched": False,
+            "compare_matched": True,
+            "prestate_sha256": _digest(recorded),
+            **verified,
+        }
+    actions: list[Mapping[str, object]] = []
+    if alias in immediate:
+        actions.append({"delete_alias": {"alias_name": alias}})
+    actions.append(
+        {
+            "create_alias": {
+                "alias_name": alias,
+                "collection_name": target,
+            }
+        }
+    )
+    _alias_actions(request, actions)
+    verified = verify_alias_binding(
+        request,
+        alias_name=alias,
+        expected_collection=target,
+        expected_other_aliases={
+            name: collection for name, collection in recorded.items() if name != alias
+        },
+    )
+    return {
+        "switched": True,
+        "compare_matched": True,
+        "prestate_sha256": _digest(recorded),
+        **verified,
+    }
 
 
 def restore_alias_prestate(
@@ -1274,21 +1372,35 @@ def restore_alias_prestate(
 ) -> dict[str, object]:
     """Restore exactly the recorded alias map and verify no mutation remains."""
     alias_name = _require_name(alias_name, "probe alias is invalid")
-    expected = dict(prestate)
+    expected = {
+        _require_name(name, "recorded alias prestate is invalid"): _require_name(
+            collection, "recorded alias prestate is invalid"
+        )
+        for name, collection in prestate.items()
+    }
     current = _alias_map(_request(request, "GET", "/aliases"))
+    unrelated_current = {
+        name: collection for name, collection in current.items() if name != alias_name
+    }
+    unrelated_expected = {
+        name: collection for name, collection in expected.items() if name != alias_name
+    }
+    if unrelated_current != unrelated_expected:
+        raise RestoreControlError("unrelated alias changed before rollback")
+    actions: list[Mapping[str, object]] = []
     if alias_name in current and current.get(alias_name) != expected.get(alias_name):
-        _alias_action(request, {"delete_alias": {"alias_name": alias_name}})
-        current.pop(alias_name, None)
+        actions.append({"delete_alias": {"alias_name": alias_name}})
     if alias_name in expected and current.get(alias_name) != expected[alias_name]:
-        _alias_action(
-            request,
+        actions.append(
             {
                 "create_alias": {
                     "alias_name": alias_name,
                     "collection_name": expected[alias_name],
                 }
-            },
+            }
         )
+    if actions:
+        _alias_actions(request, actions)
     final = _alias_map(_request(request, "GET", "/aliases"))
     if final != expected:
         raise RestoreControlError("alias prestate restoration failed")
@@ -2535,6 +2647,9 @@ def _command_parser() -> argparse.ArgumentParser:
         subparser.add_argument("--run-id")
         subparser.add_argument("--resume-run", action="store_true")
         subparser.add_argument("--check-only", action="store_true")
+    for command in ("alias-prestate", "alias-cutover", "rollback"):
+        subparser = subparsers.add_parser(command)
+        subparser.add_argument("--check-only", action="store_true")
     return parser
 
 
@@ -2585,6 +2700,119 @@ def _stage_inputs_from_environment(
     )
 
 
+def _alias_prestate_from_environment() -> dict[str, str]:
+    prestate_path = Path(_required_environment("SOLIDSTATS_MEMORY_ALIAS_PRESTATE"))
+    value = _load_json(prestate_path)
+    source = value.get("aliases", value)
+    if not isinstance(source, Mapping):
+        raise RestoreControlError("recorded alias prestate is invalid")
+    return {
+        _require_name(name, "recorded alias prestate is invalid"): _require_name(
+            collection, "recorded alias prestate is invalid"
+        )
+        for name, collection in source.items()
+    }
+
+
+@contextmanager
+def _direct_alias_request() -> object:
+    """Open a loopback-only Qdrant port-forward for one atomic alias action."""
+    api_key = _required_environment("SOLIDSTATS_MEMORY_QDRANT_API_KEY")
+    configured_url = os.environ.get("SOLIDSTATS_MEMORY_QDRANT_URL")
+    process: subprocess.Popen[bytes] | None = None
+    if configured_url:
+        parsed = urllib_parse.urlsplit(configured_url)
+        if parsed.scheme != "http" or parsed.hostname not in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }:
+            raise RestoreControlError("Qdrant alias endpoint must be loopback-only")
+        base_url = configured_url
+    else:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        command = (
+            "kubectl",
+            "-n",
+            "solidstats-memory",
+            "port-forward",
+            "statefulset/qdrant",
+            f"{port}:6333",
+        )
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as error:
+            raise RestoreControlError("Qdrant port-forward failed") from error
+        base_url = f"http://127.0.0.1:{port}"
+    request = lambda method, path, body=None: qdrant_request(
+        base_url,
+        method,
+        path,
+        api_key=api_key,
+        body=body,
+        timeout=30,
+    )
+    try:
+        if process is not None:
+            for _attempt in range(40):
+                if process.poll() is not None:
+                    raise RestoreControlError("Qdrant port-forward failed")
+                try:
+                    request("GET", "/aliases")
+                except RestoreControlError:
+                    time.sleep(0.25)
+                else:
+                    break
+            else:
+                raise RestoreControlError("Qdrant port-forward timed out")
+        yield request
+    finally:
+        if process is not None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+
+def _run_alias_command(command: str) -> None:
+    alias = _required_environment("SOLIDSTATS_MEMORY_LOGICAL_ALIAS")
+    with _direct_alias_request() as request:
+        if command == "alias-prestate":
+            prestate_path = Path(
+                _required_environment("SOLIDSTATS_MEMORY_ALIAS_PRESTATE")
+            )
+            _write_or_verify_private_json(
+                prestate_path,
+                {"aliases": _alias_map(_request(request, "GET", "/aliases"))},
+            )
+            return
+        prestate = _alias_prestate_from_environment()
+        if command == "alias-cutover":
+            compare_and_switch_alias(
+                request,
+                alias_name=alias,
+                target_collection=_required_environment(
+                    "SOLIDSTATS_MEMORY_TARGET_COLLECTION"
+                ),
+                recorded_prestate=prestate,
+            )
+        else:
+            restore_alias_prestate(
+                request,
+                alias_name=alias,
+                prestate=prestate,
+            )
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -2594,6 +2822,13 @@ def main(
     parser = _command_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command in {"alias-prestate", "alias-cutover", "rollback"}:
+            if args.check_only:
+                print(f"PASS: {args.command} public contract validated")
+                return 0
+            _run_alias_command(args.command)
+            print(f"PASS: {args.command} completed")
+            return 0
         handoff, _public_bindings, _expected_bundle = (
             recompute_phase20_public_bindings(handoff_path=args.handoff)
         )
