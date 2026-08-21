@@ -976,6 +976,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn("solidstats-memory-backup-package/v1", prepare["args"][0])
         self.assertIn("for attempt in range(12):", prepare["args"][0])
         self.assertIn("time.sleep(5)", prepare["args"][0])
+        self.assertIn('output.add("/metadata", arcname="palace")', prepare["args"][0])
+        self.assertNotIn('output.add("/metadata/palace"', prepare["args"][0])
         self.assertLess(
             prepare["args"][0].index("for attempt in range(12):"),
             prepare["args"][0].index("method=\"POST\""),

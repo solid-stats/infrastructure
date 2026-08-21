@@ -1435,7 +1435,7 @@ curl --fail --show-error --silent -H "api-key: ${QDRANT_API_KEY}" \\
   "${QDRANT_URL}/collections/${QDRANT_COLLECTION}/snapshots/${snapshot_name}" \\
   -o "${work_dir}/qdrant.snapshot"
 archive_metadata() {
-  python3 -c 'import sys, tarfile; archive = tarfile.open(sys.argv[1], "w"); archive.add("/metadata/palace", arcname="palace"); archive.close()' "$1"
+  python3 -c 'import sys, tarfile; archive = tarfile.open(sys.argv[1], "w"); archive.add("/metadata", arcname="palace"); archive.close()' "$1"
 }
 archive_metadata "${work_dir}/metadata-before.tar"
 archive_metadata "${work_dir}/mempalace-metadata.tar"
@@ -1522,7 +1522,7 @@ with request.urlopen(download, timeout=900) as response:
 
 def archive(path):
     with tarfile.open(path, "w") as output:
-        output.add("/metadata/palace", arcname="palace")
+        output.add("/metadata", arcname="palace")
 
 before = work_dir / "metadata-before.tar"
 metadata = work_dir / "mempalace-metadata.tar"
