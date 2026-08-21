@@ -90,6 +90,86 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
         self.assertNotIn("key: S3_ENDPOINT", backup)
         self.assertNotIn("key: S3_PREFIX", backup)
 
+    def test_backup_control_plane_is_exact_and_operator_bound(self) -> None:
+        path = ROOT / "k8s" / "memory" / "05-rbac.yaml"
+        documents = list(yaml.safe_load_all(path.read_text()))
+        resources = {
+            (document["kind"], document["metadata"]["name"]): document
+            for document in documents
+        }
+        role = resources[("Role", "solidstats-memory-backup")]
+        self.assertEqual(
+            [
+                {
+                    "apiGroups": ["apps"],
+                    "resources": ["deployments"],
+                    "resourceNames": ["mempalace"],
+                    "verbs": ["get"],
+                },
+                {
+                    "apiGroups": ["apps"],
+                    "resources": ["deployments/scale"],
+                    "resourceNames": ["mempalace"],
+                    "verbs": ["get", "patch"],
+                },
+                {
+                    "apiGroups": [""],
+                    "resources": ["pods"],
+                    "verbs": ["list"],
+                },
+            ],
+            role["rules"],
+        )
+        binding = resources[("RoleBinding", "solidstats-memory-backup")]
+        self.assertEqual(
+            [{"kind": "ServiceAccount", "name": "solidstats-memory-backup", "namespace": "solidstats-memory"}],
+            binding["subjects"],
+        )
+        policy = resources[("NetworkPolicy", "allow-backup-to-kubernetes-api")]
+        self.assertEqual(
+            {"matchLabels": {"app.kubernetes.io/name": "solidstats-memory-backup"}},
+            policy["spec"]["podSelector"],
+        )
+        egress = policy["spec"]["egress"]
+        self.assertEqual(1, len(egress))
+        self.assertEqual(
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_CIDR",
+            egress[0]["to"][0]["ipBlock"]["cidr"],
+        )
+        self.assertEqual(
+            "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT",
+            egress[0]["ports"][0]["port"],
+        )
+
+    def test_backup_template_projects_only_rotating_api_identity(self) -> None:
+        documents = list(
+            yaml.safe_load_all(
+                (ROOT / "k8s" / "memory" / "40-backup.yaml").read_text()
+            )
+        )
+        cronjob = next(document for document in documents if document["kind"] == "CronJob")
+        self.assertTrue(cronjob["spec"]["suspend"])
+        self.assertEqual("Forbid", cronjob["spec"]["concurrencyPolicy"])
+        pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        self.assertFalse(pod["automountServiceAccountToken"])
+        projected = next(volume for volume in pod["volumes"] if volume["name"] == "kubernetes-api-access")
+        sources = projected["projected"]["sources"]
+        self.assertEqual(600, sources[0]["serviceAccountToken"]["expirationSeconds"])
+        self.assertEqual("solidstats-memory-backup", sources[0]["serviceAccountToken"]["audience"])
+        self.assertEqual("kube-root-ca.crt", sources[1]["configMap"]["name"])
+        container = pod["containers"][0]
+        mount = next(item for item in container["volumeMounts"] if item["name"] == "kubernetes-api-access")
+        self.assertTrue(mount["readOnly"])
+        command = container["args"][0]
+        for marker in (
+            "deployments/mempalace/scale",
+            "metadata_source_before_sha256",
+            "metadata_source_after_sha256",
+            "metadata_archive_sha256",
+            "restore_writer",
+        ):
+            self.assertIn(marker, command)
+
     def test_mempalace_uses_the_pinned_exact_image_cli_contract(self) -> None:
         documents = list(
             yaml.safe_load_all(
@@ -723,6 +803,7 @@ class MemoryDeployWorkflowContractTests(unittest.TestCase):
     def test_reuses_an_exclusive_workload_manifest_list(self) -> None:
         self.assertIn("! -name '00-namespace.yaml'", self.workflow)
         self.assertIn("! -name '01-ci-rbac.yaml'", self.workflow)
+        self.assertIn("! -name '05-rbac.yaml'", self.workflow)
         self.assertEqual(self.workflow.count("mapfile -t MEMORY_WORKLOAD_FILES"), 2)
         self.assertEqual(self.workflow.count("MEMORY_WORKLOAD_FILES[@]/#/-f"), 2)
         self.assertIn("memory-workload-files", self.workflow)
