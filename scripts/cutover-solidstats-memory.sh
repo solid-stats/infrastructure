@@ -339,10 +339,15 @@ remove_new_client() {
     echo "FATAL: exact client config prestate is unavailable" >&2
     return 1
   fi
-  if timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" rollback \
+  if timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" rollback-current \
     --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
     --prestate "${CLIENT_CONFIG_PRESTATE}" \
-    --name solidstats_memory >/dev/null; then
+    --result "${STATE_DIR}/client-rollback.result" \
+    --name solidstats_memory \
+    --legacy-name "${SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME}" \
+    --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
+    --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" \
+    --timeout-seconds "${LOCAL_TIMEOUT%s}" >/dev/null; then
     return 0
   fi
   return 1

@@ -2659,6 +2659,94 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual("true", pre_fields["legacy_client_present"])
         self.assertEqual("2", pre_fields["solidstats_client_count"])
 
+    def test_client_rollback_preserves_unrelated_current_config(self) -> None:
+        private = self.root / "client-rollback-current"
+        private.mkdir(mode=0o700)
+        config = private / "config.toml"
+        prestate = private / "prestate.toml"
+        result = private / "rollback.result"
+        legacy = b'[mcp_servers.mempalace]\ncommand = "legacy"\n\n'
+        original = b'model = "gpt-5.6-sol"\n\n' + legacy
+        drift = b'[plugins.current]\nenabled = true\n\n'
+        replacement = (
+            b'[mcp_servers.solidstats_memory]\n'
+            b'url = "https://memory.example/solidstats/mcp"\n'
+            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+            b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
+            b'"mempalace_list_drawers","mempalace_get_drawer",'
+            b'"mempalace_check_duplicate","mempalace_add_drawer",'
+            b'"mempalace_delete_drawer"]\n'
+        )
+        current = original + drift + replacement
+        expected = original + drift
+        config.write_bytes(current)
+        config.chmod(0o600)
+        prestate.write_bytes(original)
+        prestate.chmod(0o600)
+        metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
+
+        def write_metadata() -> None:
+            metadata.write_text(
+                json.dumps(
+                    {
+                        "schema": "solidstats-memory-client-policy/v1",
+                        "accepted_sha256": [hashlib.sha256(current).hexdigest()],
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="ascii",
+            )
+            metadata.chmod(0o600)
+
+        write_metadata()
+        for failed_stage in ("removed", "readback", "prestate", "evidence"):
+            with self.subTest(stage=failed_stage):
+                config.write_bytes(current)
+                config.chmod(0o600)
+                prestate.write_bytes(original)
+                prestate.chmod(0o600)
+                if not metadata.exists():
+                    write_metadata()
+                result.unlink(missing_ok=True)
+
+                def remove(updated: bytes) -> None:
+                    config.write_bytes(updated)
+                    config.chmod(0o600)
+
+                def stage(name: str) -> None:
+                    if name == failed_stage:
+                        raise CLIENT_POLICY.PolicyError("injected rollback failure")
+
+                with self.assertRaises(CLIENT_POLICY.PolicyError):
+                    CLIENT_POLICY.rollback_registration_transaction(
+                        config,
+                        prestate,
+                        result,
+                        url="https://memory.example/solidstats/mcp",
+                        token_env="SOLIDSTATS_MEMORY_TOKEN",
+                        remove=remove,
+                        stage=stage,
+                    )
+                self.assertEqual(current, config.read_bytes())
+                self.assertEqual(original, prestate.read_bytes())
+                self.assertTrue(metadata.exists())
+                self.assertFalse(result.exists())
+
+        CLIENT_POLICY.rollback_registration_transaction(
+            config,
+            prestate,
+            result,
+            url="https://memory.example/solidstats/mcp",
+            token_env="SOLIDSTATS_MEMORY_TOKEN",
+            remove=lambda updated: config.write_bytes(updated),
+        )
+        self.assertEqual(expected, config.read_bytes())
+        self.assertEqual(expected, prestate.read_bytes())
+        self.assertFalse(metadata.exists())
+        self.assertIn(b"unrelated_current_bytes_preserved=true", result.read_bytes())
+
     def test_cutover_self_test_exercises_reverse_order_rollback(self) -> None:
         result = subprocess.run(
             ["bash", str(CUTOVER_PATH), "--self-test"],

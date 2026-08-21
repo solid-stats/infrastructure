@@ -325,7 +325,7 @@ def authorize_current(config: Path, prestate: Path) -> None:
     _atomic_replace(metadata, updated, mode)
 
 
-def _remove_registration(raw: bytes, name: str) -> bytes:
+def _registration_bounds(raw: bytes, name: str) -> tuple[int, int]:
     if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name) is None:
         raise PolicyError("legacy client name is invalid")
     heading = re.compile(
@@ -337,7 +337,98 @@ def _remove_registration(raw: bytes, name: str) -> bytes:
     start = matches[0].start()
     following = re.search(rb"(?m)^\[", raw[matches[0].end() :])
     end = len(raw) if following is None else matches[0].end() + following.start()
+    return start, end
+
+
+def _remove_registration(raw: bytes, name: str) -> bytes:
+    start, end = _registration_bounds(raw, name)
     return raw[:start] + raw[end:]
+
+
+def rollback_registration_transaction(
+    config: Path,
+    prestate: Path,
+    result: Path,
+    *,
+    url: str,
+    token_env: str,
+    legacy_name: str = "mempalace",
+    timeout_seconds: int = 30,
+    remove: Callable[[bytes], object] | None = None,
+    stage: Callable[[str], None] | None = None,
+) -> None:
+    """Remove the replacement registration without overwriting unrelated drift."""
+    current, config_mode = _safe_file(config)
+    original_prestate, prestate_mode = _safe_file(prestate)
+    inspect_policy(current, url=url, token_env=token_env, require_policy=True)
+    updated = _remove_registration(current, CLIENT_NAME)
+    legacy_start, legacy_end = _registration_bounds(current, legacy_name)
+    original_start, original_end = _registration_bounds(original_prestate, legacy_name)
+    if current[legacy_start:legacy_end] != original_prestate[original_start:original_end]:
+        raise PolicyError("legacy client registration drift prevents rollback")
+    metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
+    metadata_before = None
+    metadata_mode = 0o600
+    if metadata.exists() or metadata.is_symlink():
+        metadata_before, metadata_mode = _safe_file(metadata)
+    stage_hook = stage or (lambda _name: None)
+
+    def external_remove(_expected: bytes) -> None:
+        try:
+            completed = subprocess.run(
+                ["codex", "mcp", "remove", CLIENT_NAME],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise PolicyError("replacement client removal command failed") from error
+        if completed.returncode != 0:
+            raise PolicyError("replacement client removal command failed")
+
+    remove_callback = remove or external_remove
+    try:
+        remove_callback(updated)
+        stage_hook("removed")
+        observed, _ = _safe_file(config)
+        if observed != updated:
+            raise PolicyError("replacement client rollback read-back differs")
+        stage_hook("readback")
+        _atomic_replace(prestate, updated, prestate_mode)
+        if metadata.exists() and not metadata.is_symlink():
+            metadata.unlink()
+        stage_hook("prestate")
+        evidence = (
+            b"schema=solidstats-memory-client-rollback/v1\n"
+            + b"replacement_client_absent=true\nlegacy_client_preserved=true\n"
+            + b"unrelated_current_bytes_preserved=true\n"
+            + f"pre_rollback_sha256={_sha256(current)}\n".encode("ascii")
+            + f"post_rollback_sha256={_sha256(updated)}\n".encode("ascii")
+        )
+        _exclusive_write(result, evidence)
+        stage_hook("evidence")
+    except BaseException as error:
+        try:
+            observed, _ = _safe_file(config)
+            if observed != current:
+                _atomic_replace(config, current, config_mode)
+            _atomic_replace(prestate, original_prestate, prestate_mode)
+            if metadata_before is None:
+                if metadata.exists() and not metadata.is_symlink():
+                    metadata.unlink()
+            else:
+                _atomic_replace(metadata, metadata_before, metadata_mode)
+            if result.exists() and not result.is_symlink():
+                result.unlink()
+        except (OSError, PolicyError) as rollback_error:
+            raise PolicyError(
+                "replacement client rollback failed and exact compensation failed"
+            ) from rollback_error
+        if isinstance(error, PolicyError):
+            raise
+        raise PolicyError("replacement client rollback transaction failed") from error
 
 
 def _authorize_exact_states(prestate: Path, states: tuple[bytes, ...]) -> None:
@@ -473,7 +564,7 @@ def retire_transaction(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback", "authorize-current", "pre-retirement", "retire"))
+    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback", "rollback-current", "authorize-current", "pre-retirement", "retire"))
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--prestate", type=Path)
     parser.add_argument("--name", default=CLIENT_NAME)
@@ -490,13 +581,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.name != CLIENT_NAME:
             raise PolicyError("target client name is invalid")
-        if args.command in {"capture", "apply", "rollback", "authorize-current", "retire"} and args.prestate is None:
+        if args.command in {"capture", "apply", "rollback", "rollback-current", "authorize-current", "retire"} and args.prestate is None:
             raise PolicyError("client config prestate path is required")
-        if args.command in {"apply", "validate", "pre-retirement", "retire"} and (
+        if args.command in {"apply", "validate", "rollback-current", "pre-retirement", "retire"} and (
             args.url is None or args.token_env is None
         ):
             raise PolicyError("target client binding is required")
-        if args.command in {"pre-retirement", "retire"} and args.result is None:
+        if args.command in {"rollback-current", "pre-retirement", "retire"} and args.result is None:
             raise PolicyError("client retirement result path is required")
         if args.command == "capture":
             capture(args.config, args.prestate)
@@ -506,6 +597,18 @@ def main(argv: list[str] | None = None) -> int:
             apply(args.config, args.prestate, url=args.url, token_env=args.token_env)
         elif args.command == "validate":
             validate(args.config, url=args.url, token_env=args.token_env)
+        elif args.command == "rollback-current":
+            if args.timeout_seconds < 1 or args.timeout_seconds > 3600:
+                raise PolicyError("client rollback timeout is invalid")
+            rollback_registration_transaction(
+                args.config,
+                args.prestate,
+                args.result,
+                url=args.url,
+                token_env=args.token_env,
+                legacy_name=args.legacy_name,
+                timeout_seconds=args.timeout_seconds,
+            )
         elif args.command == "pre-retirement":
             capture_pre_retirement(
                 args.config, args.result, url=args.url, token_env=args.token_env,
