@@ -6,6 +6,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import base64
+import fcntl
+import functools
 import hashlib
 import hmac
 import http.client
@@ -19,6 +21,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Iterator, Mapping
 from urllib import parse as urllib_parse
@@ -103,6 +106,51 @@ CONTAINER_TERMINATION_REASONS = frozenset(
 
 class OperatorError(ValueError):
     """A value-free operator contract failure."""
+
+
+@contextmanager
+def alias_writer_lease(private_root: Path):
+    inherited = os.environ.get("SOLIDSTATS_MEMORY_ALIAS_LOCK_FD")
+    if inherited is not None:
+        try:
+            details = os.fstat(int(inherited))
+        except (OSError, ValueError) as error:
+            raise OperatorError("alias writer lease ownership is invalid") from error
+        if not stat.S_ISREG(details.st_mode):
+            raise OperatorError("alias writer lease ownership is invalid")
+        yield
+        return
+    path = private_root / ".solidstats-memory-alias.lock"
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or stat.S_IMODE(details.st_mode) & 0o077:
+            raise OperatorError("alias writer lease is unsafe")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise OperatorError("alias writer lease is held") from error
+        owner = json.dumps(
+            {"schema": "solidstats-memory-alias-lock/v1", "pid": os.getpid()},
+            separators=(",", ":"), sort_keys=True,
+        ).encode("ascii") + b"\n"
+        os.ftruncate(descriptor, 0)
+        os.write(descriptor, owner)
+        os.fsync(descriptor)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def alias_locked_method(function):
+    @functools.wraps(function)
+    def wrapped(self, *args, **kwargs):
+        with alias_writer_lease(self.state_root.parent):
+            return function(self, *args, **kwargs)
+    return wrapped
 
 
 def canonical(value: object) -> bytes:
@@ -1806,6 +1854,7 @@ class Runtime:
             time.sleep(2)
         raise OperatorError("runtime bootstrap Job timed out")
 
+    @alias_locked_method
     def bootstrap_runtime_palace(self, payload: dict[str, object]) -> object:
         exact_mapping(payload, set(), "runtime bootstrap request is invalid")
         alias = str(self.config["probe_alias"])
@@ -1824,7 +1873,6 @@ class Runtime:
             raise OperatorError("runtime bootstrap workload pre-state is invalid")
         config_map, job = self._runtime_bootstrap_objects()
         scaled = False
-        alias_created = False
         job_applied = False
         completed = False
         cleanup_failed = False
@@ -1861,7 +1909,6 @@ class Runtime:
                     ]
                 },
             )
-            alias_created = True
             if self._alias_bindings(self._qdrant("GET", "/aliases")) != {
                 **prestate,
                 alias: target,
@@ -1905,15 +1952,23 @@ class Runtime:
                     )
                 except Exception:
                     cleanup_failed = True
-            if alias_created:
-                try:
+            try:
+                observed_aliases = self._alias_bindings(self._qdrant("GET", "/aliases"))
+                unrelated = {
+                    name: collection
+                    for name, collection in observed_aliases.items()
+                    if name != alias
+                }
+                if unrelated != prestate:
+                    cleanup_failed = True
+                elif alias in observed_aliases:
                     self._qdrant(
                         "POST",
                         "/collections/aliases",
                         {"actions": [{"delete_alias": {"alias_name": alias}}]},
                     )
-                except Exception:
-                    cleanup_failed = True
+            except Exception:
+                cleanup_failed = True
             try:
                 if self._alias_bindings(self._qdrant("GET", "/aliases")) != prestate:
                     cleanup_failed = True
@@ -2164,30 +2219,37 @@ class Runtime:
         )
         regular_file(snapshot)
         boundary = secrets.token_hex(24)
-        body = self.state_root / "snapshot-upload.multipart"
-        with body.open("xb") as output, snapshot.open("rb") as source:
-            os.chmod(body, 0o600)
-            output.write(f"--{boundary}\r\nContent-Disposition: form-data; name=\"snapshot\"; filename=\"snapshot\"\r\nContent-Type: application/octet-stream\r\n\r\n".encode())
-            while chunk := source.read(1024 * 1024):
-                output.write(chunk)
-            output.write(f"\r\n--{boundary}--\r\n".encode())
-        with self._port_forward("statefulset/qdrant", 6333) as port:
-            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1800)
-            connection.putrequest(
-                "POST",
-                f"/collections/{urllib_parse.quote(target, safe='')}/snapshots/upload?priority=snapshot",
-            )
-            connection.putheader("api-key", self.qdrant_key.read_text(encoding="ascii"))
-            connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
-            connection.putheader("Content-Length", str(body.stat().st_size))
-            connection.endheaders()
-            with body.open("rb") as source:
+        descriptor, body_name = tempfile.mkstemp(
+            prefix="snapshot-upload-", suffix=".multipart", dir=self.state_root
+        )
+        body = Path(body_name)
+        connection: http.client.HTTPConnection | None = None
+        try:
+            with os.fdopen(descriptor, "wb") as output, snapshot.open("rb") as source:
+                os.chmod(body, 0o600)
+                output.write(f"--{boundary}\r\nContent-Disposition: form-data; name=\"snapshot\"; filename=\"snapshot\"\r\nContent-Type: application/octet-stream\r\n\r\n".encode())
                 while chunk := source.read(1024 * 1024):
-                    connection.send(chunk)
-            response = connection.getresponse()
-            raw = response.read(4 * 1024 * 1024 + 1)
-            connection.close()
-        body.unlink()
+                    output.write(chunk)
+                output.write(f"\r\n--{boundary}--\r\n".encode())
+            with self._port_forward("statefulset/qdrant", 6333) as port:
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1800)
+                connection.putrequest(
+                    "POST",
+                    f"/collections/{urllib_parse.quote(target, safe='')}/snapshots/upload?priority=snapshot",
+                )
+                connection.putheader("api-key", self.qdrant_key.read_text(encoding="ascii"))
+                connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+                connection.putheader("Content-Length", str(body.stat().st_size))
+                connection.endheaders()
+                with body.open("rb") as source:
+                    while chunk := source.read(1024 * 1024):
+                        connection.send(chunk)
+                response = connection.getresponse()
+                raw = response.read(4 * 1024 * 1024 + 1)
+        finally:
+            if connection is not None:
+                connection.close()
+            body.unlink(missing_ok=True)
         if response.status >= 300 or not raw or len(raw) > 4 * 1024 * 1024:
             raise OperatorError("snapshot upload recovery failed")
         try:

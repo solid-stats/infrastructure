@@ -765,6 +765,31 @@ class RuntimePalaceBootstrapContractTests(unittest.TestCase):
             self.assertFalse((palace / "qdrant_backend.json").exists())
             self.assertFalse((palace / "mempalace_embedder.json").exists())
 
+    def test_online_bootstrap_cleans_probe_after_lost_upsert_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            palace = Path(directory) / "palace"
+            palace.mkdir(mode=0o700)
+            backend = self.Backend(palace, ["one", "two"])
+            original_upsert = backend.collection.upsert
+
+            def apply_then_raise(**kwargs: object) -> None:
+                original_upsert(**kwargs)
+                raise RuntimeError("synthetic lost acknowledgement")
+
+            with (
+                patch.object(
+                    BOOTSTRAP,
+                    "backend_handles",
+                    return_value=self.handles(palace, backend),
+                ),
+                patch.object(BOOTSTRAP, "model_vector", return_value=[0.0] * 384),
+                patch.object(backend.collection, "upsert", side_effect=apply_then_raise),
+            ):
+                with self.assertRaises(RuntimeError):
+                    BOOTSTRAP.online_bootstrap(palace, 2)
+            self.assertEqual(["one", "two"], backend.ids)
+            self.assertEqual(1, backend.deletes)
+
     def test_qdrant_has_a_bounded_writable_snapshot_mount(self) -> None:
         documents = list(
             yaml.safe_load_all(
@@ -1026,6 +1051,23 @@ class MemoryValidatorContractTests(unittest.TestCase):
         if placeholders:
             command.append("--allow-operator-placeholders")
         return subprocess.run(command, env=synthetic_environment(), text=True, capture_output=True, check=False, timeout=10)
+
+    def test_validator_rejects_backup_oracle_cleanup_regressions(self) -> None:
+        mutations = (
+            ('result.get("isError") is True', 'result.get("isError") is False'),
+            ('set(deleted) != {"success", "drawer_id", "deleted_ids", "chunks_deleted"}', 'set(deleted) != set(deleted)'),
+            ('if drawer_id in json.dumps(remaining', 'if False and drawer_id in json.dumps(remaining'),
+        )
+        for original, replacement in mutations:
+            with self.subTest(original=original):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                path = manifest_dir / "40-backup.yaml"
+                source = path.read_text()
+                self.assertIn(original, source)
+                path.write_text(source.replace(original, replacement, 1))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertNotEqual(0, result.returncode)
 
     def test_source_mode_requires_exact_marker_locations(self) -> None:
         temporary, manifest_dir = self.copied_manifests()

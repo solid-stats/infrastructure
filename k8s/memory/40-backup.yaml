@@ -619,7 +619,10 @@ spec:
                       if payload.get("id") != next_id or "error" in payload:
                           raise RuntimeError("behavior oracle MCP call failed")
                       next_id += 1
-                      return payload["result"]
+                      result = payload["result"]
+                      if not isinstance(result, dict) or result.get("isError") is True:
+                          raise RuntimeError("behavior oracle MCP tool call failed")
+                      return result
 
                   initialized = mcp("initialize", {
                       "protocolVersion": "2025-06-18", "capabilities": {},
@@ -628,6 +631,8 @@ spec:
                   if initialized.get("protocolVersion") != "2025-06-18":
                       raise RuntimeError("behavior oracle negotiation failed")
                   def tool_data(result):
+                      if result.get("isError") is True:
+                          raise RuntimeError("behavior oracle MCP tool call failed")
                       structured = result.get("structuredContent")
                       if isinstance(structured, dict):
                           return structured
@@ -650,7 +655,15 @@ spec:
                   read_back = tool_data(mcp("tools/call", {"name": "mempalace_get_drawer", "arguments": {"drawer_id": drawer_id}}))
                   if read_back.get("content") != marker:
                       raise RuntimeError("behavior oracle read-after-write failed")
-                  mcp("tools/call", {"name": "mempalace_delete_drawer", "arguments": {"drawer_id": drawer_id}})
+                  deleted = tool_data(mcp("tools/call", {"name": "mempalace_delete_drawer", "arguments": {"drawer_id": drawer_id}}))
+                  deleted_ids = deleted.get("deleted_ids")
+                  if set(deleted) != {"success", "drawer_id", "deleted_ids", "chunks_deleted"} or deleted.get("success") is not True or deleted.get("drawer_id") != drawer_id or not isinstance(deleted_ids, list) or not deleted_ids or not all(isinstance(value, str) and value for value in deleted_ids) or type(deleted.get("chunks_deleted")) is not int or deleted["chunks_deleted"] != len(deleted_ids):
+                      raise RuntimeError("behavior oracle cleanup contract failed")
+                  remaining = tool_data(mcp("tools/call", {"name": "mempalace_search", "arguments": {
+                      "wing": "infrastructure", "query": marker, "limit": 5,
+                  }}))
+                  if drawer_id in json.dumps(remaining, separators=(",", ":")):
+                      raise RuntimeError("behavior oracle cleanup absence failed")
                   print("PASS: writer-restored=pass", flush=True)
                   print("PASS: behavior-oracle=pass", flush=True)
                   print("PASS: metadata-sha256=" + archive_digest, flush=True)

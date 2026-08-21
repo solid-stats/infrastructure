@@ -308,6 +308,18 @@ def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
         "writer-restored",
     ):
         require(marker in backup, f"backup quiescence contract misses: {marker}")
+    require(
+        backup.count('result.get("isError") is True') == 2,
+        "backup behavior oracle must reject every tool-level error",
+    )
+    require(
+        backup.count('set(deleted) != {"success", "drawer_id", "deleted_ids", "chunks_deleted"}') == 1,
+        "backup behavior oracle delete contract differs",
+    )
+    require(
+        backup.count('if drawer_id in json.dumps(remaining') == 1,
+        "backup behavior oracle absence proof differs",
+    )
     observer = docs["ConfigMap/solidstats-memory-observer"]
     for marker in ("def probe_http", "def parse_collection_health", "def latest_snapshot_timestamp", "def collect_metrics", "class MetricsHandler", "solidstats_memory_mcp_ready", "solidstats_memory_qdrant_collection_healthy"):
         require(marker in observer, f"observer misses {marker}")

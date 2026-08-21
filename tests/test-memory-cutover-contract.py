@@ -1151,6 +1151,37 @@ class MemoryCutoverContractTests(unittest.TestCase):
             )
         self.assertEqual({}, aliases)
 
+    def test_alias_probe_restores_prestate_after_lost_create_ack(self) -> None:
+        aliases: dict[str, str] = {}
+        lost_ack = True
+
+        def request(method: str, path: str, body: object = None) -> object:
+            nonlocal lost_ack
+            if path == "/aliases":
+                return {"result": {"aliases": [
+                    {"alias_name": name, "collection_name": collection}
+                    for name, collection in aliases.items()
+                ]}}
+            for action in body["actions"]:
+                if "create_alias" in action:
+                    item = action["create_alias"]
+                    aliases[item["alias_name"]] = item["collection_name"]
+                    if lost_ack:
+                        lost_ack = False
+                        raise TimeoutError("synthetic lost acknowledgement")
+                else:
+                    aliases.pop(action["delete_alias"]["alias_name"], None)
+            return {"status": "ok"}
+
+        with self.assertRaisesRegex(RESTORE.RestoreControlError, "probe failed"):
+            RESTORE.probe_alias_compatibility(
+                request,
+                restored_collection="isolated",
+                probe_alias="probe",
+                exact_image_probe=lambda: True,
+            )
+        self.assertEqual({}, aliases)
+
     def test_backup_restore_evidence_schema_is_strict_and_value_free(self) -> None:
         bindings = {"binding_sha256": "1" * 64}
         evidence = self.backup_evidence(bindings)
@@ -1670,6 +1701,68 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual([], mutations)
         self.assertEqual({"active": "concurrent"}, aliases)
 
+    def test_alias_writer_lease_rejects_interleaving_writer(self) -> None:
+        private = self.root / "alias-lease"
+        private.mkdir(mode=0o700)
+        with mock.patch.dict(os.environ, {
+            "SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT": str(private),
+            "SOLIDSTATS_MEMORY_RUN_ID": "phase21-lock-test",
+        }, clear=False):
+            with RESTORE.alias_writer_lease():
+                with self.assertRaisesRegex(
+                    RESTORE.RestoreControlError, "lease is held"
+                ):
+                    with RESTORE.alias_writer_lease():
+                        self.fail("second writer acquired the lease")
+        owner = json.loads(
+            (private / ".solidstats-memory-alias.lock").read_text()
+        )
+        self.assertEqual("solidstats-memory-alias-lock/v1", owner["schema"])
+        self.assertEqual(
+            hashlib.sha256(b"phase21-lock-test").hexdigest(),
+            owner["run_id_sha256"],
+        )
+
+    def test_alias_switch_blocks_writer_between_compare_and_post(self) -> None:
+        private = self.root / "alias-interleaving"
+        private.mkdir(mode=0o700)
+        aliases = {"active": "protected"}
+        interleaving_blocked = False
+
+        def request(method: str, path: str, body: object = None) -> object:
+            nonlocal interleaving_blocked
+            if method == "GET":
+                return {"result": {"aliases": [
+                    {"alias_name": name, "collection_name": collection}
+                    for name, collection in aliases.items()
+                ]}}
+            try:
+                with RESTORE.alias_writer_lease():
+                    aliases["active"] = "concurrent"
+            except RESTORE.RestoreControlError:
+                interleaving_blocked = True
+            for action in body["actions"]:
+                if "delete_alias" in action:
+                    aliases.pop(action["delete_alias"]["alias_name"], None)
+                else:
+                    item = action["create_alias"]
+                    aliases[item["alias_name"]] = item["collection_name"]
+            return {"status": "ok"}
+
+        with mock.patch.dict(os.environ, {
+            "SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT": str(private),
+            "SOLIDSTATS_MEMORY_RUN_ID": "phase21-interleaving",
+        }, clear=False):
+            with RESTORE.alias_writer_lease():
+                RESTORE.compare_and_switch_alias(
+                    request,
+                    alias_name="active",
+                    target_collection="restored",
+                    recorded_prestate={"active": "protected"},
+                )
+        self.assertTrue(interleaving_blocked)
+        self.assertEqual({"active": "restored"}, aliases)
+
     def test_alias_cutover_and_rollback_restore_exact_prestate(self) -> None:
         aliases = {"active": "protected", "other": "untouched"}
         action_batches: list[list[dict[str, object]]] = []
@@ -1902,6 +1995,50 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 if mode == "valid" and method != "initialize"
             )
         )
+
+    def test_behavior_probe_cleans_exact_capture_after_lost_add_ack(self) -> None:
+        probe = self.load_probe()
+        content = (
+            "Task: phase21-cutover-uat\nOutcome: synthetic probe conclusion\n"
+            "Decisions: disposable exact-id fixture\nValidation: exact cleanup\n"
+            "Sources: phase21-cutover-uat"
+        )
+        stored: dict[str, str] = {}
+
+        def call(_session, name: str, arguments: dict[str, object]):
+            if name == "mempalace_search":
+                return {"structuredContent": {"results": [
+                    {"drawer_id": drawer_id}
+                    for drawer_id, value in stored.items()
+                    if value == arguments.get("query")
+                ]}}
+            if name == "mempalace_add_drawer":
+                stored["capture-lost-ack"] = str(arguments["content"])
+                raise probe.ProbeError("synthetic lost acknowledgement")
+            if name == "mempalace_get_drawer":
+                drawer_id = str(arguments["drawer_id"])
+                return {"structuredContent": {
+                    "drawer_id": drawer_id, "content": stored[drawer_id]
+                }}
+            if name == "mempalace_delete_drawer":
+                drawer_id = str(arguments["drawer_id"])
+                stored.pop(drawer_id)
+                return {"structuredContent": {
+                    "success": True, "drawer_id": drawer_id,
+                    "deleted_ids": [drawer_id], "chunks_deleted": 1,
+                }}
+            return {"structuredContent": {}}
+
+        with mock.patch.object(probe, "mcp_call", side_effect=call):
+            with self.assertRaisesRegex(probe.ProbeError, "probe failed"):
+                probe.probe_behavior_matrix(
+                    object(),
+                    {name: {} for name in probe.REQUIRED_TOOLS},
+                    wing="infrastructure",
+                    archive_wing="archive",
+                    synthetic_content=content,
+                )
+        self.assertEqual({}, stored)
 
     def test_probe_accepts_only_exact_v350_delete_success_schema(self) -> None:
         probe = self.load_probe()
@@ -2631,8 +2768,10 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 token_env="SOLIDSTATS_MEMORY_TOKEN",
                 remove=partial_remove,
             )
-        self.assertEqual(current, config.read_bytes())
+        self.assertEqual(b"partial external mutation\n", config.read_bytes())
 
+        config.write_bytes(current)
+        config.chmod(0o600)
         CLIENT_POLICY.retire_transaction(
             config,
             prestate,
@@ -2755,6 +2894,51 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual(expected, prestate.read_bytes())
         self.assertFalse(metadata.exists())
         self.assertIn(b"unrelated_current_bytes_preserved=true", result.read_bytes())
+
+    def test_client_retirement_rebases_unrelated_edit_before_replace(self) -> None:
+        private = self.root / "client-retirement-rebase"
+        private.mkdir(mode=0o700)
+        config = private / "config.toml"
+        prestate = private / "prestate.toml"
+        result = private / "retirement.result"
+        legacy = b'[mcp_servers.mempalace]\ncommand = "legacy"\n\n'
+        replacement = (
+            b'[mcp_servers.solidstats_memory]\n'
+            b'url = "https://memory.example/solidstats/mcp"\n'
+            b'bearer_token_env_var = "SOLIDSTATS_MEMORY_TOKEN"\n'
+            b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
+            b'"mempalace_list_drawers","mempalace_get_drawer",'
+            b'"mempalace_check_duplicate","mempalace_add_drawer",'
+            b'"mempalace_delete_drawer"]\n'
+        )
+        current = b'model = "gpt-5.6-sol"\n\n' + legacy + replacement
+        concurrent = b'[plugins.concurrent]\nenabled = true\n\n'
+        config.write_bytes(current)
+        config.chmod(0o600)
+        prestate.write_bytes(b'model = "gpt-5.6-sol"\n')
+        prestate.chmod(0o600)
+        metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
+        metadata.write_text(json.dumps({
+            "schema": "solidstats-memory-client-policy/v1",
+            "accepted_sha256": [hashlib.sha256(current).hexdigest()],
+        }, separators=(",", ":"), sort_keys=True) + "\n", encoding="ascii")
+        metadata.chmod(0o600)
+
+        def stage(name: str) -> None:
+            if name == "before_replace":
+                config.write_bytes(current + concurrent)
+                config.chmod(0o600)
+
+        CLIENT_POLICY.retire_transaction(
+            config, prestate, result,
+            url="https://memory.example/solidstats/mcp",
+            token_env="SOLIDSTATS_MEMORY_TOKEN",
+            stage=stage,
+        )
+        observed = config.read_bytes()
+        self.assertIn(concurrent, observed)
+        self.assertNotIn(b"[mcp_servers.mempalace]", observed)
+        self.assertIn(b"[mcp_servers.solidstats_memory]", observed)
 
     def test_cutover_self_test_exercises_reverse_order_rollback(self) -> None:
         result = subprocess.run(
@@ -3875,6 +4059,17 @@ class MemoryCutoverContractTests(unittest.TestCase):
         transition.write_text(transition.read_text().replace("sequence=4", "sequence=3"))
         with self.assertRaises(ValueError):
             COLLECTOR.parse_transition_result(transition)
+
+    def test_seal_requires_one_remote_config_revision(self) -> None:
+        same = {"config_sha256": "a" * 64}
+        self.assertEqual(
+            "a" * 64,
+            COLLECTOR.require_one_config_revision(same, dict(same)),
+        )
+        with self.assertRaisesRegex(ValueError, "config binding"):
+            COLLECTOR.require_one_config_revision(
+                same, {"config_sha256": "b" * 64}
+            )
 
     def test_remote_batch_requires_one_bound_result_and_one_pass(self) -> None:
         source = CUTOVER_PATH.read_text(encoding="utf-8")

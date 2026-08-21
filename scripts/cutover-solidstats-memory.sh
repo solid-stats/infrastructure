@@ -1067,6 +1067,16 @@ main() {
   STATE_DIR="${SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT}/${RUN_ID_SHA256}"
   require_private_root "${STATE_DIR}" || return 1
   JOURNAL_PATH="${STATE_DIR}/cutover.journal"
+  ALIAS_LOCK_PATH="${SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT}/.solidstats-memory-alias.lock"
+  exec 9<>"${ALIAS_LOCK_PATH}"
+  chmod 600 "${ALIAS_LOCK_PATH}"
+  flock -n 9 || {
+    echo "FATAL: alias writer lease is held" >&2
+    return 1
+  }
+  printf '{"schema":"solidstats-memory-alias-lock/v1","pid":%d,"run_id_sha256":"%s"}\n' "$$" "${RUN_ID_SHA256}" >&9
+  sync "${ALIAS_LOCK_PATH}"
+  export SOLIDSTATS_MEMORY_ALIAS_LOCK_FD=9
   : "${SOLIDSTATS_MEMORY_ALIAS_PRESTATE:=${STATE_DIR}/alias-prestate.json}"
   export SOLIDSTATS_MEMORY_ALIAS_PRESTATE
   CURRENT_STAGE="PREPARED"

@@ -402,7 +402,6 @@ def online_bootstrap(palace: Path, expected_count: int) -> None:
     if existing.ids:
         raise BootstrapError("bootstrap probe identifier already exists")
 
-    wrote_probe = False
     restored = False
     try:
         collection.upsert(
@@ -411,7 +410,6 @@ def online_bootstrap(palace: Path, expected_count: int) -> None:
             metadatas=[{"_solidstats_runtime_bootstrap": True}],
             embeddings=[model_vector()],
         )
-        wrote_probe = True
         inserted = collection.get(ids=[PROBE_ID], include=["metadatas"])
         if collection.count() != before_count + 1 or inserted.ids != [PROBE_ID]:
             raise BootstrapError("bootstrap probe write was not isolated")
@@ -423,7 +421,7 @@ def online_bootstrap(palace: Path, expected_count: int) -> None:
         )
         validate_local(palace)
     except Exception:
-        if wrote_probe and not restored:
+        if not restored:
             restored = cleanup_probe(collection, before_count)
         if restored:
             for path, existed in (

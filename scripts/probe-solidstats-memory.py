@@ -492,6 +492,40 @@ def _first_drawer_id(value: object) -> str | None:
     return None
 
 
+def _drawer_ids(value: object) -> set[str]:
+    found: set[str] = set()
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if key in {"drawer_id", "id"} and isinstance(item, str) and item:
+                found.add(item)
+            else:
+                found.update(_drawer_ids(item))
+    elif isinstance(value, list):
+        for item in value:
+            found.update(_drawer_ids(item))
+    return found
+
+
+def _exact_content_ids(
+    session: McpSession, *, wing: str, content: str
+) -> set[str]:
+    searched = _tool_data(
+        mcp_call(
+            session,
+            "mempalace_search",
+            {"query": content, "wing": wing, "limit": 10},
+        )
+    )
+    matches: set[str] = set()
+    for drawer_id in sorted(_drawer_ids(searched)):
+        drawer = _tool_data(
+            mcp_call(session, "mempalace_get_drawer", {"drawer_id": drawer_id})
+        )
+        if drawer.get("content") == content:
+            matches.add(drawer_id)
+    return matches
+
+
 def _capture_shape(content: str) -> bool:
     return all(
         f"{field}:" in content
@@ -699,32 +733,64 @@ def probe_behavior_matrix(
             {"content": synthetic_content, "threshold": 0.9},
         )
     )
-    created = _tool_data(
-        mcp_call(
-            session,
-            "mempalace_add_drawer",
-            {
-                "wing": wing,
-                "room": "migrations",
-                "content": synthetic_content,
-                "added_by": "phase21-cutover-probe",
-            },
+    preexisting = _exact_content_ids(
+        session, wing=wing, content=synthetic_content
+    )
+    drawer_id: str | None = None
+    probe_error: Exception | None = None
+    cleanup_error: Exception | None = None
+    try:
+        created = _tool_data(
+            mcp_call(
+                session,
+                "mempalace_add_drawer",
+                {
+                    "wing": wing,
+                    "room": "migrations",
+                    "content": synthetic_content,
+                    "added_by": "phase21-cutover-probe",
+                },
+            )
         )
-    )
-    drawer_id = _first_drawer_id(created)
-    if drawer_id is None:
-        raise ProbeError("synthetic capture did not return an exact ID")
-    read_back = _tool_data(
-        mcp_call(session, "mempalace_get_drawer", {"drawer_id": drawer_id})
-    )
-    if read_back.get("content") != synthetic_content:
-        raise ProbeError("synthetic capture read-back failed")
-    deleted = _tool_data(
-        mcp_call(
-            session, "mempalace_delete_drawer", {"drawer_id": drawer_id}
+        drawer_id = _first_drawer_id(created)
+        if drawer_id is None:
+            raise ProbeError("synthetic capture did not return an exact ID")
+        read_back = _tool_data(
+            mcp_call(session, "mempalace_get_drawer", {"drawer_id": drawer_id})
         )
-    )
-    _validate_delete_result(deleted, drawer_id=drawer_id)
+        if read_back.get("content") != synthetic_content:
+            raise ProbeError("synthetic capture read-back failed")
+    except Exception as error:
+        probe_error = error
+    finally:
+        try:
+            observed = _exact_content_ids(
+                session, wing=wing, content=synthetic_content
+            )
+            created_ids = observed - preexisting
+            if drawer_id is not None:
+                created_ids.add(drawer_id)
+            if len(created_ids) != 1:
+                raise ProbeError("synthetic capture cleanup target is ambiguous")
+            cleanup_id = next(iter(created_ids))
+            deleted = _tool_data(
+                mcp_call(
+                    session,
+                    "mempalace_delete_drawer",
+                    {"drawer_id": cleanup_id},
+                )
+            )
+            _validate_delete_result(deleted, drawer_id=cleanup_id)
+            if _exact_content_ids(
+                session, wing=wing, content=synthetic_content
+            ) != preexisting:
+                raise ProbeError("synthetic capture cleanup failed")
+        except Exception as error:
+            cleanup_error = error
+    if cleanup_error is not None:
+        raise ProbeError("synthetic capture cleanup failed") from cleanup_error
+    if probe_error is not None:
+        raise ProbeError("synthetic capture probe failed") from probe_error
     return {
         "tool_count": len(tools),
         "required_tool_count": len(REQUIRED_TOOLS),

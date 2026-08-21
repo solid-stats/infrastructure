@@ -81,6 +81,49 @@ class QdrantNotFound(RestoreControlError):
     """A target-specific Qdrant lookup returned HTTP 404."""
 
 
+@contextmanager
+def alias_writer_lease(*, run_id: str | None = None):
+    """Hold the process-wide alias writer lease or verify its inherited FD."""
+    inherited = os.environ.get("SOLIDSTATS_MEMORY_ALIAS_LOCK_FD")
+    if inherited is not None:
+        try:
+            details = os.fstat(int(inherited))
+        except (OSError, ValueError) as error:
+            raise RestoreControlError("alias writer lease ownership is invalid") from error
+        if not stat.S_ISREG(details.st_mode):
+            raise RestoreControlError("alias writer lease ownership is invalid")
+        yield
+        return
+    private_root = Path(_required_environment("SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT"))
+    path = private_root / ".solidstats-memory-alias.lock"
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or stat.S_IMODE(details.st_mode) & 0o077:
+            raise RestoreControlError("alias writer lease is unsafe")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RestoreControlError("alias writer lease is held") from error
+        owner_run_id = run_id or _required_environment("SOLIDSTATS_MEMORY_RUN_ID")
+        owner = canonical_json_bytes({
+            "schema": "solidstats-memory-alias-lock/v1",
+            "pid": os.getpid(),
+            "run_id_sha256": hashlib.sha256(
+                _require_run_id(owner_run_id).encode("ascii")
+            ).hexdigest(),
+        }) + b"\n"
+        os.ftruncate(descriptor, 0)
+        os.write(descriptor, owner)
+        os.fsync(descriptor)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
 class StageInputs:
     """Exact public and private bindings for one restartable operator run."""
 
@@ -1307,7 +1350,7 @@ def compare_and_switch_alias(
     target_collection: str,
     recorded_prestate: Mapping[str, str],
 ) -> dict[str, object]:
-    """Atomically switch an alias only when immediate state matches the record."""
+    """Switch an alias under the caller-held writer lease after an exact compare."""
     alias = _require_name(alias_name, "cutover alias is invalid")
     target = _require_name(target_collection, "cutover target is invalid")
     recorded = {
@@ -1421,7 +1464,6 @@ def probe_alias_compatibility(
     if alias in prestate:
         raise RestoreControlError("probe alias collision detected")
     pre_digest = _digest(prestate)
-    created = False
     probe_passed = False
     probe_error: Exception | None = None
     cleanup_error: Exception | None = None
@@ -1435,7 +1477,6 @@ def probe_alias_compatibility(
                 }
             },
         )
-        created = True
         outcome = exact_image_probe()
         probe_passed = outcome is True or (
             isinstance(outcome, Mapping) and outcome.get("verdict") == "pass"
@@ -1443,20 +1484,13 @@ def probe_alias_compatibility(
     except Exception as error:
         probe_error = error
     finally:
-        if created:
-            try:
-                restored_result = restore_alias_prestate(
-                    request, alias_name=alias, prestate=prestate
-                )
-            except Exception as error:
-                cleanup_error = error
-                restored_result = {"restored": False, "poststate_sha256": "0" * 64}
-        else:
-            final = _alias_map(_request(request, "GET", "/aliases"))
-            restored_result = {
-                "restored": final == prestate,
-                "poststate_sha256": _digest(final),
-            }
+        try:
+            restored_result = restore_alias_prestate(
+                request, alias_name=alias, prestate=prestate
+            )
+        except Exception as error:
+            cleanup_error = error
+            restored_result = {"restored": False, "poststate_sha256": "0" * 64}
     if cleanup_error is not None or not restored_result["restored"]:
         raise RestoreControlError("alias prestate restoration failed") from cleanup_error
     if probe_error is not None or not probe_passed:
@@ -2282,12 +2316,13 @@ def _run_verify_restore(
     current = _stage_bindings(inputs)
     if current != bindings:
         raise RestoreControlError("Phase 20 binding drift detected before mutation")
-    alias = probe_alias_compatibility(
-        adapter.qdrant_request,
-        restored_collection=inputs.target_collection,
-        probe_alias=inputs.probe_alias,
-        exact_image_probe=adapter.run_exact_image_probe,
-    )
+    with alias_writer_lease(run_id=inputs.run_id):
+        alias = probe_alias_compatibility(
+            adapter.qdrant_request,
+            restored_collection=inputs.target_collection,
+            probe_alias=inputs.probe_alias,
+            exact_image_probe=adapter.run_exact_image_probe,
+        )
     rollback = _normalize_rollback(
         adapter.verify_prestate(dict(preflight["prestate"]))
     )
@@ -2785,7 +2820,7 @@ def _direct_alias_request() -> object:
 
 def _run_alias_command(command: str) -> None:
     alias = _required_environment("SOLIDSTATS_MEMORY_LOGICAL_ALIAS")
-    with _direct_alias_request() as request:
+    with alias_writer_lease(), _direct_alias_request() as request:
         if command == "alias-prestate":
             prestate_path = Path(
                 _required_environment("SOLIDSTATS_MEMORY_ALIAS_PRESTATE")

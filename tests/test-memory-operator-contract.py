@@ -747,6 +747,8 @@ class MemoryOperatorContractTests(unittest.TestCase):
 
     def test_runtime_bootstrap_restores_absent_alias_after_success(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
+        runtime.state_root = self.root / "bootstrap-success"
+        runtime.state_root.mkdir(mode=0o700)
         runtime.config = {
             "probe_alias": "synthetic-logical-alias",
             "target_collection": "synthetic-physical-collection",
@@ -816,8 +818,54 @@ class MemoryOperatorContractTests(unittest.TestCase):
         self.assertEqual([config_map, job], applied)
         self.assertEqual(2, sum(call[0] == "POST" for call in qdrant_calls))
 
+    def test_runtime_bootstrap_cleans_alias_after_lost_create_ack(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.state_root = self.root / "bootstrap-lost-ack"
+        runtime.state_root.mkdir(mode=0o700)
+        runtime.config = {
+            "probe_alias": "synthetic-logical-alias",
+            "target_collection": "synthetic-physical-collection",
+            "expected_count": 19534,
+        }
+        aliases: dict[str, str] = {}
+        lost_ack = True
+
+        def qdrant(method, _path, body=None):
+            nonlocal lost_ack
+            if method == "GET":
+                return {"result": {"aliases": [
+                    {"alias_name": name, "collection_name": collection}
+                    for name, collection in aliases.items()
+                ]}}
+            action = body["actions"][0]
+            if "create_alias" in action:
+                item = action["create_alias"]
+                aliases[item["alias_name"]] = item["collection_name"]
+                if lost_ack:
+                    lost_ack = False
+                    raise TimeoutError("synthetic lost acknowledgement")
+            else:
+                aliases.pop(action["delete_alias"]["alias_name"], None)
+            return {"status": "ok"}
+
+        with (
+            mock.patch.object(runtime, "_qdrant", side_effect=qdrant),
+            mock.patch.object(runtime, "_kubectl_json", return_value={"spec": {"replicas": 0}}),
+            mock.patch.object(runtime, "_runtime_bootstrap_objects", return_value=(
+                {"kind": "ConfigMap", "metadata": {"name": "bootstrap"}},
+                {"kind": "Job", "metadata": {"name": "bootstrap-job"}},
+            )),
+            mock.patch.object(runtime, "_seed_runtime_cache"),
+            mock.patch.object(runtime, "_kubectl"),
+        ):
+            with self.assertRaisesRegex(OPERATOR.OperatorError, "bootstrap failed"):
+                runtime.bootstrap_runtime_palace({})
+        self.assertEqual({}, aliases)
+
     def test_runtime_bootstrap_failure_restores_alias_and_workload(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
+        runtime.state_root = self.root / "bootstrap-failure"
+        runtime.state_root.mkdir(mode=0o700)
         runtime.config = {
             "probe_alias": "synthetic-logical-alias",
             "target_collection": "synthetic-physical-collection",
@@ -897,9 +945,10 @@ class MemoryOperatorContractTests(unittest.TestCase):
             ],
             commands,
         )
-
     def test_runtime_bootstrap_failed_job_exits_immediately_and_cleans_up(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
+        runtime.state_root = self.root / "bootstrap-job-failure"
+        runtime.state_root.mkdir(mode=0o700)
         runtime.config = {
             "probe_alias": "synthetic-logical-alias",
             "target_collection": "synthetic-physical-collection",
@@ -1016,6 +1065,52 @@ class MemoryOperatorContractTests(unittest.TestCase):
             commands,
         )
 
+    def test_snapshot_upload_transport_failure_cleans_temp_for_retry(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.state_root = self.root / "snapshot-state"
+        runtime.state_root.mkdir(mode=0o700)
+        runtime.config = {"target_collection": "restored"}
+        runtime.qdrant_key = self.root / "qdrant.key"
+        runtime.qdrant_key.write_text("synthetic-key", encoding="ascii")
+        runtime.qdrant_key.chmod(0o600)
+        snapshot = self.root / "snapshot"
+        snapshot.write_bytes(b"snapshot")
+        snapshot.chmod(0o600)
+
+        class LostConnection:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def putrequest(self, *_args):
+                pass
+
+            def putheader(self, *_args):
+                pass
+
+            def endheaders(self):
+                pass
+
+            def send(self, _chunk):
+                raise TimeoutError("synthetic transport failure")
+
+            def close(self):
+                pass
+
+        forward = mock.MagicMock()
+        forward.__enter__.return_value = 6333
+        forward.__exit__.return_value = False
+        with (
+            mock.patch.object(runtime, "_port_forward", return_value=forward),
+            mock.patch.object(OPERATOR.http.client, "HTTPConnection", LostConnection),
+        ):
+            for _attempt in range(2):
+                with self.assertRaises(TimeoutError):
+                    runtime.recover_uploaded_snapshot({
+                        "target_collection": "restored",
+                        "snapshot_path": str(snapshot),
+                        "priority": "snapshot",
+                    })
+                self.assertEqual([], list(runtime.state_root.glob("snapshot-upload-*.multipart")))
     def test_runtime_cache_seed_streams_private_archive_and_rechecks_ready(self) -> None:
         archive = self.root / "embeddinggemma-cache.tar"
         archive.write_bytes(b"synthetic-private-cache-archive")

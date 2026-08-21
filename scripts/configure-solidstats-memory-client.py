@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import fcntl
+import functools
 import hashlib
 import json
 import os
@@ -43,6 +46,70 @@ FORBIDDEN_TOOL_PARTS = (
 
 class PolicyError(ValueError):
     """A secret-free client policy contract failure."""
+
+
+_HELD_CONFIG_LOCKS: dict[Path, tuple[int, int]] = {}
+
+
+@contextmanager
+def _client_config_lock(config: Path):
+    """Serialize every participating config writer with durable ownership."""
+    config = config.resolve(strict=True)
+    held = _HELD_CONFIG_LOCKS.get(config)
+    if held is not None:
+        _HELD_CONFIG_LOCKS[config] = (held[0], held[1] + 1)
+        try:
+            yield
+        finally:
+            _HELD_CONFIG_LOCKS[config] = (held[0], held[1])
+        return
+    lock_path = config.with_name(f".{config.name}.solidstats-memory.lock")
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        details = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(details.st_mode)
+            or details.st_uid != os.getuid()
+            or stat.S_IMODE(details.st_mode) & 0o077
+        ):
+            raise PolicyError("client config lock is unsafe")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise PolicyError("client config is locked by another writer") from error
+        owner = json.dumps(
+            {
+                "schema": "solidstats-memory-client-lock/v1",
+                "pid": os.getpid(),
+                "config_sha256": _sha256(config.read_bytes()),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii") + b"\n"
+        os.ftruncate(descriptor, 0)
+        os.write(descriptor, owner)
+        os.fsync(descriptor)
+        _HELD_CONFIG_LOCKS[config] = (descriptor, 1)
+        yield
+    finally:
+        _HELD_CONFIG_LOCKS.pop(config, None)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def _locked_config_writer(function):
+    @functools.wraps(function)
+    def wrapped(config: Path, *args, **kwargs):
+        with _client_config_lock(Path(config)):
+            return function(Path(config), *args, **kwargs)
+
+    return wrapped
 
 
 def _sha256(raw: bytes) -> str:
@@ -229,6 +296,7 @@ def inspect_policy(
     return start, end
 
 
+@_locked_config_writer
 def capture(config: Path, prestate: Path) -> None:
     raw, _ = _safe_file(config)
     if prestate.exists() and not prestate.is_symlink():
@@ -239,6 +307,7 @@ def capture(config: Path, prestate: Path) -> None:
     _exclusive_write(prestate, raw)
 
 
+@_locked_config_writer
 def apply(config: Path, prestate: Path, *, url: str, token_env: str) -> None:
     raw, mode = _safe_file(config)
     _safe_file(prestate)
@@ -280,6 +349,7 @@ def validate(config: Path, *, url: str, token_env: str) -> None:
     inspect_policy(raw, url=url, token_env=token_env, require_policy=True)
 
 
+@_locked_config_writer
 def rollback(config: Path, prestate: Path) -> None:
     current, mode = _safe_file(config)
     original, _ = _safe_file(prestate)
@@ -311,6 +381,7 @@ def rollback(config: Path, prestate: Path) -> None:
         raise PolicyError("client config exact rollback failed")
 
 
+@_locked_config_writer
 def authorize_current(config: Path, prestate: Path) -> None:
     raw, _ = _safe_file(config)
     metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
@@ -346,6 +417,25 @@ def _remove_registration(raw: bytes, name: str) -> bytes:
     return raw[:start] + raw[end:]
 
 
+def _restore_registration(raw: bytes, recorded: bytes, name: str) -> bytes:
+    """Reinsert only one recorded registration into otherwise-current bytes."""
+    start, end = _registration_bounds(recorded, name)
+    section = recorded[start:end]
+    try:
+        current = _registration_mapping(raw, name)
+    except PolicyError:
+        current = None
+    if current is not None:
+        if current != _registration_mapping(recorded, name):
+            raise PolicyError("client registration drift prevents compensation")
+        return raw
+    separator = b"" if not raw or raw.endswith((b"\n", b"\r")) else b"\n"
+    restored = raw + separator + section
+    if _registration_mapping(restored, name) != _registration_mapping(recorded, name):
+        raise PolicyError("client registration compensation differs")
+    return restored
+
+
 def _registration_mapping(raw: bytes, name: str) -> dict[str, object]:
     try:
         decoded = tomllib.loads(raw.decode("utf-8"))
@@ -358,6 +448,7 @@ def _registration_mapping(raw: bytes, name: str) -> dict[str, object]:
     return registration
 
 
+@_locked_config_writer
 def rollback_registration_transaction(
     config: Path,
     prestate: Path,
@@ -414,7 +505,16 @@ def rollback_registration_transaction(
         try:
             observed, _ = _safe_file(config)
             if observed != current:
-                _atomic_replace(config, current, config_mode)
+                compensated = (
+                    current
+                    if observed == updated
+                    else _restore_registration(observed, current, CLIENT_NAME)
+                )
+                _atomic_replace(config, compensated, config_mode)
+                if compensated != current:
+                    raise PolicyError(
+                        "unrelated client drift preserved; exact compensation refused"
+                    )
             _atomic_replace(prestate, original_prestate, prestate_mode)
             if metadata_before is None:
                 if metadata.exists() and not metadata.is_symlink():
@@ -451,6 +551,7 @@ def _authorize_exact_states(prestate: Path, states: tuple[bytes, ...]) -> None:
     _atomic_replace(metadata, updated, mode)
 
 
+@_locked_config_writer
 def capture_pre_retirement(
     config: Path, result: Path, *, url: str, token_env: str, legacy_name: str = "mempalace"
 ) -> bytes:
@@ -473,6 +574,7 @@ def capture_pre_retirement(
     return unrelated
 
 
+@_locked_config_writer
 def retire_transaction(
     config: Path,
     prestate: Path,
@@ -489,12 +591,20 @@ def retire_transaction(
     current, mode = _safe_file(config)
     _safe_file(prestate)
     inspect_policy(current, url=url, token_env=token_env, require_policy=True)
+    recorded_legacy = _registration_mapping(current, legacy_name)
+    recorded_target = _registration_mapping(current, CLIENT_NAME)
+    stage_hook = stage or (lambda _name: None)
+    stage_hook("before_replace")
+    latest, latest_mode = _safe_file(config)
+    if (
+        _registration_mapping(latest, legacy_name) != recorded_legacy
+        or _registration_mapping(latest, CLIENT_NAME) != recorded_target
+    ):
+        raise PolicyError("client registration drift prevents retirement")
+    inspect_policy(latest, url=url, token_env=token_env, require_policy=True)
+    current, mode = latest, latest_mode
     retired = _remove_registration(current, legacy_name)
     inspect_policy(retired, url=url, token_env=token_env, require_policy=True)
-    pre_retirement_result = result.with_name("client-pre-retirement.result")
-    unrelated_pre = capture_pre_retirement(
-        config, pre_retirement_result, url=url, token_env=token_env, legacy_name=legacy_name
-    )
     retirement_prestate = result.with_suffix(result.suffix + ".prestate")
     if retirement_prestate.exists() and not retirement_prestate.is_symlink():
         previous, _ = _safe_file(retirement_prestate)
@@ -502,8 +612,11 @@ def retire_transaction(
             raise PolicyError("client retirement prestate is drifted")
     else:
         _exclusive_write(retirement_prestate, current)
+    pre_retirement_result = result.with_name("client-pre-retirement.result")
+    unrelated_pre = capture_pre_retirement(
+        config, pre_retirement_result, url=url, token_env=token_env, legacy_name=legacy_name
+    )
     _authorize_exact_states(prestate, (current, retired))
-    stage_hook = stage or (lambda _name: None)
 
     def exact_remove(expected: bytes) -> None:
         _atomic_replace(config, expected, mode)
@@ -538,7 +651,16 @@ def retire_transaction(
         try:
             observed, _ = _safe_file(config)
             if observed != current:
-                _atomic_replace(config, current, mode)
+                compensated = (
+                    current
+                    if observed == retired
+                    else _restore_registration(observed, current, legacy_name)
+                )
+                _atomic_replace(config, compensated, mode)
+                if compensated != current:
+                    raise PolicyError(
+                        "unrelated client drift preserved; exact compensation refused"
+                    )
             restored, _ = _safe_file(config)
             if restored != current:
                 raise PolicyError("client retirement rollback read-back failed")
@@ -551,6 +673,7 @@ def retire_transaction(
         raise PolicyError("client retirement transaction failed") from error
 
 
+@_locked_config_writer
 def restore_retirement(
     config: Path,
     result: Path,

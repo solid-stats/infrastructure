@@ -86,6 +86,13 @@ def parse_probe(path: Path, run_sha256: str) -> dict[str, object]:
     return value
 
 
+def require_one_config_revision(*results: dict[str, str]) -> str:
+    revisions = {item["config_sha256"] for item in results}
+    if len(revisions) != 1:
+        raise ValueError("remote result config binding differs")
+    return next(iter(revisions))
+
+
 def parse_transition_result(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for line in safe(path, 0o600).decode().splitlines():
@@ -179,12 +186,10 @@ def main() -> int:
         guard = result("verify-backup-guard")
         guard_failure = result("test-backup-guard-suspension")
         writer_prestate = result("record-backup-writer-prestate")
-        config_digests = {
-            item["config_sha256"]
-            for item in (restart_m, restart_q, measured, api, consistency, reboot, legacy, retained, guard, guard_failure, writer_prestate)
-        }
-        if len(config_digests) != 1:
-            raise ValueError("remote result config binding differs")
+        require_one_config_revision(
+            restart_m, restart_q, measured, api, consistency, reboot, legacy,
+            retained, guard, guard_failure, writer_prestate,
+        )
         probes = {}
         for probe in ("restart-mempalace", "restart-qdrant", "backup-resumption", "reboot", "forward"):
             probes[probe] = parse_probe(root / f"probe-{probe}.json", run_sha256)
@@ -222,6 +227,11 @@ def main() -> int:
         writer_prestate = parse_remote_result(root / "remote-record-backup-writer-prestate.result", "record-backup-writer-prestate", run_sha256)
         retained = parse_remote_result(root / "remote-verify-retained-collections.result", "verify-retained-collections", run_sha256)
         guard_package = parse_remote_result(root / "remote-verify-guard-package.result", "verify-guard-package", run_sha256)
+        seal_results = (
+            activation, restart_m, restart_q, reboot, legacy, api, consistency,
+            writer_prestate, retained, guard_package,
+        )
+        require_one_config_revision(*seal_results)
         transition = parse_transition_result(root / "rollback-forward.result")
         probes = {name: parse_probe(root / f"probe-{name}.json", run_sha256) for name in ("restart-mempalace", "restart-qdrant", "backup-resumption", "reboot", "forward")}
         client_pre = parse_exact_result(root / "client-pre-retirement.result", "solidstats-memory-client-pre-retirement/v1", {"sequence", "legacy_client_present", "new_client_live", "client_policy_readback", "solidstats_client_count", "unrelated_sha256"})
