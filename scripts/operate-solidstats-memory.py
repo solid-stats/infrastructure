@@ -1553,7 +1553,11 @@ class Runtime:
             ("GET", "/aliases"),
             ("POST", "/collections/aliases"),
         }
-        dynamic = re.fullmatch(r"/collections/[A-Za-z0-9._-]+", path)
+        dynamic = (
+            re.fullmatch(r"/collections/[A-Za-z0-9._-]+", path)
+            if method == "GET"
+            else None
+        )
         if (method, path) not in allowed and not (method == "GET" and dynamic):
             raise OperatorError("Qdrant request is not allowlisted")
         if dynamic and path.rsplit("/", 1)[-1] not in {

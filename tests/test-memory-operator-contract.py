@@ -414,6 +414,39 @@ class MemoryOperatorContractTests(unittest.TestCase):
         with self.assertRaisesRegex(OPERATOR.OperatorError, "exact parity"):
             runtime.run_phase20_parity({})
 
+    def test_valid_alias_action_is_not_misclassified_as_a_collection_get(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.config = {
+            "target_collection": "restored",
+            "protected_collection": "protected",
+            "probe_alias": "probe-alias",
+        }
+        payload = {
+            "method": "POST",
+            "path": "/collections/aliases",
+            "body": {
+                "actions": [
+                    {
+                        "create_alias": {
+                            "collection_name": "restored",
+                            "alias_name": "probe-alias",
+                        }
+                    }
+                ]
+            },
+        }
+        with mock.patch.object(runtime, "_qdrant", return_value={"status": "ok"}) as qdrant:
+            self.assertEqual(
+                {"response": {"status": "ok"}},
+                runtime.qdrant_request(payload),
+            )
+        qdrant.assert_called_once_with("POST", "/collections/aliases", payload["body"])
+
+        invalid = json.loads(json.dumps(payload))
+        invalid["body"]["actions"][0]["create_alias"]["alias_name"] = "foreign"
+        with self.assertRaisesRegex(OPERATOR.OperatorError, "alias action"):
+            runtime.qdrant_request(invalid)
+
     def test_client_state_matches_only_exact_solidstats_registrations(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
         entries = [
