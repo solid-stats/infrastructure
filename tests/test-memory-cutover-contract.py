@@ -12,6 +12,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,9 @@ RESTORE_SPEC.loader.exec_module(RESTORE)
 
 PROBE_PATH = ROOT / "scripts" / "probe-solidstats-memory.py"
 CUTOVER_PATH = ROOT / "scripts" / "cutover-solidstats-memory.sh"
+REMOTE_CUTOVER_PATH = (
+    ROOT / "scripts" / "operate-solidstats-memory-cutover-remote.sh"
+)
 CLIENT_POLICY_PATH = ROOT / "scripts" / "configure-solidstats-memory-client.py"
 
 STAGES = (
@@ -3188,6 +3192,82 @@ class MemoryCutoverContractTests(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("RECOVERY_SELF_TEST PASSED", result.stdout)
+
+    def test_remote_operator_allowlists_every_controller_operation(self) -> None:
+        controller = CUTOVER_PATH.read_text(encoding="utf-8")
+        operator = REMOTE_CUTOVER_PATH.read_text(encoding="utf-8")
+        emitted = set(
+            re.findall(r"run_remote_batch\s+([a-z0-9-]+)", controller)
+        )
+        self.assertEqual(
+            {
+                "activate-backup-schedule",
+                "capture-boot-identity",
+                "capture-prestate",
+                "install-nginx",
+                "measure-backup-api-egress",
+                "prove-backup-api-network-negative",
+                "prove-backup-api-positive",
+                "prove-backup-api-rbac-negative",
+                "prove-backup-consistency",
+                "reboot-host",
+                "recheck-backup-api-access",
+                "restart-mempalace",
+                "restart-qdrant",
+                "restore-backup-writer",
+                "rollback-nginx",
+                "start-legacy",
+                "stop-legacy-start-new",
+                "stop-new",
+                "suspend-backup-schedule",
+                "verify-legacy-behavior",
+                "verify-reboot-recovery",
+                "verify-retained-collections",
+            },
+            emitted,
+        )
+        for operation in emitted:
+            with self.subTest(operation=operation):
+                self.assertRegex(
+                    operator,
+                    rf"(?:^|[|]){re.escape(operation)}(?:[|)])",
+                )
+
+    def test_remote_operator_reboot_payload_schema_is_exact(self) -> None:
+        valid = subprocess.run(
+            [
+                "bash",
+                str(REMOTE_CUTOVER_PATH),
+                "verify-reboot-recovery",
+                "a" * 64,
+                "900",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertNotEqual(64, valid.returncode)
+        self.assertEqual([], valid.stdout.splitlines())
+        self.assertNotRegex(valid.stderr, r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}|Bearer")
+
+        for timeout_value in ("0", "0900", "900s", "10000"):
+            with self.subTest(timeout=timeout_value):
+                denied = subprocess.run(
+                    [
+                        "bash",
+                        str(REMOTE_CUTOVER_PATH),
+                        "verify-reboot-recovery",
+                        "a" * 64,
+                        timeout_value,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                self.assertEqual(64, denied.returncode)
+                self.assertEqual([], denied.stdout.splitlines())
 
 
 if __name__ == "__main__":
