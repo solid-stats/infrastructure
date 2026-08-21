@@ -1171,16 +1171,26 @@ class Runtime:
     def _apply_runtime_secrets(self) -> None:
         s3 = self._source_s3_values()
         admin_key = self.qdrant_key.read_text(encoding="ascii")
-        collection_access = [
-            {"collection": self.config["private_collection"], "access": "rw"}
-        ]
         mempalace_token = qdrant_jwt(
             admin_key,
-            {"sub": "solidstats-memory-mempalace", "access": collection_access},
+            {
+                "sub": "solidstats-memory-mempalace",
+                "access": [
+                    {"collection": self.config["probe_alias"], "access": "rw"}
+                ],
+            },
         )
         backup_token = qdrant_jwt(
             admin_key,
-            {"sub": "solidstats-memory-backup", "access": collection_access},
+            {
+                "sub": "solidstats-memory-backup",
+                "access": [
+                    {
+                        "collection": self.config["private_collection"],
+                        "access": "rw",
+                    }
+                ],
+            },
         )
         observer_token = qdrant_jwt(
             admin_key,

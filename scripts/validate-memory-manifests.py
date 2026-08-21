@@ -317,6 +317,7 @@ def require_deploy_input_contract() -> None:
             "K8S_MEMORY_TOKEN",
             "MEMORY_QDRANT_API_KEY",
             "MEMORY_QDRANT_COLLECTION",
+            "MEMORY_QDRANT_LOGICAL_ALIAS",
             "MEMORY_MCP_HTTP_TOKEN",
         },
         "memory-specific secret inventory changed",

@@ -127,7 +127,11 @@ class MemorySecretRendererContractTests(unittest.TestCase):
     values = {
         "MEMORY_QDRANT_API_KEY": "synthetic-qdrant-key",
         "MEMORY_QDRANT_COLLECTION": "synthetic-own-collection",
-        "MEMORY_QDRANT_LOGICAL_ALIAS": "synthetic-logical-alias",
+        "MEMORY_QDRANT_LOGICAL_ALIAS": (
+            "mempalace_SolidStats_"
+            + hashlib.sha256(b"/data/palace").hexdigest()[:16]
+            + "_mempalace_drawers"
+        ),
         "MEMORY_MCP_HTTP_TOKEN": "synthetic-mcp-token",
         "S3_BUCKET": "synthetic-bucket",
         "S3_ACCESS_KEY_ID": "synthetic-access-key",
@@ -240,6 +244,20 @@ class MemorySecretRendererContractTests(unittest.TestCase):
             self.assertEqual(rendered.returncode, 64)
             self.assertEqual(rendered.stdout, "")
 
+    def test_renderer_rejects_drifting_or_physical_alias_binding(self) -> None:
+        for overrides in (
+            {"MEMORY_QDRANT_LOGICAL_ALIAS": "drifting-logical-alias"},
+            {
+                "MEMORY_QDRANT_COLLECTION": self.values[
+                    "MEMORY_QDRANT_LOGICAL_ALIAS"
+                ]
+            },
+        ):
+            values = self.values | overrides
+            rendered = self.render(values)
+            self.assertEqual(rendered.returncode, 64)
+            self.assertEqual(rendered.stdout, "")
+
 
 class MemoryDeployWorkflowContractTests(unittest.TestCase):
     """The memory deploy workflow must never widen its bootstrap identity."""
@@ -310,6 +328,7 @@ class MemoryDeployWorkflowContractTests(unittest.TestCase):
                 "K8S_MEMORY_TOKEN",
                 "MEMORY_QDRANT_API_KEY",
                 "MEMORY_QDRANT_COLLECTION",
+                "MEMORY_QDRANT_LOGICAL_ALIAS",
                 "MEMORY_MCP_HTTP_TOKEN",
             },
         )

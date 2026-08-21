@@ -52,6 +52,7 @@ def jwt(secret_value: str, payload: dict[str, object]) -> str:
 
 qdrant_api_key = required("MEMORY_QDRANT_API_KEY")
 qdrant_collection = required("MEMORY_QDRANT_COLLECTION")
+qdrant_logical_alias = required("MEMORY_QDRANT_LOGICAL_ALIAS")
 mcp_http_token = required("MEMORY_MCP_HTTP_TOKEN")
 s3_bucket = required("S3_BUCKET")
 s3_access_key_id = required("S3_ACCESS_KEY_ID")
@@ -61,12 +62,31 @@ if missing:
     print(f"Missing required environment variables: {', '.join(sorted(missing))}", file=sys.stderr)
     raise SystemExit(64)
 
-collection_access = [{"collection": qdrant_collection, "access": "rw"}]
+expected_logical_alias = (
+    "mempalace_SolidStats_"
+    + hashlib.sha256(b"/data/palace").hexdigest()[:16]
+    + "_mempalace_drawers"
+)
+if qdrant_logical_alias != expected_logical_alias:
+    print("MEMORY_QDRANT_LOGICAL_ALIAS is not the deterministic runtime alias", file=sys.stderr)
+    raise SystemExit(64)
+if qdrant_collection == qdrant_logical_alias:
+    print("Qdrant physical collection and logical alias must differ", file=sys.stderr)
+    raise SystemExit(64)
+
 mempalace_qdrant_token = jwt(
-    qdrant_api_key, {"sub": "solidstats-memory-mempalace", "access": collection_access}
+    qdrant_api_key,
+    {
+        "sub": "solidstats-memory-mempalace",
+        "access": [{"collection": qdrant_logical_alias, "access": "rw"}],
+    },
 )
 backup_qdrant_token = jwt(
-    qdrant_api_key, {"sub": "solidstats-memory-backup", "access": collection_access}
+    qdrant_api_key,
+    {
+        "sub": "solidstats-memory-backup",
+        "access": [{"collection": qdrant_collection, "access": "rw"}],
+    },
 )
 observer_qdrant_token = jwt(
     qdrant_api_key,
