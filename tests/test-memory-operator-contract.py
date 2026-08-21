@@ -722,6 +722,9 @@ class MemoryOperatorContractTests(unittest.TestCase):
         pod = job["spec"]["template"]["spec"]
         self.assertFalse(pod["automountServiceAccountToken"])
         self.assertEqual(
+            "OnRootMismatch", pod["securityContext"]["fsGroupChangePolicy"]
+        )
+        self.assertEqual(
             "mempalace-data",
             pod["volumes"][0]["persistentVolumeClaim"]["claimName"],
         )
@@ -1011,6 +1014,11 @@ class MemoryOperatorContractTests(unittest.TestCase):
             ).hexdigest(),
             "embedding_cache_archive_bytes": archive.stat().st_size,
         }
+        cache_seed = runtime._runtime_cache_seed_pod()["spec"]
+        self.assertEqual(
+            "OnRootMismatch",
+            cache_seed["securityContext"]["fsGroupChangePolicy"],
+        )
         calls = []
         ready_attempts = 0
 

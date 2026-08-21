@@ -97,6 +97,12 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
             )
         )
         deployment = next(document for document in documents if document["kind"] == "Deployment")
+        self.assertEqual(
+            "OnRootMismatch",
+            deployment["spec"]["template"]["spec"]["securityContext"][
+                "fsGroupChangePolicy"
+            ],
+        )
         container = deployment["spec"]["template"]["spec"]["containers"][0]
         init_container = deployment["spec"]["template"]["spec"]["initContainers"][0]
         self.assertEqual(init_container["name"], "runtime-bootstrap")
@@ -259,6 +265,54 @@ class RuntimePalaceBootstrapContractTests(unittest.TestCase):
         self.assertEqual(5, parsed.version)
         self.assertEqual(BOOTSTRAP.PROBE_ID, str(parsed))
 
+    def test_regular_private_normalizes_owned_fs_group_mode_idempotently(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "marker"
+            marker.write_text("bound\n", encoding="ascii")
+            marker.chmod(0o660)
+
+            self.assertTrue(BOOTSTRAP.regular_private(marker))
+            self.assertEqual(0o600, marker.lstat().st_mode & 0o777)
+            self.assertTrue(BOOTSTRAP.regular_private(marker))
+            self.assertEqual(0o600, marker.lstat().st_mode & 0o777)
+
+    def test_regular_private_rejects_wrong_owner_mode_and_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "marker"
+            marker.write_text("bound\n", encoding="ascii")
+            marker.chmod(0o660)
+            details = marker.lstat()
+
+            for uid, gid, mode in (
+                (1001, 1000, 0o660),
+                (1000, 1001, 0o660),
+                (1000, 1000, 0o640),
+                (1000, 1000, 0o600 | 0o100),
+            ):
+                unsafe = os.stat_result(
+                    (
+                        (details.st_mode & ~0o777) | mode,
+                        details.st_ino,
+                        details.st_dev,
+                        details.st_nlink,
+                        uid,
+                        gid,
+                        details.st_size,
+                        details.st_atime,
+                        details.st_mtime,
+                        details.st_ctime,
+                    )
+                )
+                with patch.object(BOOTSTRAP.os, "fstat", return_value=unsafe):
+                    with self.assertRaises(BOOTSTRAP.BootstrapError):
+                        BOOTSTRAP.regular_private(marker)
+
+            link = root / "link"
+            link.symlink_to(marker)
+            with self.assertRaises(BOOTSTRAP.BootstrapError):
+                BOOTSTRAP.regular_private(link)
+
     @staticmethod
     def cache_archive(*, unsafe_link: bool = False) -> bytes:
         output = io.BytesIO()
@@ -326,6 +380,8 @@ class RuntimePalaceBootstrapContractTests(unittest.TestCase):
                 / "huggingface"
                 / BOOTSTRAP.MODEL_SEED_MARKER
             )
+            marker.chmod(0o660)
+            BOOTSTRAP.cache_ready(palace, archive_sha256)
             self.assertEqual(0o600, marker.stat().st_mode & 0o777)
             tokenizer = (
                 palace
@@ -379,8 +435,16 @@ class RuntimePalaceBootstrapContractTests(unittest.TestCase):
                 BOOTSTRAP.online_bootstrap(palace, 3)
                 self.assertEqual(backend.ids, ["one", "two", "three"])
                 self.assertEqual((backend.upserts, backend.deletes), (1, 1))
+                for name in ("qdrant_backend.json", "mempalace_embedder.json"):
+                    (palace / name).chmod(0o660)
                 BOOTSTRAP.online_bootstrap(palace, 3)
             self.assertEqual((backend.upserts, backend.deletes), (1, 1))
+            self.assertTrue(
+                all(
+                    (palace / name).stat().st_mode & 0o777 == 0o600
+                    for name in ("qdrant_backend.json", "mempalace_embedder.json")
+                )
+            )
             marker = json.loads((palace / "qdrant_backend.json").read_text())
             self.assertNotIn("collection_name", marker)
             self.assertEqual(

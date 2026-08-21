@@ -28,6 +28,8 @@ MODEL_REPOSITORY_ROOT = (
     "huggingface/hub/models--onnx-community--embeddinggemma-300m-ONNX"
 )
 MODEL_SEED_MARKER = "embeddinggemma-cache.sha256"
+RUNTIME_UID = 1000
+RUNTIME_GID = 1000
 
 
 class BootstrapError(RuntimeError):
@@ -48,10 +50,46 @@ def regular_private(path: Path, *, required_file: bool = True) -> bool:
         if required_file:
             raise BootstrapError("runtime metadata is unavailable") from None
         return False
+    if stat.S_ISLNK(details.st_mode) or not stat.S_ISREG(details.st_mode):
+        raise BootstrapError("runtime metadata is unsafe")
+    if os.geteuid() != RUNTIME_UID or os.getegid() != RUNTIME_GID:
+        raise BootstrapError("runtime metadata is unsafe")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise BootstrapError("runtime metadata is unsafe") from error
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (details.st_dev, details.st_ino)
+            or opened.st_uid != RUNTIME_UID
+            or opened.st_gid != RUNTIME_GID
+        ):
+            raise BootstrapError("runtime metadata is unsafe")
+        mode = stat.S_IMODE(opened.st_mode)
+        if mode == 0o660:
+            os.fchmod(descriptor, 0o600)
+            opened = os.fstat(descriptor)
+            mode = stat.S_IMODE(opened.st_mode)
+        if (
+            mode != 0o600
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != RUNTIME_UID
+            or opened.st_gid != RUNTIME_GID
+        ):
+            raise BootstrapError("runtime metadata is unsafe")
+    finally:
+        os.close(descriptor)
+    verified = path.lstat()
     if (
-        stat.S_ISLNK(details.st_mode)
-        or not stat.S_ISREG(details.st_mode)
-        or stat.S_IMODE(details.st_mode) != 0o600
+        stat.S_ISLNK(verified.st_mode)
+        or not stat.S_ISREG(verified.st_mode)
+        or (verified.st_dev, verified.st_ino) != (details.st_dev, details.st_ino)
+        or verified.st_uid != RUNTIME_UID
+        or verified.st_gid != RUNTIME_GID
+        or stat.S_IMODE(verified.st_mode) != 0o600
     ):
         raise BootstrapError("runtime metadata is unsafe")
     return True
