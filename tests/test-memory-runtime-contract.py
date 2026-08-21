@@ -18,6 +18,7 @@ import tempfile
 import tarfile
 import time
 import unittest
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
@@ -248,6 +249,15 @@ class RuntimePalaceBootstrapContractTests(unittest.TestCase):
         backend.config = self.Config()
         reference = object()
         return backend, reference, backend.config, self.Identity
+
+    def test_probe_id_is_a_deterministic_reserved_uuid(self) -> None:
+        self.assertEqual(
+            "40c30eca-8b79-5d62-a3e2-1f2effc7f84f",
+            BOOTSTRAP.PROBE_ID,
+        )
+        parsed = uuid.UUID(BOOTSTRAP.PROBE_ID)
+        self.assertEqual(5, parsed.version)
+        self.assertEqual(BOOTSTRAP.PROBE_ID, str(parsed))
 
     @staticmethod
     def cache_archive(*, unsafe_link: bool = False) -> bytes:

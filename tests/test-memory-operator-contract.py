@@ -694,6 +694,13 @@ class MemoryOperatorContractTests(unittest.TestCase):
         )
         container = job["spec"]["template"]["spec"]["containers"][0]
         environment = {entry["name"]: entry for entry in container["env"]}
+        self.assertEqual(
+            {
+                "requests": {"cpu": "250m", "memory": "1Gi"},
+                "limits": {"cpu": "1", "memory": "3Gi"},
+            },
+            container["resources"],
+        )
         self.assertEqual(["online"], container["args"])
         self.assertEqual(OPERATOR.OFFICIAL_MEMPALACE_IMAGE, container["image"])
         self.assertEqual("1", environment["HF_HUB_OFFLINE"]["value"])
@@ -758,7 +765,16 @@ class MemoryOperatorContractTests(unittest.TestCase):
             mock.patch.object(
                 runtime,
                 "_kubectl_json",
-                return_value={"spec": {"replicas": 0}},
+                side_effect=[
+                    {"spec": {"replicas": 0}},
+                    {
+                        "status": {
+                            "conditions": [
+                                {"type": "Complete", "status": "True"}
+                            ]
+                        }
+                    },
+                ],
             ),
             mock.patch.object(
                 runtime,
@@ -830,6 +846,11 @@ class MemoryOperatorContractTests(unittest.TestCase):
             ),
             mock.patch.object(runtime, "_seed_runtime_cache"),
             mock.patch.object(runtime, "_wait_mempalace_scaled_down"),
+            mock.patch.object(
+                runtime,
+                "_wait_runtime_bootstrap_job",
+                side_effect=OPERATOR.OperatorError("synthetic job failure"),
+            ),
             mock.patch.object(runtime, "_kubectl", side_effect=kubectl) as invoked,
         ):
             with self.assertRaisesRegex(OPERATOR.OperatorError, "bootstrap failed"):
@@ -844,6 +865,124 @@ class MemoryOperatorContractTests(unittest.TestCase):
                 "scale",
                 "deployment/mempalace",
                 "--replicas=0",
+            ],
+            commands,
+        )
+        self.assertIn(
+            [
+                "-n",
+                OPERATOR.NAMESPACE,
+                "scale",
+                "deployment/mempalace",
+                "--replicas=1",
+            ],
+            commands,
+        )
+
+    def test_runtime_bootstrap_failed_job_exits_immediately_and_cleans_up(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime.config = {
+            "probe_alias": "synthetic-logical-alias",
+            "target_collection": "synthetic-physical-collection",
+            "expected_count": 19534,
+        }
+        aliases = {}
+
+        def qdrant(method, _path, body=None):
+            if method == "GET":
+                return {
+                    "result": {
+                        "aliases": [
+                            {"alias_name": alias, "collection_name": collection}
+                            for alias, collection in aliases.items()
+                        ]
+                    }
+                }
+            action = body["actions"][0]
+            if "create_alias" in action:
+                create = action["create_alias"]
+                aliases[create["alias_name"]] = create["collection_name"]
+            else:
+                aliases.pop(action["delete_alias"]["alias_name"])
+            return {"status": "ok"}
+
+        config_map = {"kind": "ConfigMap", "metadata": {"name": "bootstrap"}}
+        job = {"kind": "Job", "metadata": {"name": "bootstrap-job"}}
+        failed_job = {
+            "status": {
+                "conditions": [
+                    {
+                        "type": "Failed",
+                        "status": "True",
+                        "reason": "BackoffLimitExceeded",
+                        "message": "must never enter value-free diagnostics",
+                    }
+                ]
+            }
+        }
+        failed_pods = {
+            "items": [
+                {
+                    "status": {
+                        "containerStatuses": [
+                            {
+                                "state": {
+                                    "terminated": {
+                                        "reason": "OOMKilled",
+                                        "message": "must never enter value-free diagnostics",
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        json_responses = [
+            {"spec": {"replicas": 1}},
+            failed_job,
+            failed_pods,
+        ]
+
+        with (
+            mock.patch.object(runtime, "_qdrant", side_effect=qdrant),
+            mock.patch.object(
+                runtime,
+                "_kubectl_json",
+                side_effect=json_responses,
+            ),
+            mock.patch.object(
+                runtime,
+                "_runtime_bootstrap_objects",
+                return_value=(config_map, job),
+            ),
+            mock.patch.object(runtime, "_seed_runtime_cache"),
+            mock.patch.object(runtime, "_wait_mempalace_scaled_down"),
+            mock.patch.object(runtime, "_kubectl") as kubectl,
+            mock.patch.object(OPERATOR.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(OPERATOR.OperatorError) as raised:
+                runtime.bootstrap_runtime_palace({})
+
+        cause = raised.exception.__cause__
+        self.assertIsInstance(cause, OPERATOR.OperatorError)
+        self.assertIn("status=Failed", str(cause))
+        self.assertIn("condition_reason=BackoffLimitExceeded", str(cause))
+        self.assertIn("termination_reason=OOMKilled", str(cause))
+        self.assertNotIn("must never enter", str(cause))
+        sleep.assert_not_called()
+        self.assertEqual({}, aliases)
+        commands = [call.args[0] for call in kubectl.call_args_list]
+        self.assertNotIn("wait", [part for command in commands for part in command])
+        self.assertIn(
+            [
+                "-n",
+                OPERATOR.NAMESPACE,
+                "delete",
+                "job",
+                "bootstrap-job",
+                "--wait=true",
+                "--timeout=120s",
             ],
             commands,
         )

@@ -88,6 +88,17 @@ OFFICIAL_AWS_CLI_IMAGE = (
 )
 RESTORE_RESERVE_BYTES = 1024 * 1024 * 1024
 EMBEDDINGGEMMA_REVISION = "5090578d9565bb06545b4552f76e6bc2c93e4a66"
+JOB_FAILURE_REASONS = frozenset(
+    {
+        "BackoffLimitExceeded",
+        "DeadlineExceeded",
+        "FailedIndexes",
+        "MaxFailedIndexesExceeded",
+    }
+)
+CONTAINER_TERMINATION_REASONS = frozenset(
+    {"ContainerCannotRun", "DeadlineExceeded", "Error", "OOMKilled"}
+)
 
 
 class OperatorError(ValueError):
@@ -1492,8 +1503,8 @@ class Runtime:
                                 "args": ["online"],
                                 "env": environment,
                                 "resources": {
-                                    "requests": {"cpu": "250m", "memory": "512Mi"},
-                                    "limits": {"cpu": "1", "memory": "1Gi"},
+                                    "requests": {"cpu": "250m", "memory": "1Gi"},
+                                    "limits": {"cpu": "1", "memory": "3Gi"},
                                 },
                                 "securityContext": {
                                     "allowPrivilegeEscalation": False,
@@ -1707,6 +1718,92 @@ class Runtime:
             time.sleep(2)
         raise OperatorError("runtime bootstrap workload did not stop")
 
+    @staticmethod
+    def _value_free_reason(value: object, allowed: frozenset[str]) -> str:
+        return value if isinstance(value, str) and value in allowed else "Unavailable"
+
+    def _runtime_bootstrap_failure_status(
+        self,
+        name: str,
+        failed_condition: Mapping[str, object],
+    ) -> str:
+        condition_reason = self._value_free_reason(
+            failed_condition.get("reason"), JOB_FAILURE_REASONS
+        )
+        termination_reasons: set[str] = set()
+        try:
+            pods = self._kubectl_json(
+                ["-n", NAMESPACE, "get", "pods", "-l", f"job-name={name}"],
+                timeout=30,
+            )
+            items = pods.get("items") if isinstance(pods, Mapping) else None
+            if isinstance(items, list):
+                for item in items:
+                    status = item.get("status") if isinstance(item, Mapping) else None
+                    containers = (
+                        status.get("containerStatuses")
+                        if isinstance(status, Mapping)
+                        else None
+                    )
+                    if not isinstance(containers, list):
+                        continue
+                    for container in containers:
+                        state = (
+                            container.get("state")
+                            if isinstance(container, Mapping)
+                            else None
+                        )
+                        terminated = (
+                            state.get("terminated")
+                            if isinstance(state, Mapping)
+                            else None
+                        )
+                        reason = (
+                            terminated.get("reason")
+                            if isinstance(terminated, Mapping)
+                            else None
+                        )
+                        termination_reasons.add(
+                            self._value_free_reason(
+                                reason, CONTAINER_TERMINATION_REASONS
+                            )
+                        )
+        except OperatorError:
+            termination_reasons.add("Unavailable")
+        termination_reason = "+".join(sorted(termination_reasons)) or "Unavailable"
+        return (
+            "status=Failed "
+            f"condition_reason={condition_reason} "
+            f"termination_reason={termination_reason}"
+        )
+
+    def _wait_runtime_bootstrap_job(self, name: str) -> None:
+        deadline = time.monotonic() + 900
+        while time.monotonic() < deadline:
+            remaining = max(1, min(30, int(deadline - time.monotonic())))
+            job = self._kubectl_json(
+                ["-n", NAMESPACE, "get", "job", name], timeout=remaining
+            )
+            status = job.get("status") if isinstance(job, Mapping) else None
+            conditions = status.get("conditions") if isinstance(status, Mapping) else None
+            if conditions is not None and not isinstance(conditions, list):
+                raise OperatorError("runtime bootstrap Job status is invalid")
+            if isinstance(conditions, list):
+                for condition in conditions:
+                    if not isinstance(condition, Mapping):
+                        raise OperatorError("runtime bootstrap Job status is invalid")
+                    if condition.get("status") != "True":
+                        continue
+                    if condition.get("type") == "Complete":
+                        return
+                    if condition.get("type") == "Failed":
+                        details = self._runtime_bootstrap_failure_status(
+                            name, condition
+                        )
+                        raise OperatorError(f"runtime bootstrap Job failed ({details})")
+            time.sleep(2)
+        raise OperatorError("runtime bootstrap Job timed out")
+
     def bootstrap_runtime_palace(self, payload: dict[str, object]) -> object:
         exact_mapping(payload, set(), "runtime bootstrap request is invalid")
         alias = str(self.config["probe_alias"])
@@ -1785,17 +1882,7 @@ class Runtime:
                 ["-n", NAMESPACE, "apply", "--server-side", "-f", "-"],
                 input_value=job,
             )
-            self._kubectl(
-                [
-                    "-n",
-                    NAMESPACE,
-                    "wait",
-                    "--for=condition=complete",
-                    f"job/{job['metadata']['name']}",
-                    "--timeout=900s",
-                ],
-                timeout=930,
-            )
+            self._wait_runtime_bootstrap_job(str(job["metadata"]["name"]))
             completed = True
         except Exception as error:
             failure = error
