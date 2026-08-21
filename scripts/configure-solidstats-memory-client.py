@@ -359,6 +359,28 @@ def _authorize_exact_states(prestate: Path, states: tuple[bytes, ...]) -> None:
     _atomic_replace(metadata, updated, mode)
 
 
+def capture_pre_retirement(
+    config: Path, result: Path, *, url: str, token_env: str, legacy_name: str = "mempalace"
+) -> bytes:
+    current, _ = _safe_file(config)
+    inspect_policy(current, url=url, token_env=token_env, require_policy=True)
+    without_legacy = _remove_registration(current, legacy_name)
+    unrelated = _remove_registration(without_legacy, CLIENT_NAME)
+    evidence = (
+        b"schema=solidstats-memory-client-pre-retirement/v1\n"
+        + b"sequence=650\nlegacy_client_present=true\nnew_client_live=true\n"
+        + b"client_policy_readback=true\nsolidstats_client_count=2\n"
+        + f"unrelated_sha256={_sha256(unrelated)}\n".encode("ascii")
+    )
+    if result.exists() and not result.is_symlink():
+        previous, _ = _safe_file(result)
+        if previous != evidence:
+            raise PolicyError("client pre-retirement evidence is drifted")
+    else:
+        _exclusive_write(result, evidence)
+    return unrelated
+
+
 def retire_transaction(
     config: Path,
     prestate: Path,
@@ -377,6 +399,10 @@ def retire_transaction(
     inspect_policy(current, url=url, token_env=token_env, require_policy=True)
     retired = _remove_registration(current, legacy_name)
     inspect_policy(retired, url=url, token_env=token_env, require_policy=True)
+    pre_retirement_result = result.with_name("client-pre-retirement.result")
+    unrelated_pre = capture_pre_retirement(
+        config, pre_retirement_result, url=url, token_env=token_env, legacy_name=legacy_name
+    )
     retirement_prestate = result.with_suffix(result.suffix + ".prestate")
     if retirement_prestate.exists() and not retirement_prestate.is_symlink():
         previous, _ = _safe_file(retirement_prestate)
@@ -411,14 +437,20 @@ def retire_transaction(
         if observed != retired:
             raise PolicyError("legacy client retirement read-back differs")
         inspect_policy(observed, url=url, token_env=token_env, require_policy=True)
+        unrelated_post = _remove_registration(observed, CLIENT_NAME)
+        if unrelated_post != unrelated_pre:
+            raise PolicyError("unrelated client registration bytes differ")
         stage_hook("policy")
         evidence = (
-            b"schema=solidstats-memory-client-retirement/v2\n"
-            + b"sequence=1\n"
+            b"schema=solidstats-memory-client-retirement/v3\n"
+            + b"sequence=700\npre_retirement_sequence=650\nrecovery_gate_sequence=600\n"
             + f"prestate_sha256={_sha256(current)}\n".encode("ascii")
             + f"retired_sha256={_sha256(retired)}\n".encode("ascii")
+            + f"unrelated_pre_sha256={_sha256(unrelated_pre)}\n".encode("ascii")
+            + f"unrelated_post_sha256={_sha256(unrelated_post)}\n".encode("ascii")
             + b"legacy_client_absent=true\nnew_client_live=true\n"
             + b"unrelated_unchanged=true\nretirement_readback=true\n"
+            + b"sole_solidstats_client=true\nsolidstats_client_count=1\n"
         )
         _exclusive_write(result, evidence)
         stage_hook("evidence")
@@ -441,7 +473,7 @@ def retire_transaction(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback", "authorize-current", "retire"))
+    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback", "authorize-current", "pre-retirement", "retire"))
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--prestate", type=Path)
     parser.add_argument("--name", default=CLIENT_NAME)
@@ -460,11 +492,11 @@ def main(argv: list[str] | None = None) -> int:
             raise PolicyError("target client name is invalid")
         if args.command in {"capture", "apply", "rollback", "authorize-current", "retire"} and args.prestate is None:
             raise PolicyError("client config prestate path is required")
-        if args.command in {"apply", "validate", "retire"} and (
+        if args.command in {"apply", "validate", "pre-retirement", "retire"} and (
             args.url is None or args.token_env is None
         ):
             raise PolicyError("target client binding is required")
-        if args.command == "retire" and args.result is None:
+        if args.command in {"pre-retirement", "retire"} and args.result is None:
             raise PolicyError("client retirement result path is required")
         if args.command == "capture":
             capture(args.config, args.prestate)
@@ -474,6 +506,11 @@ def main(argv: list[str] | None = None) -> int:
             apply(args.config, args.prestate, url=args.url, token_env=args.token_env)
         elif args.command == "validate":
             validate(args.config, url=args.url, token_env=args.token_env)
+        elif args.command == "pre-retirement":
+            capture_pre_retirement(
+                args.config, args.result, url=args.url, token_env=args.token_env,
+                legacy_name=args.legacy_name,
+            )
         elif args.command == "retire":
             if args.timeout_seconds < 1 or args.timeout_seconds > 3600:
                 raise PolicyError("client retirement timeout is invalid")

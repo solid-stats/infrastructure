@@ -197,7 +197,8 @@ operation_sequence() {
     recheck-backup-api-access) echo 240 ;; capture-backup-template-digest) echo 250 ;;
     prepare-guard-package) echo 260 ;; verify-guard-package) echo 270 ;;
     install-backup-guard) echo 280 ;; verify-backup-guard) echo 290 ;;
-    guard-self-test-active) echo 294 ;; test-backup-guard-suspension) echo 295 ;; prove-backup-consistency) echo 300 ;;
+    guard-self-test-active) echo 294 ;; test-backup-guard-suspension) echo 295 ;;
+    record-backup-writer-prestate) echo 297 ;; prove-backup-consistency) echo 300 ;;
     restore-backup-writer) echo 310 ;; suspend-backup-schedule) echo 320 ;;
     capture-boot-identity) echo 400 ;; reboot-host) echo 410 ;; verify-reboot-recovery) echo 420 ;;
     rollback-nginx) echo 500 ;; stop-new) echo 510 ;; start-legacy) echo 520 ;;
@@ -1501,14 +1502,24 @@ recheck_backup_api_access() {
 }
 
 record_backup_writer_prestate() {
-  local replicas
+  local replicas generation pod_digest
   replicas=$(new_replicas)
   [[ "${replicas}" =~ ^[1-9][0-9]?$ ]] || fatal
+  generation=$(kube_value get deployment "${MEMORY_DEPLOYMENT}" -o 'jsonpath={.metadata.generation}')
+  [[ "${generation}" =~ ^[1-9][0-9]*$ ]] || fatal
+  pod_digest=$(resource_identity mempalace)
+  [[ "${pod_digest}" =~ ^[0-9a-f]{64}$ ]] || fatal
   {
     printf 'schema=solidstats-memory-backup-writer-prestate/v1\n'
     printf 'config_sha256=%s\n' "${CONFIG_SHA256}"
     printf 'replicas=%s\n' "${replicas}"
+    printf 'generation=%s\n' "${generation}"
+    printf 'pod_identity_sha256=%s\n' "${pod_digest}"
   } | private_write "${RUN_ROOT}/backup-writer.prestate"
+  write_result record-backup-writer-prestate "recorded=true" \
+    "replica_count=${replicas}" "generation=${generation}" \
+    "pod_identity_sha256=${pod_digest}"
+  record_operation record-backup-writer-prestate complete
 }
 
 restore_backup_writer() {
@@ -1535,7 +1546,7 @@ prove_backup_consistency() {
   fi
   [[ "$(backup_schedule_state)" == "true:Forbid" ]] || fatal
   local job="solidstats-memory-backup-${RUN_ID_SHA256:0:12}" cleanup_required=1
-  record_backup_writer_prestate
+  require_operation_complete record-backup-writer-prestate
   record_operation prove-backup-consistency pending
   cleanup_backup_writer() {
     local status=$?
@@ -1590,7 +1601,7 @@ main() {
   [[ "$#" -ge 2 && "$#" -le 3 ]] || usage
   local operation="$1" run_id_sha256="$2" reconnect_timeout=""
   case "${operation}" in
-    capture-prestate|stop-legacy-start-new|install-nginx|rollback-nginx|stop-new|start-legacy|rearm-forward-cycle|restart-mempalace|restart-qdrant|measure-backup-api-egress|prove-backup-api-positive|prove-backup-api-network-negative|prove-backup-api-rbac-negative|recheck-backup-api-access|capture-backup-template-digest|prove-backup-consistency|restore-backup-writer|suspend-backup-schedule|capture-boot-identity|reboot-host|verify-legacy-behavior|verify-retained-collections|prepare-guard-package|verify-guard-package|install-backup-guard|verify-backup-guard|test-backup-guard-suspension|rollback-backup-guard|activate-backup-schedule)
+    capture-prestate|stop-legacy-start-new|install-nginx|rollback-nginx|stop-new|start-legacy|rearm-forward-cycle|restart-mempalace|restart-qdrant|measure-backup-api-egress|prove-backup-api-positive|prove-backup-api-network-negative|prove-backup-api-rbac-negative|recheck-backup-api-access|capture-backup-template-digest|record-backup-writer-prestate|prove-backup-consistency|restore-backup-writer|suspend-backup-schedule|capture-boot-identity|reboot-host|verify-legacy-behavior|verify-retained-collections|prepare-guard-package|verify-guard-package|install-backup-guard|verify-backup-guard|test-backup-guard-suspension|rollback-backup-guard|activate-backup-schedule)
       [[ "$#" -eq 2 ]] || usage
       ;;
     verify-reboot-recovery)
@@ -1650,6 +1661,7 @@ main() {
     prove-backup-api-rbac-negative) prove_api_control "${operation}" rbac-negative ;;
     recheck-backup-api-access) recheck_backup_api_access ;;
     capture-backup-template-digest) capture_backup_template_digest ;;
+    record-backup-writer-prestate) record_backup_writer_prestate ;;
     prove-backup-consistency) prove_backup_consistency ;;
     restore-backup-writer) restore_backup_writer ;;
     suspend-backup-schedule) set_backup_schedule "${operation}" true ;;

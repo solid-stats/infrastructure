@@ -2571,8 +2571,16 @@ class MemoryCutoverContractTests(unittest.TestCase):
         fields = dict(
             line.split("=", 1) for line in result.read_text().splitlines()
         )
-        self.assertEqual("solidstats-memory-client-retirement/v2", fields["schema"])
+        self.assertEqual("solidstats-memory-client-retirement/v3", fields["schema"])
         self.assertEqual("true", fields["unrelated_unchanged"])
+        self.assertEqual(fields["unrelated_pre_sha256"], fields["unrelated_post_sha256"])
+        self.assertEqual("true", fields["sole_solidstats_client"])
+        pre_fields = dict(
+            line.split("=", 1)
+            for line in (private / "client-pre-retirement.result").read_text().splitlines()
+        )
+        self.assertEqual("true", pre_fields["legacy_client_present"])
+        self.assertEqual("2", pre_fields["solidstats_client_count"])
 
     def test_cutover_self_test_exercises_reverse_order_rollback(self) -> None:
         result = subprocess.run(
@@ -2816,6 +2824,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
             run_root / "recheck-backup-api-access.result",
         ):
             path.chmod(0o600)
+        writer_prestate = run("record-backup-writer-prestate")
+        self.assertEqual(0, writer_prestate.returncode, writer_prestate.stderr.decode())
         consistency = run("prove-backup-consistency")
         self.assertNotEqual(0, consistency.returncode)
         self.assertEqual("running", new_state.read_text().strip())
@@ -3412,6 +3422,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "prove-backup-api-rbac-negative",
                 "prove-backup-consistency",
                 "prepare-guard-package",
+                "record-backup-writer-prestate",
                 "reboot-host",
                 "recheck-backup-api-access",
                 "rearm-forward-cycle",
@@ -3595,6 +3606,56 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn("grep -c '^PASS: remote cutover boundary acknowledged$'", body)
         self.assertIn("grep -c '^sequence='", body)
         self.assertNotIn('${result_count}" -eq 0', body)
+
+    def test_seal_mapping_uses_each_dedicated_source_without_proxy_claims(self) -> None:
+        source = COLLECTOR_PATH.read_text(encoding="utf-8")
+        self.assertNotIn('"writer_prestate_recorded": True', source)
+        self.assertNotIn('"legacy_retained_until_recovery": bool(probes', source)
+        for required in (
+            'remote-record-backup-writer-prestate.result',
+            'client-pre-retirement.result',
+            'client-retired.result',
+            'public-boundary.result',
+            'remote-verify-retained-collections.result',
+            'backup-activation.provenance.json',
+            '"requirements": {"iso_01": iso_01, "iso_03": iso_03, "ops_02": ops_02, "ops_03": ops_03, "ops_05": ops_05}',
+            '"prohibitions": {"no_early_legacy_removal": no_early, "no_public_qdrant": iso_03, "no_retained_data_deletion": no_retained}',
+        ):
+            self.assertIn(required, source)
+
+        dedicated = self.root / "dedicated.result"
+        dedicated.write_text(
+            "schema=solidstats-memory-public-boundary-evidence/v1\n"
+            "sequence=620\nqdrant_6333_blocked=true\nqdrant_6334_blocked=true\n"
+            "authenticated_mcp_boundary=true\n"
+            f"authenticated_mcp_probe_sha256={'a' * 64}\napi_policy_sha256={'b' * 64}\n",
+            encoding="ascii",
+        )
+        dedicated.chmod(0o600)
+        fields = {"sequence", "qdrant_6333_blocked", "qdrant_6334_blocked", "authenticated_mcp_boundary", "authenticated_mcp_probe_sha256", "api_policy_sha256"}
+        self.assertEqual("620", COLLECTOR.parse_exact_result(dedicated, "solidstats-memory-public-boundary-evidence/v1", fields)["sequence"])
+        dedicated.unlink()
+        with self.assertRaises(FileNotFoundError):
+            COLLECTOR.parse_exact_result(dedicated, "solidstats-memory-public-boundary-evidence/v1", fields)
+
+        for schema, source_fields in (
+            ("solidstats-memory-client-pre-retirement/v1", {"sequence", "legacy_client_present"}),
+            ("solidstats-memory-client-retirement/v3", {"sequence", "legacy_client_absent"}),
+            ("solidstats-memory-public-boundary-evidence/v1", {"sequence", "qdrant_6333_blocked"}),
+        ):
+            dedicated.write_text(
+                f"schema={schema}\n" + "\n".join(f"{key}=true" for key in source_fields) + "\n",
+                encoding="ascii",
+            )
+            dedicated.chmod(0o600)
+            values = COLLECTOR.parse_exact_result(dedicated, schema, source_fields)
+            self.assertEqual({"schema", *source_fields}, set(values))
+            dedicated.write_text(dedicated.read_text().replace(f"schema={schema}", "schema=wrong/v1"))
+            with self.assertRaises(ValueError):
+                COLLECTOR.parse_exact_result(dedicated, schema, source_fields)
+            dedicated.unlink()
+            with self.assertRaises(FileNotFoundError):
+                COLLECTOR.parse_exact_result(dedicated, schema, source_fields)
 
     def test_backup_activation_renderer_binds_source_render_and_template(self) -> None:
         source = self.root / "source.yaml"

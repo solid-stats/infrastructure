@@ -455,6 +455,7 @@ prove_backup_consistency() {
   run_remote_batch install-backup-guard
   run_remote_batch verify-backup-guard
   run_remote_batch test-backup-guard-suspension
+  run_remote_batch record-backup-writer-prestate
   if ! run_remote_batch prove-backup-consistency; then
     recover_backup_failure
     echo "FATAL: backup consistency failed; recovery was verified" >&2
@@ -553,10 +554,12 @@ activate_backup_schedule() {
   stage_guard_package
   run_remote_batch install-backup-guard
   run_remote_batch verify-backup-guard
+  record_pre_retirement_client_evidence
   collect_recovery_evidence
   ACTIVATION_SOURCE_PROMOTED=1
   commit_backup_activation
   run_remote_batch activate-backup-schedule
+  record_public_boundary_evidence
   if [[ "${CUTOVER_SELF_TEST:-}" != "1" ]]; then
     ACTIVATION_CLIENT_CHANGED=1
     retire_legacy_client
@@ -641,6 +644,40 @@ collect_recovery_evidence() {
     --evidence "${SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE}" >/dev/null
 }
 
+record_pre_retirement_client_evidence() {
+  required SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH
+  timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" pre-retirement \
+    --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
+    --result "${STATE_DIR}/client-pre-retirement.result" \
+    --legacy-name "${SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME}" \
+    --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
+    --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" >/dev/null
+}
+
+record_public_boundary_evidence() {
+  required SOLIDSTATS_MEMORY_PUBLIC_URL
+  local host forward_probe api_result policy_sha
+  forward_probe="${STATE_DIR}/probe-forward.json"
+  api_result="${STATE_DIR}/remote-recheck-backup-api-access.result"
+  [[ -f "${forward_probe}" && ! -L "${forward_probe}" &&
+    -f "${api_result}" && ! -L "${api_result}" ]] || return 1
+  host=$(python3 -c 'from urllib.parse import urlsplit; import sys; value=urlsplit(sys.argv[1]).hostname; print(value or "")' "${SOLIDSTATS_MEMORY_PUBLIC_URL}")
+  [[ "${host}" =~ ^[A-Za-z0-9.-]+$ ]] || return 1
+  timeout "${PROBE_TIMEOUT}" python3 "${PROBE_SCRIPT}" private-boundary \
+    --host "${host}" >/dev/null
+  policy_sha=$(sed -n 's/^policy_sha256=//p' "${api_result}")
+  [[ "${policy_sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  {
+    printf 'schema=solidstats-memory-public-boundary-evidence/v1\n'
+    printf 'sequence=620\nqdrant_6333_blocked=true\nqdrant_6334_blocked=true\n'
+    printf 'authenticated_mcp_boundary=true\n'
+    printf 'authenticated_mcp_probe_sha256=%s\n' "$(sha256sum "${forward_probe}" | cut -d' ' -f1)"
+    printf 'api_policy_sha256=%s\n' "${policy_sha}"
+  } >"${STATE_DIR}/public-boundary.result.tmp"
+  chmod 600 "${STATE_DIR}/public-boundary.result.tmp"
+  mv -f "${STATE_DIR}/public-boundary.result.tmp" "${STATE_DIR}/public-boundary.result"
+}
+
 prepare_backup_activation() {
   [[ "${CUTOVER_SELF_TEST:-}" != 1 ]] || return 0
   local source="${SCRIPT_DIR}/../k8s/memory/40-backup.yaml"
@@ -699,6 +736,7 @@ collect_cutover_seal() {
   timeout "${LOCAL_TIMEOUT}" python3 "${EVIDENCE_COLLECTOR}" \
     --schema seal --state-root "${STATE_DIR}" \
     --run-id "${SOLIDSTATS_MEMORY_RUN_ID}" \
+    --cutover-evidence "${SOLIDSTATS_MEMORY_CUTOVER_EVIDENCE}" \
     --predecessor "${SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE}" \
     --output "${SOLIDSTATS_MEMORY_CUTOVER_SEAL}"
   timeout "${LOCAL_TIMEOUT}" python3 "${PHASE21_VALIDATOR}" \
