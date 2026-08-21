@@ -281,7 +281,9 @@ def require_network_contract(docs: dict[str, str], source_has_placeholders: bool
 
 def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
     backup = docs["CronJob/solidstats-memory-backup"]
-    require("suspend: true" in backup, "backup must start suspended")
+    suspend = re.findall(r"(?m)^  suspend: (true|false)$", backup)
+    require(len(suspend) == 1, "backup suspend state must be one boolean")
+    require("concurrencyPolicy: Forbid" in backup, "backup concurrency must remain Forbid")
     require('"/collections/"' in backup and '"/snapshots"' in backup, "backup misses Qdrant snapshot API")
     require("backups/solidstats-memory/" in backup, "backup prefix is incorrect")
     require("mempalace-metadata.tar" in backup and "SHA256SUMS" in backup, "backup misses metadata or checksums")

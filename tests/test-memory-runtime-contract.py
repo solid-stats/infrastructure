@@ -172,7 +172,7 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
             )
         )
         cronjob = next(document for document in documents if document["kind"] == "CronJob")
-        self.assertTrue(cronjob["spec"]["suspend"])
+        self.assertIsInstance(cronjob["spec"]["suspend"], bool)
         self.assertEqual("Forbid", cronjob["spec"]["concurrencyPolicy"])
         pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
         self.assertFalse(pod["automountServiceAccountToken"])
@@ -1049,6 +1049,22 @@ class MemoryValidatorContractTests(unittest.TestCase):
         result = self.validate(manifest_dir, placeholders=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("endpoint", result.stderr)
+
+    def test_backup_suspend_state_accepts_only_one_boolean(self) -> None:
+        for replacement, expected in (
+            ("  suspend: true", 0),
+            ("  suspend: false", 0),
+            ("  suspend: enabled", 1),
+        ):
+            with self.subTest(replacement=replacement):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                path = manifest_dir / "40-backup.yaml"
+                source = path.read_text()
+                self.assertEqual(1, source.count("  suspend: true"))
+                path.write_text(source.replace("  suspend: true", replacement, 1))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertEqual(expected, int(result.returncode != 0), result.stderr)
 
     def test_validator_rejects_backup_control_plane_broadening(self) -> None:
         mutations = (
