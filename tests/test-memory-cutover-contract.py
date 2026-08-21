@@ -3523,6 +3523,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn("poll <= 30", operator)
         self.assertIn("Succeeded) status=0; break", operator)
         self.assertIn("Failed) status=1; break", operator)
+        self.assertIn("decoder.raw_decode(raw,index)", operator)
+        self.assertIn('value.get("kind")=="CronJob"', operator)
         self.assertIn("'    runAsNonRoot: true'", operator)
         self.assertIn("'    fsGroup: 1000'", operator)
         self.assertIn("'    fsGroupChangePolicy: OnRootMismatch'", operator)

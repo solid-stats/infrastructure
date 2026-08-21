@@ -1150,8 +1150,21 @@ verify_guard_package() {
   chmod 600 "${rendered}.tmp"
   mv -f "${rendered}.tmp" "${rendered}"
   digest=$("${PYTHON_PATH}" -c '
-import hashlib,json,sys
-value=json.load(open(sys.argv[1]))["spec"]["jobTemplate"]
+import hashlib,json,pathlib,sys
+raw=pathlib.Path(sys.argv[1]).read_text()
+decoder=json.JSONDecoder()
+values=[]
+index=0
+while index < len(raw):
+    while index < len(raw) and raw[index].isspace():
+        index += 1
+    if index < len(raw):
+        value,index=decoder.raw_decode(raw,index)
+        values.append(value)
+cronjobs=[value for value in values if value.get("kind")=="CronJob" and value.get("metadata",{}).get("name")=="solidstats-memory-backup"]
+if len(cronjobs)!=1:
+    raise SystemExit(1)
+value=cronjobs[0]["spec"]["jobTemplate"]
 raw=json.dumps(value,separators=(",",":"),sort_keys=True).encode()
 print(hashlib.sha256(raw).hexdigest())
 ' "${rendered}")
