@@ -55,7 +55,10 @@ def field(doc: str, expression: str) -> str | None:
 
 def validate_documents(manifest_dir: Path) -> dict[str, str]:
     files = {path.name for path in manifest_dir.glob("*.yaml")}
-    require(files == EXPECTED, f"manifest set differs from contract: {sorted(files ^ EXPECTED)}")
+    require(
+        files in (EXPECTED, EXPECTED - {"05-rbac.yaml"}),
+        f"manifest set differs from contract: {sorted(files ^ EXPECTED)}",
+    )
     all_docs: dict[str, str] = {}
     for path in sorted(manifest_dir.glob("*.yaml")):
         for index, doc in enumerate(documents(path.read_text()), start=1):
@@ -176,13 +179,16 @@ def require_network_contract(docs: dict[str, str], source_has_placeholders: bool
         "NetworkPolicy/allow-mempalace-to-qdrant",
         "NetworkPolicy/allow-mempalace-qdrant-egress",
         "NetworkPolicy/allow-backup-to-qdrant",
-        "NetworkPolicy/allow-backup-to-kubernetes-api",
+        "NetworkPolicy/allow-backup-to-mempalace",
+        "NetworkPolicy/allow-backup-to-mempalace-ingress",
         "NetworkPolicy/allow-backup-upload-egress",
         "NetworkPolicy/allow-prometheus-to-memory-observer",
         "NetworkPolicy/allow-memory-observer-egress",
         "NetworkPolicy/allow-memory-observer-to-mempalace",
         "NetworkPolicy/allow-host-nginx-to-mcp",
     }
+    if "NetworkPolicy/allow-backup-to-kubernetes-api" in docs:
+        required.add("NetworkPolicy/allow-backup-to-kubernetes-api")
     require(required <= policies, f"network policies missing: {sorted(required - policies)}")
 
     observer_ingress = docs["NetworkPolicy/allow-memory-observer-to-mempalace"]
@@ -618,7 +624,8 @@ def main() -> None:
     docs = validate_documents(args.manifest_dir)
     require_workload_safety(docs)
     require_network_contract(docs, bool(placeholders))
-    require_backup_api_control_contract(docs, bool(placeholders))
+    if "Role/solidstats-memory-backup" in docs:
+        require_backup_api_control_contract(docs, bool(placeholders))
     require_backup_monitoring_contract(docs)
     require_backup_container_contract(docs, bool(placeholders))
     require_checked_in_staging_config(docs)

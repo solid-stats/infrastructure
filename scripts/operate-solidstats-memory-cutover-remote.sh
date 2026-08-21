@@ -53,6 +53,23 @@ path_within() {
   [[ "${path}" == "${root}" || "${path}" == "${root}/"* ]]
 }
 
+ensure_private_directory() {
+  local path="$1" current=/ component
+  local -a components
+  valid_path_value "${path}" || fatal
+  IFS='/' read -r -a components <<<"${path#/}"
+  for component in "${components[@]}"; do
+    [[ -n "${component}" ]] || continue
+    current="${current%/}/${component}"
+    if [[ -e "${current}" || -L "${current}" ]]; then
+      [[ -d "${current}" && ! -L "${current}" ]] || fatal
+    else
+      mkdir -m 700 "${current}"
+    fi
+  done
+  [[ "$(stat -c '%a:%u' "${path}")" == "700:$(id -u)" ]] || fatal
+}
+
 load_config() {
   local config_path="$1"
   valid_path_value "${config_path}" || fatal
@@ -89,6 +106,7 @@ load_config() {
       nginx_available_path) NGINX_AVAILABLE="${value}" ;;
       nginx_enabled_path) NGINX_ENABLED="${value}" ;;
       command_timeout_seconds) COMMAND_TIMEOUT_SECONDS="${value}" ;;
+      backup_timeout_seconds) BACKUP_TIMEOUT_SECONDS="${value}" ;;
       legacy_user) LEGACY_USER="${value}" ;;
       legacy_socket) LEGACY_SOCKET="${value}" ;;
       legacy_container) LEGACY_CONTAINER="${value}" ;;
@@ -99,12 +117,14 @@ load_config() {
       *) fatal ;;
     esac
   done <"${config_path}"
-  [[ "${#seen[@]}" -eq 25 ]] || fatal
+  [[ "${#seen[@]}" -eq 26 ]] || fatal
   [[ "${CONFIG_SCHEMA_VALUE:-}" == "${CONFIG_SCHEMA}" ]] || fatal
   for value in "${STATE_ROOT:-}" "${NGINX_ROOT:-}" "${NGINX_AVAILABLE:-}" "${NGINX_ENABLED:-}"; do
     valid_path_value "${value}" || fatal
   done
   [[ "${COMMAND_TIMEOUT_SECONDS:-}" =~ ^[1-9][0-9]?$|^120$ ]] || fatal
+  [[ "${BACKUP_TIMEOUT_SECONDS:-}" =~ ^[1-9][0-9]{0,3}$ ]] || fatal
+  (( BACKUP_TIMEOUT_SECONDS <= 3600 )) || fatal
   [[ "${LEGACY_USER:-}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || fatal
   valid_path_value "${LEGACY_SOCKET:-}" || fatal
   [[ "${LEGACY_CONTAINER:-}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] || fatal
@@ -180,13 +200,15 @@ write_result() {
       [[ "${item}" =~ ^[a-z][a-z0-9_]{0,63}=(true|false|[0-9]+|[0-9a-f]{64}|service|endpoint)$ ]] || fatal
       printf '%s\n' "${item}"
     done
-  } | private_write "${RUN_ROOT}/${operation}.result"
+  } | private_write "$(operation_path "${operation}" result)"
 }
 
 require_operation_complete() {
+  local path
   [[ "$(operation_status "$1")" == complete ]] || fatal
-  require_regular_private_file "${RUN_ROOT}/$1.result"
-  [[ "$(result_field "${RUN_ROOT}/$1.result" config_sha256)" == "${CONFIG_SHA256}" ]] || fatal
+  path=$(operation_path "$1" result)
+  require_regular_private_file "${path}"
+  [[ "$(result_field "${path}" config_sha256)" == "${CONFIG_SHA256}" ]] || fatal
 }
 
 resource_identity() {
@@ -196,6 +218,26 @@ resource_identity() {
     -o 'jsonpath={range .items[*]}{.metadata.uid}{"\n"}{end}')
   [[ -n "${value}" ]] || fatal
   printf '%s' "${value}" | sha256sum | cut -d' ' -f1
+}
+
+qdrant_inventory() {
+  local value
+  value=$(timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
+    "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
+    exec deployment/mempalace -- python3 -c '
+import hashlib,json,os,urllib.request
+root=os.environ["MEMPALACE_QDRANT_URL"].rstrip("/")
+headers={"api-key":os.environ["MEMPALACE_QDRANT_API_KEY"]}
+def get(path):
+ req=urllib.request.Request(root+path,headers=headers)
+ with urllib.request.urlopen(req,timeout=20) as response:return json.load(response)
+collections=sorted(x["name"] for x in get("/collections")["result"]["collections"])
+aliases=sorted((x["alias_name"],x["collection_name"]) for x in get("/collections/aliases")["result"]["aliases"])
+raw=json.dumps({"collections":collections,"aliases":aliases},separators=(",",":"),sort_keys=True).encode()
+print(hashlib.sha256(raw).hexdigest(),len(collections),len(aliases))
+' 2>/dev/null) || fatal
+  [[ "${value}" =~ ^[0-9a-f]{64}[[:space:]][0-9]+[[:space:]][0-9]+$ ]] || fatal
+  printf '%s\n' "${value}"
 }
 
 legacy_state() {
@@ -322,17 +364,31 @@ field() {
 
 record_operation() {
   local operation="$1" status="$2"
-  printf '%s\n' "${status}" | private_write "${RUN_ROOT}/${operation}.state"
+  printf '%s\n' "${status}" | private_write "$(operation_path "${operation}" state)"
 }
 
 operation_status() {
-  local path="${RUN_ROOT}/$1.state"
+  local path
+  path=$(operation_path "$1" state)
   [[ -f "${path}" && ! -L "${path}" ]] || return 1
   [[ "$(stat -c '%a' -- "${path}")" == "600" ]] || fatal
   local value
   value=$(<"${path}")
   [[ "${value}" == "pending" || "${value}" == "complete" ]] || fatal
   printf '%s\n' "${value}"
+}
+
+cycle_scoped_operation() {
+  [[ "$1" =~ ^(stop-legacy-start-new|install-nginx|rollback-nginx|stop-new|start-legacy)$ ]]
+}
+
+operation_path() {
+  local operation="$1" suffix="$2"
+  if cycle_scoped_operation "${operation}"; then
+    printf '%s/cycle-%s-%s.%s\n' "${RUN_ROOT}" "${CURRENT_CYCLE}" "${operation}" "${suffix}"
+  else
+    printf '%s/%s.%s\n' "${RUN_ROOT}" "${operation}" "${suffix}"
+  fi
 }
 
 capture_nginx_state() {
@@ -632,6 +688,20 @@ rollback_nginx() {
   record_operation rollback-nginx complete
 }
 
+rearm_forward_cycle() {
+  [[ "$(operation_status rollback-nginx)" == complete ]] || fatal
+  [[ "$(operation_status stop-new)" == complete ]] || fatal
+  [[ "$(operation_status start-legacy)" == complete ]] || fatal
+  [[ "$(legacy_state)" == "$(field legacy_state)" ]] || fatal
+  [[ "$(new_replicas)" == "$(field new_replicas)" ]] || fatal
+  current_available_matches_prestate || fatal
+  current_enabled_matches_prestate || fatal
+  CURRENT_CYCLE=$((CURRENT_CYCLE + 1))
+  printf '%s\n' "${CURRENT_CYCLE}" | private_write "${RUN_ROOT}/cycle"
+  write_result rearm-forward-cycle "cycle=${CURRENT_CYCLE}"
+  record_operation rearm-forward-cycle complete
+}
+
 restart_workload() {
   local operation="$1" kind="$2" name="$3" selector="$4" before after
   local status=""
@@ -642,14 +712,33 @@ restart_workload() {
   fi
   [[ -z "${status}" ]] || fatal
   before=$(resource_identity "${selector}")
+  local inventory_before="" inventory_after="" inventory_digest collections aliases
+  if [[ "${selector}" == qdrant ]]; then
+    inventory_before=$(qdrant_inventory)
+  fi
   record_operation "${operation}" pending
   kube_quiet rollout restart "${kind}/${name}"
   kube_quiet rollout status "${kind}/${name}" \
     "--timeout=${COMMAND_TIMEOUT_SECONDS}s"
   after=$(resource_identity "${selector}")
   [[ "${before}" != "${after}" ]] || fatal
-  write_result "${operation}" \
-    "identity_changed=true" "before_sha256=${before}" "after_sha256=${after}"
+  if [[ "${selector}" == qdrant ]]; then
+    inventory_after=$(qdrant_inventory)
+    [[ "${inventory_before}" == "${inventory_after}" ]] || fatal
+    read -r inventory_digest collections aliases <<<"${inventory_after}"
+    (( collections >= 2 && aliases >= 1 )) || fatal
+    printf '%s\n' "${inventory_digest}" | private_write "${RUN_ROOT}/qdrant-inventory.sha256"
+  fi
+  if [[ "${selector}" == qdrant ]]; then
+    write_result "${operation}" \
+      "identity_changed=true" "before_sha256=${before}" "after_sha256=${after}" \
+      "inventory_before_sha256=${inventory_digest}" \
+      "inventory_after_sha256=${inventory_digest}" \
+      "collection_count=${collections}" "alias_count=${aliases}"
+  else
+    write_result "${operation}" \
+      "identity_changed=true" "before_sha256=${before}" "after_sha256=${after}"
+  fi
   record_operation "${operation}" complete
 }
 
@@ -659,6 +748,29 @@ backup_schedule_state() {
     -o 'jsonpath={.spec.suspend}:{.spec.concurrencyPolicy}')
   [[ "${value}" == "true:Forbid" || "${value}" == "false:Forbid" ]] || fatal
   printf '%s\n' "${value}"
+}
+
+backup_template_digest() {
+  local path="${RUN_ROOT}/backup-cronjob.json"
+  capture_kube_json "${path}" -n "${MEMORY_NAMESPACE}" get cronjob \
+    "${BACKUP_CRONJOB}" -o json
+  "${PYTHON_PATH}" -c '
+import hashlib,json,sys
+value=json.load(open(sys.argv[1]))["spec"]["jobTemplate"]
+raw=json.dumps(value,separators=(",",":"),sort_keys=True).encode()
+print(hashlib.sha256(raw).hexdigest())
+' "${path}"
+  rm -f "${path}"
+}
+
+capture_backup_template_digest() {
+  local digest
+  digest=$(backup_template_digest)
+  [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || fatal
+  printf '%s\n' "${digest}" | private_write "${RUN_ROOT}/backup-template.sha256"
+  write_result capture-backup-template-digest "template_sha256=${digest}" \
+    "schedule_suspended=true"
+  record_operation capture-backup-template-digest complete
 }
 
 set_backup_schedule() {
@@ -764,10 +876,122 @@ verify_retained_collections() {
   kube_quiet rollout status "statefulset/${QDRANT_STATEFULSET}" \
     "--timeout=${COMMAND_TIMEOUT_SECONDS}s"
   [[ "$(new_replicas)" == "${NEW_EXPECTED_REPLICAS}" ]] || fatal
+  local expected current digest collections aliases
+  require_regular_private_file "${RUN_ROOT}/qdrant-inventory.sha256"
+  expected=$(<"${RUN_ROOT}/qdrant-inventory.sha256")
+  current=$(qdrant_inventory)
+  read -r digest collections aliases <<<"${current}"
+  [[ "${digest}" == "${expected}" ]] || fatal
+  (( collections >= 2 && aliases >= 1 )) || fatal
   write_result verify-retained-collections \
     "qdrant_ready=true" "mempalace_available=true" \
+    "inventory_before_sha256=${expected}" "inventory_after_sha256=${digest}" \
+    "collection_count=${collections}" "alias_count=${aliases}" \
     "destructive_collection_calls=0"
   record_operation verify-retained-collections complete
+}
+
+install_backup_guard() {
+  if [[ "$(operation_status install-backup-guard 2>/dev/null || true)" == complete ]]; then
+    verify_backup_guard
+    require_operation_complete install-backup-guard
+    return 0
+  fi
+  local guard_source service_source timer_source config_source
+  guard_source="${SCRIPT_DIR}/guard-solidstats-memory-backup.sh"
+  service_source="${SCRIPT_DIR}/solidstats-memory-backup-guard.service"
+  timer_source="${SCRIPT_DIR}/solidstats-memory-backup-guard.timer"
+  config_source="${SCRIPT_DIR}/guard-solidstats-memory-backup.sh.config"
+  require_binary "${guard_source}"
+  require_regular_private_file "${config_source}"
+  [[ -f "${service_source}" && ! -L "${service_source}" &&
+    -f "${timer_source}" && ! -L "${timer_source}" ]] || fatal
+  local destination backup name
+  mkdir -p -m 700 "${RUN_ROOT}/guard-prestate"
+  if "${SYSTEMCTL_PATH}" is-enabled --quiet solidstats-memory-backup-guard.timer 2>/dev/null; then
+    printf 'true\n' | private_write "${RUN_ROOT}/guard-prestate/enabled"
+  else
+    printf 'false\n' | private_write "${RUN_ROOT}/guard-prestate/enabled"
+  fi
+  if "${SYSTEMCTL_PATH}" is-active --quiet solidstats-memory-backup-guard.timer 2>/dev/null; then
+    printf 'true\n' | private_write "${RUN_ROOT}/guard-prestate/active"
+  else
+    printf 'false\n' | private_write "${RUN_ROOT}/guard-prestate/active"
+  fi
+  for name in script service timer config; do
+    case "${name}" in
+      script) destination=/usr/local/libexec/solidstats-memory-backup-guard ;;
+      service) destination=/etc/systemd/system/solidstats-memory-backup-guard.service ;;
+      timer) destination=/etc/systemd/system/solidstats-memory-backup-guard.timer ;;
+      config) destination=/etc/solidstats-memory-backup-guard.conf ;;
+    esac
+    backup="${RUN_ROOT}/guard-prestate/${name}"
+    if [[ -e "${destination}" ]]; then
+      [[ -f "${destination}" && ! -L "${destination}" ]] || fatal
+      stat -c '%a' "${destination}" | private_write "${backup}.mode"
+      stat -c '%u:%g' "${destination}" | private_write "${backup}.owner"
+      cp --preserve=all "${destination}" "${backup}"
+      chmod 600 "${backup}"
+      printf 'file\n' | private_write "${backup}.state"
+    else
+      printf 'absent\n' | private_write "${backup}.state"
+    fi
+  done
+  install -m 0755 "${guard_source}" /usr/local/libexec/solidstats-memory-backup-guard
+  install -m 0644 "${service_source}" /etc/systemd/system/solidstats-memory-backup-guard.service
+  install -m 0644 "${timer_source}" /etc/systemd/system/solidstats-memory-backup-guard.timer
+  install -m 0600 "${config_source}" /etc/solidstats-memory-backup-guard.conf
+  run_quiet "${SYSTEMCTL_PATH}" daemon-reload
+  run_quiet "${SYSTEMCTL_PATH}" enable --now solidstats-memory-backup-guard.timer
+  verify_backup_guard
+  write_result install-backup-guard "installed=true" "prestate_retained=true"
+  record_operation install-backup-guard complete
+}
+
+rollback_backup_guard() {
+  local name destination state backup
+  run_quiet "${SYSTEMCTL_PATH}" disable --now solidstats-memory-backup-guard.timer
+  for name in script service timer config; do
+    case "${name}" in
+      script) destination=/usr/local/libexec/solidstats-memory-backup-guard ;;
+      service) destination=/etc/systemd/system/solidstats-memory-backup-guard.service ;;
+      timer) destination=/etc/systemd/system/solidstats-memory-backup-guard.timer ;;
+      config) destination=/etc/solidstats-memory-backup-guard.conf ;;
+    esac
+    state="${RUN_ROOT}/guard-prestate/${name}.state"
+    require_regular_private_file "${state}"
+    if [[ "$(<"${state}")" == file ]]; then
+      backup="${RUN_ROOT}/guard-prestate/${name}"
+      require_regular_private_file "${backup}"
+      require_regular_private_file "${backup}.mode"
+      require_regular_private_file "${backup}.owner"
+      [[ "$(<"${backup}.mode")" =~ ^[0-7]{3,4}$ ]] || fatal
+      [[ "$(<"${backup}.owner")" =~ ^[0-9]+:[0-9]+$ ]] || fatal
+      install -o "$(cut -d: -f1 "${backup}.owner")" \
+        -g "$(cut -d: -f2 "${backup}.owner")" \
+        -m "$(<"${backup}.mode")" "${backup}" "${destination}"
+    else
+      [[ "$(<"${state}")" == absent ]] || fatal
+      rm -f "${destination}"
+    fi
+  done
+  run_quiet "${SYSTEMCTL_PATH}" daemon-reload
+  if [[ "$(<"${RUN_ROOT}/guard-prestate/enabled")" == true ]]; then
+    run_quiet "${SYSTEMCTL_PATH}" enable solidstats-memory-backup-guard.timer
+  fi
+  if [[ "$(<"${RUN_ROOT}/guard-prestate/active")" == true ]]; then
+    run_quiet "${SYSTEMCTL_PATH}" start solidstats-memory-backup-guard.timer
+  fi
+  write_result rollback-backup-guard "prestate_restored=true"
+  record_operation rollback-backup-guard complete
+}
+
+verify_backup_guard() {
+  run_quiet "${SYSTEMCTL_PATH}" is-enabled --quiet solidstats-memory-backup-guard.timer
+  run_quiet "${SYSTEMCTL_PATH}" is-active --quiet solidstats-memory-backup-guard.timer
+  run_quiet "${SYSTEMCTL_PATH}" start solidstats-memory-backup-guard.service
+  write_result verify-backup-guard "enabled=true" "active=true" "self_test_passed=true"
+  record_operation verify-backup-guard complete
 }
 
 capture_kube_json() {
@@ -1035,7 +1259,7 @@ run_api_control() {
       timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
         "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
         delete serviceaccount "${DENIED_SERVICE_ACCOUNT}" \
-        --ignore-not-found=true --wait=true </dev/null >/dev/null 2>&1 || true
+        --ignore-not-found=true --wait=true </dev/null >/dev/null 2>&1 || fatal
       fatal
     fi
   fi
@@ -1178,6 +1402,8 @@ restore_backup_writer() {
 
 prove_backup_consistency() {
   require_operation_complete recheck-backup-api-access
+  require_operation_complete capture-backup-template-digest
+  [[ "$(backup_template_digest)" == "$(<"${RUN_ROOT}/backup-template.sha256")" ]] || fatal
   if [[ "$(operation_status prove-backup-consistency 2>/dev/null || true)" == complete ]]; then
     require_operation_complete prove-backup-consistency
     return 0
@@ -1187,27 +1413,44 @@ prove_backup_consistency() {
   record_backup_writer_prestate
   record_operation prove-backup-consistency pending
   cleanup_backup_writer() {
+    local status=$?
     trap - EXIT INT TERM
     if [[ "${cleanup_required}" == 1 ]]; then
-      restore_backup_writer || true
+      if ! (restore_backup_writer); then status=1; fi
+      if ! (set_backup_schedule suspend-backup-schedule true); then status=1; fi
     fi
+    exit "${status}"
   }
   trap cleanup_backup_writer EXIT INT TERM
   kube_quiet delete job "${job}" --ignore-not-found=true --wait=true
   kube_quiet create job "${job}" --from="cronjob/${BACKUP_CRONJOB}"
-  kube_quiet wait --for=condition=Complete "job/${job}" \
-    "--timeout=${COMMAND_TIMEOUT_SECONDS}s"
-  local log_sha
-  log_sha=$(timeout --signal=TERM --kill-after=5s "${COMMAND_TIMEOUT_SECONDS}s" \
+  timeout --signal=TERM --kill-after=5s "${BACKUP_TIMEOUT_SECONDS}s" \
     "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
-    logs "job/${job}" 2>/dev/null | sha256sum | cut -d' ' -f1) || fatal
+    wait --for=condition=Complete "job/${job}" \
+    "--timeout=${BACKUP_TIMEOUT_SECONDS}s" </dev/null >/dev/null 2>&1 || fatal
+  local log_sha metadata_sha logs="${RUN_ROOT}/backup-job.log"
+  timeout --signal=TERM --kill-after=5s "${BACKUP_TIMEOUT_SECONDS}s" \
+    "${KUBECTL_PATH}" --context "${KUBE_CONTEXT}" -n "${MEMORY_NAMESPACE}" \
+    logs "job/${job}" >"${logs}.tmp" 2>/dev/null || fatal
+  [[ "$(stat -c '%s' "${logs}.tmp")" -le 65536 ]] || fatal
+  chmod 600 "${logs}.tmp"
+  mv -f "${logs}.tmp" "${logs}"
+  grep -qx 'PASS: writer-restored=pass' "${logs}" || fatal
+  grep -qx 'PASS: behavior-oracle=pass' "${logs}" || fatal
+  metadata_sha=$(sed -n 's/^PASS: metadata-sha256=//p' "${logs}")
+  [[ "${metadata_sha}" =~ ^[0-9a-f]{64}$ ]] || fatal
+  log_sha=$(sha256sum "${logs}" | cut -d' ' -f1)
   [[ "${log_sha}" =~ ^[0-9a-f]{64}$ ]] || fatal
   restore_backup_writer
   cleanup_required=0
   trap - EXIT INT TERM
   write_result prove-backup-consistency \
     "exact_template=true" "job_complete=true" \
-    "writer_restored=true" "job_log_sha256=${log_sha}"
+    "writer_restored=true" "behavior_oracle=true" \
+    "zero_writers=true" "zero_pvc_consumers=true" \
+    "source_before_sha256=${metadata_sha}" \
+    "source_after_sha256=${metadata_sha}" "archive_sha256=${metadata_sha}" \
+    "job_log_sha256=${log_sha}"
   record_operation prove-backup-consistency complete
 }
 
@@ -1215,7 +1458,7 @@ main() {
   [[ "$#" -ge 2 && "$#" -le 3 ]] || usage
   local operation="$1" run_id_sha256="$2" reconnect_timeout=""
   case "${operation}" in
-    capture-prestate|stop-legacy-start-new|install-nginx|rollback-nginx|stop-new|start-legacy|restart-mempalace|restart-qdrant|measure-backup-api-egress|prove-backup-api-positive|prove-backup-api-network-negative|prove-backup-api-rbac-negative|recheck-backup-api-access|prove-backup-consistency|restore-backup-writer|suspend-backup-schedule|capture-boot-identity|reboot-host|verify-legacy-behavior|verify-retained-collections|activate-backup-schedule)
+    capture-prestate|stop-legacy-start-new|install-nginx|rollback-nginx|stop-new|start-legacy|rearm-forward-cycle|restart-mempalace|restart-qdrant|measure-backup-api-egress|prove-backup-api-positive|prove-backup-api-network-negative|prove-backup-api-rbac-negative|recheck-backup-api-access|capture-backup-template-digest|prove-backup-consistency|restore-backup-writer|suspend-backup-schedule|capture-boot-identity|reboot-host|verify-legacy-behavior|verify-retained-collections|install-backup-guard|verify-backup-guard|rollback-backup-guard|activate-backup-schedule)
       [[ "$#" -eq 2 ]] || usage
       ;;
     verify-reboot-recovery)
@@ -1234,13 +1477,17 @@ main() {
   load_config "${config_path}"
   CONFIG_SHA256=$(sha256sum -- "${config_path}" | cut -d' ' -f1)
   umask 077
-  mkdir -p -m 700 -- "${STATE_ROOT}"
-  [[ -d "${STATE_ROOT}" && ! -L "${STATE_ROOT}" ]] || fatal
-  chmod 700 -- "${STATE_ROOT}"
+  ensure_private_directory "${STATE_ROOT}"
   RUN_ROOT="${STATE_ROOT}/${run_id_sha256}"
-  mkdir -p -m 700 -- "${RUN_ROOT}"
-  [[ -d "${RUN_ROOT}" && ! -L "${RUN_ROOT}" ]] || fatal
-  chmod 700 -- "${RUN_ROOT}"
+  ensure_private_directory "${RUN_ROOT}"
+  if [[ -f "${RUN_ROOT}/cycle" ]]; then
+    require_regular_private_file "${RUN_ROOT}/cycle"
+    CURRENT_CYCLE=$(<"${RUN_ROOT}/cycle")
+    [[ "${CURRENT_CYCLE}" =~ ^[0-9]{1,3}$ ]] || fatal
+  else
+    CURRENT_CYCLE=0
+    printf '0\n' | private_write "${RUN_ROOT}/cycle"
+  fi
   PRESTATE="${RUN_ROOT}/prestate"
   PRESTATE_SHA="${RUN_ROOT}/prestate.sha256"
   NGINX_BACKUP="${RUN_ROOT}/nginx.available.backup"
@@ -1262,6 +1509,7 @@ main() {
     rollback-nginx) rollback_nginx ;;
     stop-new) restore_runtime_component "${operation}" new "$(field new_replicas)" ;;
     start-legacy) restore_runtime_component "${operation}" legacy "$(field legacy_state)" ;;
+    rearm-forward-cycle) rearm_forward_cycle ;;
     restart-mempalace) restart_workload "${operation}" deployment "${MEMORY_DEPLOYMENT}" mempalace ;;
     restart-qdrant) restart_workload "${operation}" statefulset "${QDRANT_STATEFULSET}" qdrant ;;
     measure-backup-api-egress) measure_backup_api_egress ;;
@@ -1269,6 +1517,7 @@ main() {
     prove-backup-api-network-negative) prove_api_control "${operation}" network-negative ;;
     prove-backup-api-rbac-negative) prove_api_control "${operation}" rbac-negative ;;
     recheck-backup-api-access) recheck_backup_api_access ;;
+    capture-backup-template-digest) capture_backup_template_digest ;;
     prove-backup-consistency) prove_backup_consistency ;;
     restore-backup-writer) restore_backup_writer ;;
     suspend-backup-schedule) set_backup_schedule "${operation}" true ;;
@@ -1277,6 +1526,9 @@ main() {
     verify-reboot-recovery) verify_reboot_recovery "${reconnect_timeout}" ;;
     verify-legacy-behavior) verify_legacy_behavior ;;
     verify-retained-collections) verify_retained_collections ;;
+    install-backup-guard) install_backup_guard ;;
+    verify-backup-guard) verify_backup_guard ;;
+    rollback-backup-guard) rollback_backup_guard ;;
     activate-backup-schedule)
       require_operation_complete restart-mempalace
       require_operation_complete restart-qdrant
@@ -1284,9 +1536,18 @@ main() {
       require_operation_complete prove-backup-consistency
       require_operation_complete verify-reboot-recovery
       require_operation_complete verify-retained-collections
+      require_operation_complete verify-backup-guard
+      require_operation_complete capture-backup-template-digest
+      [[ "$(backup_template_digest)" == "$(<"${RUN_ROOT}/backup-template.sha256")" ]] || fatal
       set_backup_schedule "${operation}" false
       ;;
   esac
+  local public_result
+  public_result=$(operation_path "${operation}" result)
+  if [[ -f "${public_result}" ]]; then
+    require_regular_private_file "${public_result}"
+    cat "${public_result}"
+  fi
   echo "PASS: remote cutover boundary acknowledged"
 }
 

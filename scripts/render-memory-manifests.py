@@ -19,6 +19,7 @@ EXPECTED = {
     "40-backup.yaml",
     "50-monitoring.yaml",
 }
+OPERATOR_ONLY = {"05-rbac.yaml"}
 
 
 def main() -> None:
@@ -31,7 +32,7 @@ def main() -> None:
     if args.output_dir.exists():
         raise ValueError(f"output directory already exists: {args.output_dir}")
     args.output_dir.mkdir()
-    for name in sorted(EXPECTED):
+    for name in sorted(EXPECTED - OPERATOR_ONLY):
         shutil.copyfile(source_files[name], args.output_dir / name)
 
 

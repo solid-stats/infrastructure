@@ -462,10 +462,12 @@ spec:
                 - |
                   import hashlib
                   import json
+                  import os
                   from pathlib import Path
                   import shutil
                   import tarfile
                   import time
+                  from urllib import request
 
                   work = Path("/work")
                   downloaded = work / "download"
@@ -547,7 +549,80 @@ spec:
                       time.sleep(1)
                   else:
                       raise RuntimeError("writer restoration was not confirmed")
-                  print("PASS: package verified and writer restored", flush=True)
+                  mcp_url = "http://mempalace:8765/mcp"
+                  token = os.environ["MEMPALACE_MCP_HTTP_TOKEN"]
+                  next_id = 1
+                  session = None
+
+                  def mcp(method, params):
+                      global next_id, session
+                      body = json.dumps({
+                          "jsonrpc": "2.0", "id": next_id,
+                          "method": method, "params": params,
+                      }, separators=(",", ":")).encode()
+                      headers = {
+                          "Authorization": "Bearer " + token,
+                          "Content-Type": "application/json",
+                          "Accept": "application/json, text/event-stream",
+                      }
+                      if session:
+                          headers["Mcp-Session-Id"] = session
+                          headers["MCP-Protocol-Version"] = "2025-06-18"
+                      operation = request.Request(mcp_url, body, headers, method="POST")
+                      with request.urlopen(operation, timeout=30) as response:
+                          raw = response.read(1024 * 1024)
+                          session = session or response.headers.get("Mcp-Session-Id")
+                      if raw.startswith(b"data:"):
+                          raw = next(line[5:].strip() for line in raw.splitlines() if line.startswith(b"data:"))
+                      payload = json.loads(raw)
+                      if payload.get("id") != next_id or "error" in payload:
+                          raise RuntimeError("behavior oracle MCP call failed")
+                      next_id += 1
+                      return payload["result"]
+
+                  initialized = mcp("initialize", {
+                      "protocolVersion": "2025-06-18", "capabilities": {},
+                      "clientInfo": {"name": "backup-oracle", "version": "1"},
+                  })
+                  if initialized.get("protocolVersion") != "2025-06-18":
+                      raise RuntimeError("behavior oracle negotiation failed")
+                  def tool_data(result):
+                      structured = result.get("structuredContent")
+                      if isinstance(structured, dict):
+                          return structured
+                      for item in result.get("content", []):
+                          if item.get("type") == "text":
+                              decoded = json.loads(item.get("text", "null"))
+                              if isinstance(decoded, dict):
+                                  return decoded
+                      raise RuntimeError("behavior oracle result is unstructured")
+
+                  marker = "phase21-backup-oracle:" + os.environ["POD_NAME"]
+                  created = mcp("tools/call", {"name": "mempalace_add_drawer", "arguments": {
+                      "wing": "infrastructure", "room": "migrations",
+                      "content": marker, "added_by": "backup-oracle",
+                  }})
+                  structured = tool_data(created)
+                  drawer_id = structured.get("drawer_id") or structured.get("id")
+                  if not drawer_id:
+                      raise RuntimeError("behavior oracle capture failed")
+                  read_back = tool_data(mcp("tools/call", {"name": "mempalace_get_drawer", "arguments": {"drawer_id": drawer_id}}))
+                  if read_back.get("content") != marker:
+                      raise RuntimeError("behavior oracle read-after-write failed")
+                  mcp("tools/call", {"name": "mempalace_delete_drawer", "arguments": {"drawer_id": drawer_id}})
+                  print("PASS: writer-restored=pass", flush=True)
+                  print("PASS: behavior-oracle=pass", flush=True)
+                  print("PASS: metadata-sha256=" + archive_digest, flush=True)
+              env:
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: MEMPALACE_MCP_HTTP_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: mempalace-runtime
+                      key: MEMPALACE_MCP_HTTP_TOKEN
               resources:
                 requests:
                   cpu: 50m

@@ -652,6 +652,7 @@ def validate_cutover_seal(
     payload: object,
     *,
     recovery_payload: object | None = None,
+    recovery_sha256: str | None = None,
 ) -> dict[str, object]:
     """Validate the final seal and its exact recovery predecessor."""
     validate_value_free_payload(payload)
@@ -687,7 +688,9 @@ def validate_cutover_seal(
         recovery = validate_recovery_evidence(recovery_payload)
         if recovery["run_id"] != run_id:
             raise Phase21ValidationError("cutover seal run identity differs")
-        expected = hashlib.sha256(canonical_json_bytes(recovery)).hexdigest()
+        expected = recovery_sha256 or hashlib.sha256(
+            canonical_json_bytes(recovery)
+        ).hexdigest()
         if digest != expected:
             raise Phase21ValidationError("cutover seal predecessor digest differs")
     if payload.get("verdict") != "pass":
@@ -875,6 +878,20 @@ def main(argv: list[str] | None = None) -> int:
         if not paths:
             raise Phase21ValidationError("evidence input is required")
         payloads = [_load_json(path) for path in paths]
+        if (
+            len(payloads) == 2
+            and payloads[0].get("schema") == RECOVERY_SCHEMA
+            and payloads[1].get("schema") == CUTOVER_SEAL_SCHEMA
+        ):
+            recovery = validate_recovery_evidence(payloads[0])
+            validate_cutover_seal(
+                payloads[1], recovery_payload=recovery,
+                recovery_sha256=sha256_file(paths[0]),
+            )
+            if payloads[1].get("recovery_evidence_sha256") != sha256_file(paths[0]):
+                raise Phase21ValidationError("seal recovery file digest differs")
+            print("PASS: Phase 21 recovery and seal chain validated")
+            return 0
         if len(payloads) == 1 and args.handoff is None and args.check_chain is None:
             if payloads[0].get("schema") == BACKUP_RESTORE_SCHEMA:
                 validate_backup_restore_evidence(payloads[0])
@@ -883,8 +900,9 @@ def main(argv: list[str] | None = None) -> int:
                 validate_recovery_evidence(payloads[0])
                 message = "PASS: Phase 21 recovery evidence validated"
             elif payloads[0].get("schema") == CUTOVER_SEAL_SCHEMA:
-                validate_cutover_seal(payloads[0])
-                message = "PASS: Phase 21 cutover seal validated"
+                raise Phase21ValidationError(
+                    "cutover seal requires paired recovery evidence"
+                )
             else:
                 validate_evidence_envelope(payloads[0])
                 message = "PASS: Phase 21 evidence validated"

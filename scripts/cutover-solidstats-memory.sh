@@ -23,6 +23,24 @@ required() {
   fi
 }
 
+require_private_root() {
+  local path="$1" current component
+  local -a components
+  [[ "${path}" == /* && "${path}" != *..* ]] || return 1
+  current=/
+  IFS='/' read -r -a components <<<"${path#/}"
+  for component in "${components[@]}"; do
+    [[ -n "${component}" ]] || continue
+    current="${current%/}/${component}"
+    if [[ -e "${current}" || -L "${current}" ]]; then
+      [[ -d "${current}" && ! -L "${current}" ]] || return 1
+    else
+      mkdir -m 700 "${current}" || return 1
+    fi
+  done
+  [[ "$(stat -c '%a:%u' "${path}")" == "700:$(id -u)" ]] || return 1
+}
+
 stage_index() {
   local candidate="$1"
   local index
@@ -157,6 +175,7 @@ run_remote_batch() {
     }
   fi
   local attempt max_attempts=3 retry_delay=0 call_timeout="${REMOTE_TIMEOUT}"
+  local output_path="${STATE_DIR}/remote-${operation}.result"
   if [[ "${operation}" == "verify-reboot-recovery" ]]; then
     [[ "${1:-}" =~ ^[1-9][0-9]{0,3}$ ]] || {
       echo "FATAL: reboot reconnect payload is invalid" >&2
@@ -180,7 +199,14 @@ run_remote_batch() {
       "${SOLIDSTATS_MEMORY_SSH_TARGET}" \
       "${SOLIDSTATS_MEMORY_REMOTE_OPERATOR}" \
       "${operation}" "${RUN_ID_SHA256}" "$@" \
-      <"${input_path}" >/dev/null 2>&1; then
+      <"${input_path}" >"${output_path}.tmp" 2>/dev/null; then
+      chmod 600 "${output_path}.tmp"
+      if ! grep -Eq '^PASS: remote cutover boundary acknowledged$' "${output_path}.tmp" ||
+        grep -Ev '^(PASS: remote cutover boundary acknowledged|schema=solidstats-memory-remote-operation-result/v1|operation=[a-z0-9-]+|config_sha256=[0-9a-f]{64}|[a-z][a-z0-9_]{0,63}=(true|false|[0-9]+|[0-9a-f]{64}|service|endpoint))$' "${output_path}.tmp" | grep -q .; then
+        rm -f "${output_path}.tmp"
+        return 1
+      fi
+      mv -f "${output_path}.tmp" "${output_path}"
       return 0
     fi
     if [[ "${attempt}" -lt "${max_attempts}" && "${retry_delay}" -gt 0 ]]; then
@@ -336,6 +362,7 @@ handle_cutover_failure() {
 }
 
 run_probe() {
+  local label="${1:-behavior}"
   if [[ "${CUTOVER_SELF_TEST:-}" == "1" ]]; then
     printf 'probe ' >>"${EVENT_LOG}"
     return 0
@@ -343,10 +370,13 @@ run_probe() {
   required SOLIDSTATS_MEMORY_PUBLIC_URL
   required SOLIDSTATS_MEMORY_TOKEN_ENV
   required SOLIDSTATS_MEMORY_RUN_ID
+  local evidence="${STATE_DIR}/probe-${label}.json"
+  [[ "${label}" =~ ^[a-z0-9-]{1,48}$ ]] || return 1
+  rm -f "${evidence}"
   timeout "${PROBE_TIMEOUT}" python3 "${PROBE_SCRIPT}" full \
     --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
     --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" \
-    --run-id "${SOLIDSTATS_MEMORY_RUN_ID}" >/dev/null
+    --run-id "${SOLIDSTATS_MEMORY_RUN_ID}" --evidence "${evidence}" >/dev/null
 }
 
 write_recovery_gate() {
@@ -375,9 +405,9 @@ restart_recovery() {
     return 1
   }
   run_remote_batch restart-mempalace
-  run_probe
+  run_probe restart-mempalace
   run_remote_batch restart-qdrant
-  run_probe
+  run_probe restart-qdrant
   write_recovery_gate restart
 }
 
@@ -400,19 +430,31 @@ prove_backup_api_access() {
 
 prove_backup_consistency() {
   require_recovery_gate backup-api
+  run_remote_batch capture-backup-template-digest
+  run_remote_batch install-backup-guard
+  run_remote_batch verify-backup-guard
   if ! run_remote_batch prove-backup-consistency; then
-    run_remote_batch restore-backup-writer || true
-    run_remote_batch suspend-backup-schedule || true
-    echo "FATAL: backup consistency failed; restoration was attempted" >&2
+    recover_backup_failure
+    echo "FATAL: backup consistency failed; recovery was verified" >&2
     return 1
   fi
-  if ! run_probe; then
-    run_remote_batch restore-backup-writer || true
-    run_remote_batch suspend-backup-schedule || true
-    echo "FATAL: write resumption behavior failed" >&2
+  if ! run_probe backup-resumption; then
+    recover_backup_failure
+    echo "FATAL: write resumption failed; recovery was verified" >&2
     return 1
   fi
   write_recovery_gate backup-consistency
+}
+
+recover_backup_failure() {
+  local failed=0
+  if ! run_remote_batch restore-backup-writer; then failed=1; fi
+  if ! run_remote_batch suspend-backup-schedule; then failed=1; fi
+  if ! run_probe backup-failure-recovery; then failed=1; fi
+  [[ "${failed}" -eq 0 ]] || {
+    echo "FATAL: mandatory backup recovery is incomplete" >&2
+    return 1
+  }
 }
 
 reboot_recovery() {
@@ -420,7 +462,8 @@ reboot_recovery() {
   run_remote_batch capture-boot-identity
   run_remote_batch reboot-host
   run_remote_batch verify-reboot-recovery "${RECONNECT_TIMEOUT}"
-  run_probe
+  run_remote_batch verify-backup-guard
+  run_probe reboot
   write_recovery_gate reboot
 }
 
@@ -428,10 +471,11 @@ exercise_live_rollback() {
   require_recovery_gate reboot
   rollback
   run_remote_batch verify-legacy-behavior
-  run_probe
+  run_probe rollback-legacy
+  run_remote_batch rearm-forward-cycle
   perform_cutover
   run_remote_batch verify-retained-collections
-  run_probe
+  run_probe forward
   write_recovery_gate rollback-forward
 }
 
@@ -441,15 +485,91 @@ activate_backup_schedule() {
   require_recovery_gate backup-consistency
   require_recovery_gate reboot
   require_recovery_gate rollback-forward
-  run_remote_batch activate-backup-schedule
+  if [[ "${CUTOVER_SELF_TEST:-}" == 1 ]]; then
+    run_remote_batch install-backup-guard
+    run_remote_batch verify-backup-guard
+    run_remote_batch activate-backup-schedule
+    write_recovery_gate activated
+    return 0
+  fi
+  run_remote_batch install-backup-guard
+  run_remote_batch verify-backup-guard
+  collect_recovery_evidence
+  prepare_backup_activation
+  commit_backup_activation
+  if ! run_remote_batch activate-backup-schedule; then
+    restore_suspended_backup_source
+    run_remote_batch suspend-backup-schedule
+    return 1
+  fi
   if [[ "${CUTOVER_SELF_TEST:-}" != "1" ]]; then
     if ! retire_legacy_client; then
-      run_remote_batch suspend-backup-schedule || true
+      if ! run_remote_batch suspend-backup-schedule; then
+        echo "FATAL: client retirement and schedule suspension both failed" >&2
+        return 1
+      fi
+      restore_suspended_backup_source
       echo "FATAL: client retirement failed; backup schedule was suspended" >&2
       return 1
     fi
   fi
+  collect_cutover_seal
   write_recovery_gate activated
+}
+
+collect_recovery_evidence() {
+  required SOLIDSTATS_MEMORY_CUTOVER_EVIDENCE
+  required SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE
+  timeout "${LOCAL_TIMEOUT}" python3 "${EVIDENCE_COLLECTOR}" \
+    --schema recovery --state-root "${STATE_DIR}" \
+    --run-id "${SOLIDSTATS_MEMORY_RUN_ID}" \
+    --predecessor "${SOLIDSTATS_MEMORY_CUTOVER_EVIDENCE}" \
+    --output "${SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE}"
+  timeout "${LOCAL_TIMEOUT}" python3 "${PHASE21_VALIDATOR}" \
+    --evidence "${SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE}" >/dev/null
+}
+
+prepare_backup_activation() {
+  local source="${SCRIPT_DIR}/../k8s/memory/40-backup.yaml"
+  required SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR
+  timeout "${LOCAL_TIMEOUT}" python3 "${SCRIPT_DIR}/validate-memory-manifests.py" \
+    --allow-operator-placeholders >/dev/null
+  timeout "${LOCAL_TIMEOUT}" python3 "${SCRIPT_DIR}/validate-memory-manifests.py" \
+    --manifest-dir "${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}" >/dev/null
+  BACKUP_SOURCE_PRESTATE="${STATE_DIR}/40-backup.suspended.yaml"
+  BACKUP_SOURCE_CANDIDATE="${STATE_DIR}/40-backup.active.yaml"
+  [[ "$(grep -c '^  suspend: true$' "${source}")" -eq 1 ]] || return 1
+  install -m 600 "${source}" "${BACKUP_SOURCE_PRESTATE}"
+  sed 's/^  suspend: true$/  suspend: false/' "${source}" >"${BACKUP_SOURCE_CANDIDATE}"
+  chmod 600 "${BACKUP_SOURCE_CANDIDATE}"
+  sha256sum "${source}" "${BACKUP_SOURCE_CANDIDATE}" >"${STATE_DIR}/backup-activation.digests"
+  chmod 600 "${STATE_DIR}/backup-activation.digests"
+}
+
+commit_backup_activation() {
+  local source="${SCRIPT_DIR}/../k8s/memory/40-backup.yaml"
+  [[ -f "${BACKUP_SOURCE_CANDIDATE}" && ! -L "${BACKUP_SOURCE_CANDIDATE}" ]] || return 1
+  install -m "$(stat -c '%a' "${source}")" "${BACKUP_SOURCE_CANDIDATE}" "${source}.tmp"
+  mv -f "${source}.tmp" "${source}"
+}
+
+restore_suspended_backup_source() {
+  local source="${SCRIPT_DIR}/../k8s/memory/40-backup.yaml"
+  [[ -f "${BACKUP_SOURCE_PRESTATE}" && ! -L "${BACKUP_SOURCE_PRESTATE}" ]] || return 1
+  install -m "$(stat -c '%a' "${source}")" "${BACKUP_SOURCE_PRESTATE}" "${source}.tmp"
+  mv -f "${source}.tmp" "${source}"
+}
+
+collect_cutover_seal() {
+  required SOLIDSTATS_MEMORY_CUTOVER_SEAL
+  timeout "${LOCAL_TIMEOUT}" python3 "${EVIDENCE_COLLECTOR}" \
+    --schema seal --state-root "${STATE_DIR}" \
+    --run-id "${SOLIDSTATS_MEMORY_RUN_ID}" \
+    --predecessor "${SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE}" \
+    --output "${SOLIDSTATS_MEMORY_CUTOVER_SEAL}"
+  timeout "${LOCAL_TIMEOUT}" python3 "${PHASE21_VALIDATOR}" \
+    --evidence "${SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE}" \
+    --evidence "${SOLIDSTATS_MEMORY_CUTOVER_SEAL}" >/dev/null
 }
 
 retire_legacy_client() {
@@ -475,8 +595,7 @@ seal_cutover() {
   required SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE
   required SOLIDSTATS_MEMORY_CUTOVER_SEAL
   timeout "${LOCAL_TIMEOUT}" python3 "${PHASE21_VALIDATOR}" \
-    --evidence "${SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE}" >/dev/null
-  timeout "${LOCAL_TIMEOUT}" python3 "${PHASE21_VALIDATOR}" \
+    --evidence "${SOLIDSTATS_MEMORY_RECOVERY_EVIDENCE}" \
     --evidence "${SOLIDSTATS_MEMORY_CUTOVER_SEAL}" >/dev/null
   write_recovery_gate sealed
 }
@@ -677,10 +796,13 @@ main() {
 
   required SOLIDSTATS_MEMORY_RUN_ID
   required SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT
+  require_private_root "${SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT}" || {
+    echo "FATAL: private run root is unsafe" >&2
+    return 1
+  }
   RUN_ID_SHA256=$(printf '%s' "${SOLIDSTATS_MEMORY_RUN_ID}" | sha256sum | cut -d' ' -f1)
   STATE_DIR="${SOLIDSTATS_MEMORY_PRIVATE_RUN_ROOT}/${RUN_ID_SHA256}"
-  mkdir -p -m 700 "${STATE_DIR}"
-  chmod 700 "${STATE_DIR}"
+  require_private_root "${STATE_DIR}" || return 1
   JOURNAL_PATH="${STATE_DIR}/cutover.journal"
   : "${SOLIDSTATS_MEMORY_ALIAS_PRESTATE:=${STATE_DIR}/alias-prestate.json}"
   export SOLIDSTATS_MEMORY_ALIAS_PRESTATE
@@ -695,6 +817,7 @@ main() {
   PROBE_SCRIPT="${SCRIPT_DIR}/probe-solidstats-memory.py"
   CLIENT_POLICY_SCRIPT="${SCRIPT_DIR}/configure-solidstats-memory-client.py"
   PHASE21_VALIDATOR="${SCRIPT_DIR}/validate-phase-21.py"
+  EVIDENCE_COLLECTOR="${SCRIPT_DIR}/collect-phase-21-recovery-evidence.py"
   CLIENT_CONFIG_PRESTATE="${STATE_DIR}/codex-config.prestate.toml"
   NGINX_TEMPLATE="${SCRIPT_DIR}/../config/nginx/sites-available/solidstats-memory-shared-cutover.patch.template"
 

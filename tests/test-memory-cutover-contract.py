@@ -2532,11 +2532,13 @@ class MemoryCutoverContractTests(unittest.TestCase):
             'if [[ " $* " == *" get deployment mempalace "* ]]; then replicas=$(cat "$state"); [[ "$replicas" == running ]] && replicas=1 || replicas=0; echo -n "$replicas"; '
             'elif [[ " $* " == *" get pods -l app.kubernetes.io/name=mempalace "* ]]; then cat "$mem_uid"; '
             'elif [[ " $* " == *" get pods -l app.kubernetes.io/name=qdrant "* ]]; then cat "$qdrant_uid"; '
+            'elif [[ " $* " == *" exec deployment/mempalace "* ]]; then printf "%064d 2 1\\n" 0; '
             'elif [[ " $* " == *" rollout restart deployment/mempalace "* ]]; then printf "mempalace-after\\n" >"$mem_uid"; printf "mempalace:restart\\n" >>"$log"; '
             'elif [[ " $* " == *" rollout restart statefulset/qdrant "* ]]; then printf "qdrant-after\\n" >"$qdrant_uid"; printf "qdrant:restart\\n" >>"$log"; '
             'elif [[ " $* " == *" scale deployment/mempalace "* ]]; then [[ " $* " == *"--replicas=1"* ]] && printf "running\\n" >"$state" || printf "stopped\\n" >"$state"; printf "new:scale\\n" >>"$log"; '
             'elif [[ " $* " == *" rollout status deployment/mempalace "* ]]; then [[ "$(cat "$state")" == running ]]; '
             'elif [[ " $* " == *" rollout status statefulset/qdrant "* ]]; then true; '
+            'elif [[ " $* " == *" get cronjob solidstats-memory-backup "* && " $* " == *" -o json "* ]]; then printf "{\\"spec\\":{\\"jobTemplate\\":{\\"spec\\":{}}}}"; '
             'elif [[ " $* " == *" get cronjob solidstats-memory-backup "* ]]; then printf "%s:Forbid" "$(cat "$schedule")"; '
             'elif [[ " $* " == *" patch cronjob solidstats-memory-backup "* ]]; then [[ " $* " == *"\\\"suspend\\\":false"* ]] && printf "false\\n" >"$schedule" || printf "true\\n" >"$schedule"; '
             'elif [[ " $* " == *" delete job solidstats-memory-backup-"* ]]; then true; '
@@ -2614,6 +2616,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     f"nginx_available_path={available}",
                     f"nginx_enabled_path={enabled}",
                     "command_timeout_seconds=10",
+                    "backup_timeout_seconds=30",
                     "legacy_user=palace",
                     "legacy_socket=/run/user/1001/docker.sock",
                     "legacy_container=solidstats-container",
@@ -2671,6 +2674,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
 
         self.assertEqual(0, run("suspend-backup-schedule").returncode)
         self.assertEqual("true", backup_schedule.read_text().strip())
+        self.assertEqual(0, run("capture-backup-template-digest").returncode)
 
         config_sha = hashlib.sha256(config.read_bytes()).hexdigest()
         (run_root / "recheck-backup-api-access.state").write_text(
@@ -2753,6 +2757,9 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 self.assertEqual(0, run("rollback-nginx").returncode)
                 self.assertEqual(0, run("stop-new").returncode)
                 self.assertEqual(0, run("start-legacy").returncode)
+        self.assertEqual(0, run("rollback-nginx").returncode)
+        self.assertEqual(0, run("stop-new").returncode)
+        self.assertEqual(0, run("start-legacy").returncode)
 
         race_run = "b" * 64
         run_id = race_run
@@ -3014,6 +3021,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "nginx_available_path",
                 "nginx_enabled_path",
                 "command_timeout_seconds",
+                "backup_timeout_seconds",
                 "legacy_user",
                 "legacy_socket",
                 "legacy_container",
@@ -3276,6 +3284,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "activate-backup-schedule",
                 "capture-boot-identity",
                 "capture-prestate",
+                "capture-backup-template-digest",
+                "install-backup-guard",
                 "install-nginx",
                 "measure-backup-api-egress",
                 "prove-backup-api-network-negative",
@@ -3284,6 +3294,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "prove-backup-consistency",
                 "reboot-host",
                 "recheck-backup-api-access",
+                "rearm-forward-cycle",
                 "restart-mempalace",
                 "restart-qdrant",
                 "restore-backup-writer",
@@ -3295,6 +3306,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "verify-legacy-behavior",
                 "verify-reboot-recovery",
                 "verify-retained-collections",
+                "verify-backup-guard",
             },
             emitted,
         )
