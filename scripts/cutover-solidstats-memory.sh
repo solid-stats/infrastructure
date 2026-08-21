@@ -428,9 +428,10 @@ exercise_live_rollback() {
   require_recovery_gate reboot
   rollback
   run_remote_batch verify-legacy-behavior
-  perform_cutover
   run_probe
+  perform_cutover
   run_remote_batch verify-retained-collections
+  run_probe
   write_recovery_gate rollback-forward
 }
 
