@@ -1313,8 +1313,10 @@ class Runtime:
             ["-n", NAMESPACE, "rollout", "status", "deployment/mempalace", "--timeout=300s"],
             timeout=330,
         )
-        health = self._qdrant("GET", "/healthz")
-        if not isinstance(health, Mapping):
+        inventory = self._qdrant("GET", "/collections")
+        result = inventory.get("result") if isinstance(inventory, Mapping) else None
+        collections = result.get("collections") if isinstance(result, Mapping) else None
+        if not isinstance(collections, list):
             raise OperatorError("isolated runtime is not ready")
         capacity = self._inspect_live_pvc_capacity()
         return {

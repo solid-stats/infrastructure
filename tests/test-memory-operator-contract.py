@@ -319,6 +319,29 @@ class MemoryOperatorContractTests(unittest.TestCase):
             self.assertIn("namespace: existing-runtime", rendered)
             self.assertNotIn(f"namespace: {OPERATOR.NAMESPACE}", rendered)
 
+    def test_runtime_inspection_uses_authenticated_json_inventory(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        capacity = {"pvc_capacity_bytes": 4 * 1024**3, "pvc_free_bytes": 3 * 1024**3}
+        with (
+            mock.patch.object(runtime, "_kubectl") as kubectl,
+            mock.patch.object(
+                runtime,
+                "_qdrant",
+                return_value={"result": {"collections": []}},
+            ) as qdrant,
+            mock.patch.object(
+                runtime,
+                "_inspect_live_pvc_capacity",
+                return_value=capacity,
+            ),
+        ):
+            result = runtime.inspect_runtime({})
+
+        self.assertEqual("GET", qdrant.call_args.args[0])
+        self.assertEqual("/collections", qdrant.call_args.args[1])
+        self.assertEqual(capacity["pvc_capacity_bytes"], result["pvc_capacity_bytes"])
+        self.assertEqual(2, kubectl.call_count)
+
     def test_client_state_matches_only_exact_solidstats_registrations(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
         entries = [
