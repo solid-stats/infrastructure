@@ -1742,7 +1742,12 @@ class MemoryCutoverContractTests(unittest.TestCase):
                         }
                 elif name == "mempalace_delete_drawer":
                     self.assertEqual("capture-fixture", arguments["drawer_id"])
-                    structured = {"deleted": True}
+                    structured = {
+                        "success": True,
+                        "drawer_id": "capture-fixture",
+                        "deleted_ids": ["capture-fixture"],
+                        "chunks_deleted": 1,
+                    }
                 else:
                     raise AssertionError(name)
                 return probe.HttpProbeResult(
@@ -1801,6 +1806,82 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 if mode == "valid" and method != "initialize"
             )
         )
+
+    def test_probe_accepts_only_exact_v350_delete_success_schema(self) -> None:
+        probe = self.load_probe()
+        drawer_id = "capture-fixture"
+        exact = {
+            "success": True,
+            "drawer_id": drawer_id,
+            "deleted_ids": [drawer_id, f"{drawer_id}_chunk_000001"],
+            "chunks_deleted": 2,
+        }
+        probe._validate_delete_result(exact, drawer_id=drawer_id)
+
+        near_misses = (
+            {"deleted": True},
+            {
+                "success": False,
+                "drawer_id": drawer_id,
+                "deleted_ids": [drawer_id],
+                "chunks_deleted": 1,
+            },
+            {
+                "success": True,
+                "drawer_id": "different-drawer",
+                "deleted_ids": [drawer_id],
+                "chunks_deleted": 1,
+            },
+            {
+                "success": True,
+                "drawer_id": drawer_id,
+                "chunks_deleted": 1,
+            },
+            {
+                "success": True,
+                "drawer_id": drawer_id,
+                "deleted_ids": [],
+                "chunks_deleted": 0,
+            },
+            {
+                "success": True,
+                "drawer_id": drawer_id,
+                "deleted_ids": [drawer_id],
+                "chunks_deleted": True,
+            },
+            {
+                "success": True,
+                "drawer_id": drawer_id,
+                "deleted_ids": [drawer_id],
+                "chunks_deleted": 2,
+            },
+            {
+                "success": True,
+                "drawer_id": drawer_id,
+                "deleted_ids": drawer_id,
+                "chunks_deleted": 1,
+            },
+            {
+                "success": True,
+                "drawer_id": drawer_id,
+                "deleted_ids": [drawer_id],
+                "chunks_deleted": 1,
+                "deleted": True,
+            },
+            {
+                "success": True,
+                "drawer_id": drawer_id,
+                "deleted_ids": [drawer_id],
+                "chunks_deleted": 1,
+                "error": "ambiguous",
+            },
+        )
+        for payload in near_misses:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(
+                    probe.ProbeError, "synthetic capture cleanup failed"
+                ):
+                    probe._validate_delete_result(payload, drawer_id=drawer_id)
 
     def test_probe_accepts_stateless_streamable_http_contract(self) -> None:
         probe = self.load_probe()

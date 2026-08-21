@@ -495,6 +495,34 @@ def _capture_shape(content: str) -> bool:
     )
 
 
+def _validate_delete_result(
+    result: Mapping[str, object], *, drawer_id: str
+) -> None:
+    """Require the exact successful MemPalace v3.5.0 delete response.
+
+    Source: https://github.com/MemPalace/mempalace/blob/v3.5.0/mempalace/mcp_server.py#L2133-L2166
+    """
+    expected_keys = {
+        "success",
+        "drawer_id",
+        "deleted_ids",
+        "chunks_deleted",
+    }
+    deleted_ids = result.get("deleted_ids")
+    chunks_deleted = result.get("chunks_deleted")
+    if (
+        set(result) != expected_keys
+        or result.get("success") is not True
+        or result.get("drawer_id") != drawer_id
+        or not isinstance(deleted_ids, list)
+        or not deleted_ids
+        or not all(isinstance(value, str) and value for value in deleted_ids)
+        or type(chunks_deleted) is not int
+        or chunks_deleted != len(deleted_ids)
+    ):
+        raise ProbeError("synthetic capture cleanup failed")
+
+
 def probe_auth_matrix(transport: Transport) -> tuple[dict[str, object], McpSession]:
     """Require missing/invalid rejection and a valid initialized session."""
     statuses: dict[str, int] = {}
@@ -636,9 +664,7 @@ def probe_behavior_matrix(
             session, "mempalace_delete_drawer", {"drawer_id": drawer_id}
         )
     )
-    cleanup_exact = deleted.get("deleted") is True
-    if not cleanup_exact:
-        raise ProbeError("synthetic capture cleanup failed")
+    _validate_delete_result(deleted, drawer_id=drawer_id)
     return {
         "tool_count": len(tools),
         "required_tool_count": len(REQUIRED_TOOLS),
