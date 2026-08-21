@@ -498,7 +498,7 @@ activation_compensate() {
   if [[ "${ACTIVATION_SOURCE_PROMOTED:-0}" == 1 ]] &&
     ! restore_suspended_backup_source; then failed=1; fi
   if [[ "${ACTIVATION_CLIENT_CHANGED:-0}" == 1 ]] &&
-    ! remove_new_client; then failed=1; fi
+    ! restore_retired_client; then failed=1; fi
   if ! run_remote_batch restore-backup-writer; then failed=1; fi
   if [[ "${failed}" -ne 0 ]]; then
     echo "FATAL: activation compensation is incomplete" >&2
@@ -572,8 +572,8 @@ activate_backup_schedule() {
   run_remote_batch activate-backup-schedule
   record_public_boundary_evidence
   if [[ "${CUTOVER_SELF_TEST:-}" != "1" ]]; then
-    ACTIVATION_CLIENT_CHANGED=1
     retire_legacy_client
+    ACTIVATION_CLIENT_CHANGED=1
   fi
   collect_cutover_seal
   write_recovery_gate activated
@@ -814,6 +814,19 @@ retire_legacy_client() {
     --url "${SOLIDSTATS_MEMORY_PUBLIC_URL}" \
     --token-env "${SOLIDSTATS_MEMORY_TOKEN_ENV}" \
     --timeout-seconds "${LOCAL_TIMEOUT%s}" >/dev/null
+}
+
+restore_retired_client() {
+  if [[ "${CUTOVER_SELF_TEST:-}" == "1" ]]; then
+    printf 'client ' >>"${EVENT_LOG}"
+    return 0
+  fi
+  required SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH
+  timeout "${LOCAL_TIMEOUT}" python3 "${CLIENT_POLICY_SCRIPT}" \
+    restore-retirement \
+    --config "${SOLIDSTATS_MEMORY_CODEX_CONFIG_PATH}" \
+    --result "${STATE_DIR}/client-retired.result" \
+    --legacy-name "${SOLIDSTATS_MEMORY_LEGACY_CLIENT_NAME}" >/dev/null
 }
 
 seal_cutover() {

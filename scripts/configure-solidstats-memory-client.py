@@ -505,22 +505,10 @@ def retire_transaction(
     _authorize_exact_states(prestate, (current, retired))
     stage_hook = stage or (lambda _name: None)
 
-    def external_remove(_expected: bytes) -> None:
-        try:
-            completed = subprocess.run(
-                ["codex", "mcp", "remove", legacy_name],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=timeout_seconds,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as error:
-            raise PolicyError("legacy client removal command failed") from error
-        if completed.returncode != 0:
-            raise PolicyError("legacy client removal command failed")
+    def exact_remove(expected: bytes) -> None:
+        _atomic_replace(config, expected, mode)
 
-    remove_callback = remove or external_remove
+    remove_callback = remove or exact_remove
     try:
         remove_callback(retired)
         stage_hook("removed")
@@ -563,9 +551,27 @@ def retire_transaction(
         raise PolicyError("client retirement transaction failed") from error
 
 
+def restore_retirement(
+    config: Path,
+    result: Path,
+    *,
+    legacy_name: str = "mempalace",
+) -> None:
+    current, mode = _safe_file(config)
+    retirement_prestate = result.with_suffix(result.suffix + ".prestate")
+    original, _ = _safe_file(retirement_prestate)
+    expected = _remove_registration(original, legacy_name)
+    if current != expected:
+        raise PolicyError("retired client state drift prevents compensation")
+    _atomic_replace(config, original, mode)
+    restored, _ = _safe_file(config)
+    if restored != original:
+        raise PolicyError("legacy client compensation read-back failed")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback", "rollback-current", "authorize-current", "pre-retirement", "retire"))
+    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback", "rollback-current", "authorize-current", "pre-retirement", "retire", "restore-retirement"))
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--prestate", type=Path)
     parser.add_argument("--name", default=CLIENT_NAME)
@@ -588,7 +594,7 @@ def main(argv: list[str] | None = None) -> int:
             args.url is None or args.token_env is None
         ):
             raise PolicyError("target client binding is required")
-        if args.command in {"rollback-current", "pre-retirement", "retire"} and args.result is None:
+        if args.command in {"rollback-current", "pre-retirement", "retire", "restore-retirement"} and args.result is None:
             raise PolicyError("client retirement result path is required")
         if args.command == "capture":
             capture(args.config, args.prestate)
@@ -626,6 +632,12 @@ def main(argv: list[str] | None = None) -> int:
                 token_env=args.token_env,
                 legacy_name=args.legacy_name,
                 timeout_seconds=args.timeout_seconds,
+            )
+        elif args.command == "restore-retirement":
+            restore_retirement(
+                args.config,
+                args.result,
+                legacy_name=args.legacy_name,
             )
         else:
             rollback(args.config, args.prestate)

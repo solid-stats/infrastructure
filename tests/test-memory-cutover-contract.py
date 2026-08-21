@@ -2658,6 +2658,12 @@ class MemoryCutoverContractTests(unittest.TestCase):
         )
         self.assertEqual("true", pre_fields["legacy_client_present"])
         self.assertEqual("2", pre_fields["solidstats_client_count"])
+        config.write_bytes(retired + b"# drift\n")
+        with self.assertRaises(CLIENT_POLICY.PolicyError):
+            CLIENT_POLICY.restore_retirement(config, result)
+        config.write_bytes(retired)
+        CLIENT_POLICY.restore_retirement(config, result)
+        self.assertEqual(current, config.read_bytes())
 
     def test_client_rollback_preserves_unrelated_current_config(self) -> None:
         private = self.root / "client-rollback-current"
@@ -3763,6 +3769,15 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertIn('cmp -s -- "${source}" "${BACKUP_SOURCE_CANDIDATE}"', commit)
         self.assertIn('--allow-operator-placeholders', commit)
         self.assertNotIn('--manifest-dir "${SOLIDSTATS_MEMORY_RENDERED_MANIFEST_DIR}"', commit)
+        activation_body = cutover[
+            cutover.index("record_public_boundary_evidence") :
+            cutover.index("collect_cutover_seal")
+        ]
+        self.assertLess(
+            activation_body.index("retire_legacy_client"),
+            activation_body.index("ACTIVATION_CLIENT_CHANGED=1"),
+        )
+        self.assertIn("restore_retired_client", cutover)
         self.assertIn(
             'BACKUP_REMOTE_TIMEOUT_SECONDS="${SOLIDSTATS_MEMORY_BACKUP_REMOTE_TIMEOUT_SECONDS:-3600}"',
             cutover,
