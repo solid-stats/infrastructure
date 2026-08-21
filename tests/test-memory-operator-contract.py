@@ -228,6 +228,34 @@ class MemoryOperatorContractTests(unittest.TestCase):
         state.assert_called_once_with()
         measured.assert_called_once_with()
 
+    def test_s3_probe_uses_checked_in_region_without_vendor_head_header(self) -> None:
+        runtime = object.__new__(OPERATOR.Runtime)
+        runtime._source_s3_values = mock.Mock(
+            return_value={
+                "S3_ACCESS_KEY_ID": "access-key",
+                "S3_SECRET_ACCESS_KEY": "secret-key",
+                "S3_BUCKET": "solidstats-backups",
+            }
+        )
+        head_response = mock.Mock()
+        signed_response = mock.MagicMock()
+        signed_response.read.return_value = b"<ListBucketResult/>"
+        with mock.patch.object(
+            OPERATOR.urllib_request,
+            "urlopen",
+            side_effect=[head_response, signed_response],
+        ) as urlopen:
+            runtime._probe_s3()
+
+        head_request = urlopen.call_args_list[0].args[0]
+        signed_request = urlopen.call_args_list[1].args[0]
+        self.assertEqual("HEAD", head_request.get_method())
+        self.assertIn(
+            f"/{OPERATOR.S3_REGION}/s3/aws4_request",
+            signed_request.get_header("Authorization"),
+        )
+        head_response.close.assert_called_once_with()
+
     def test_client_state_matches_only_exact_solidstats_registrations(self) -> None:
         runtime = object.__new__(OPERATOR.Runtime)
         entries = [

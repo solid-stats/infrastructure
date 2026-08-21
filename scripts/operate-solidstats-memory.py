@@ -73,6 +73,7 @@ PACKAGE_MEMBERS = (
 MEMORY_PUBLIC_URL = "https://solid-stats.ru/solidstats/mcp"
 LEGACY_SOLIDSTATS_MCP_URL = "https://89.223.124.200:8443/solidstats/mcp"
 S3_ENDPOINT = "https://s3.twcstorage.ru"
+S3_REGION = "ru-1"
 OFFICIAL_MEMPALACE_IMAGE = (
     "ghcr.io/mempalace/mempalace@"
     "sha256:d9d75fab4138a22d013a244bb4153fa1938830be3726cf826ffd02aeba73fe8e"
@@ -658,19 +659,16 @@ class Runtime:
         if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket):
             raise OperatorError("source S3 binding is incomplete")
         path = "/" + urllib_parse.quote(bucket, safe="")
-        region = ""
         try:
             response = urllib_request.urlopen(
                 urllib_request.Request(S3_ENDPOINT + path, method="HEAD"), timeout=20
             )
-            region = response.headers.get("x-amz-bucket-region", "")
             response.close()
-        except urllib_error.HTTPError as error:
-            region = error.headers.get("x-amz-bucket-region", "")
+        except urllib_error.HTTPError:
+            pass
         except OSError as error:
             raise OperatorError("source S3 endpoint is unreachable") from error
-        if not re.fullmatch(r"[a-z0-9-]{2,32}", region):
-            raise OperatorError("source S3 region could not be proven")
+        region = S3_REGION
         now = datetime.now(timezone.utc)
         timestamp = now.strftime("%Y%m%dT%H%M%SZ")
         short_date = now.strftime("%Y%m%d")
