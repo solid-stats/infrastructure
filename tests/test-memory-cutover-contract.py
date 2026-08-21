@@ -3512,6 +3512,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
         operator = REMOTE_CUTOVER_PATH.read_text(encoding="utf-8")
         self.assertIn('command: ["python3", "-c"]', operator)
         self.assertIn("urllib.request.urlopen(request,timeout=8", operator)
+        self.assertIn('key=lambda row: (row[0] != "service", row)', operator)
         self.assertNotIn("curl --config", operator)
         self.assertIn("'    runAsNonRoot: true'", operator)
         self.assertIn("'    fsGroup: 1000'", operator)

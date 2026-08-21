@@ -1271,7 +1271,7 @@ for item in slices.get("items", []):
         for raw in endpoint.get("addresses", []):
             address = ipaddress.ip_address(raw)
             rows.append(("endpoint", f"{address}/{address.max_prefixlen}", int(item_ports[0])))
-rows = sorted(set(rows))
+rows = sorted(set(rows), key=lambda row: (row[0] != "service", row))
 if len([row for row in rows if row[0] == "service"]) != 1 or not any(row[0] == "endpoint" for row in rows):
     raise SystemExit(1)
 path = pathlib.Path(sys.argv[3])
