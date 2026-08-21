@@ -1093,7 +1093,7 @@ url = "http://127.0.0.1:8765/mcp"
 next_id = 1
 session = None
 
-def mcp(method, params):
+def mcp(method, params, expected_error=None):
     global next_id, session
     body = json.dumps({
         "jsonrpc": "2.0", "id": next_id,
@@ -1118,21 +1118,23 @@ def mcp(method, params):
             if line.startswith(b"data:")
         )
     payload = json.loads(raw)
-    if payload.get("id") != next_id or "error" in payload:
+    if payload.get("id") != next_id:
         raise RuntimeError("legacy MCP call failed")
+    if "error" in payload:
+        error = payload.get("error", {})
+        if not (
+            expected_error == -32001
+            and error.get("code") == -32001
+            and error.get("message")
+            == "Peer MCP writer active; this server is read-only for mutating tools"
+        ):
+            raise RuntimeError("legacy MCP call failed")
+        next_id += 1
+        return {"expected_error": True}
+    if expected_error is not None:
+        raise RuntimeError("legacy MCP mutation unexpectedly succeeded")
     next_id += 1
     return payload["result"]
-
-def tool_data(result):
-    structured = result.get("structuredContent")
-    if isinstance(structured, dict):
-        return structured
-    for item in result.get("content", []):
-        if item.get("type") == "text":
-            decoded = json.loads(item.get("text", "null"))
-            if isinstance(decoded, dict):
-                return decoded
-    raise RuntimeError("legacy MCP result is unstructured")
 
 initialized = mcp("initialize", {
     "protocolVersion": "2025-06-18", "capabilities": {},
@@ -1144,61 +1146,38 @@ tools = mcp("tools/list", {}).get("tools", [])
 names = {item.get("name") for item in tools}
 required = {
     "mempalace_add_drawer",
-    "mempalace_get_drawer",
-    "mempalace_delete_drawer",
+    "mempalace_list_drawers",
 }
 if not required.issubset(names):
     raise RuntimeError("legacy MCP tools are incomplete")
 
-marker = "phase21-rollback-oracle:" + run_id
-drawer_id = None
-deleted = False
-try:
-    created = tool_data(mcp("tools/call", {
+read_result = mcp("tools/call", {
+    "name": "mempalace_list_drawers",
+    "arguments": {"wing": "infrastructure", "room": "migrations"},
+})
+blocked = mcp(
+    "tools/call",
+    {
         "name": "mempalace_add_drawer",
         "arguments": {
             "wing": "infrastructure", "room": "migrations",
-            "content": marker, "added_by": "rollback-oracle",
+            "content": "phase21-rollback-oracle:" + run_id,
+            "added_by": "rollback-oracle",
         },
-    }))
-    drawer_id = created.get("drawer_id") or created.get("id")
-    if not isinstance(drawer_id, str) or not drawer_id:
-        raise RuntimeError("legacy MCP capture failed")
-    read_back = tool_data(mcp("tools/call", {
-        "name": "mempalace_get_drawer",
-        "arguments": {"drawer_id": drawer_id},
-    }))
-    if read_back.get("content") != marker:
-        raise RuntimeError("legacy MCP read-after-write failed")
-    removed = tool_data(mcp("tools/call", {
-        "name": "mempalace_delete_drawer",
-        "arguments": {"drawer_id": drawer_id},
-    }))
-    if not (
-        set(removed) == {"success", "drawer_id", "deleted_ids", "chunks_deleted"}
-        and removed.get("success") is True
-        and removed.get("drawer_id") == drawer_id
-        and isinstance(removed.get("deleted_ids"), list)
-        and removed.get("deleted_ids")
-        and all(isinstance(item, str) and item for item in removed["deleted_ids"])
-        and isinstance(removed.get("chunks_deleted"), int)
-        and not isinstance(removed.get("chunks_deleted"), bool)
-        and removed["chunks_deleted"] == len(removed["deleted_ids"])
-    ):
-        raise RuntimeError("legacy MCP cleanup failed")
-    deleted = True
-finally:
-    if drawer_id and not deleted:
-        try:
-            mcp("tools/call", {
-                "name": "mempalace_delete_drawer",
-                "arguments": {"drawer_id": drawer_id},
-            })
-        except BaseException:
-            pass
+    },
+    expected_error=-32001,
+)
+if blocked != {"expected_error": True}:
+    raise RuntimeError("legacy MCP read-only gate failed")
 
 evidence = json.dumps(
-    {"drawer_id": drawer_id, "tool_count": len(tools)},
+    {
+        "mutation_blocked": True,
+        "read_sha256": hashlib.sha256(
+            json.dumps(read_result, separators=(",", ":"), sort_keys=True).encode()
+        ).hexdigest(),
+        "tool_count": len(tools),
+    },
     separators=(",", ":"), sort_keys=True,
 ).encode()
 print(hashlib.sha256(evidence).hexdigest())
