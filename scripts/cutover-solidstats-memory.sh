@@ -585,19 +585,41 @@ stage_guard_package() {
   [[ "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" =~ ^/[A-Za-z0-9._/-]+$ &&
     "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" != *..* &&
     "${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}" != *//* ]] || return 1
+  local package_root="${STATE_DIR}/guard-package-local"
+  if [[ -e "${package_root}" ]]; then
+    [[ -d "${package_root}" && ! -L "${package_root}" &&
+      "$(stat -c '%a:%u' "${package_root}")" == "700:$(id -u)" ]] || return 1
+  else
+    mkdir -m 700 "${package_root}"
+  fi
+  install -m 755 "${SCRIPT_DIR}/guard-solidstats-memory-backup.sh" \
+    "${package_root}/guard-solidstats-memory-backup.sh"
+  install -m 755 "${SCRIPT_DIR}/suspend-solidstats-memory-backup.sh" \
+    "${package_root}/suspend-solidstats-memory-backup.sh"
+  install -m 644 "${SCRIPT_DIR}/solidstats-memory-backup-guard.service" \
+    "${package_root}/solidstats-memory-backup-guard.service"
+  install -m 644 "${SCRIPT_DIR}/solidstats-memory-backup-guard.timer" \
+    "${package_root}/solidstats-memory-backup-guard.timer"
+  install -m 600 "${SOLIDSTATS_MEMORY_BACKUP_GUARD_CONFIG}" \
+    "${package_root}/guard-solidstats-memory-backup.sh.config"
+  install -m 600 "${BACKUP_RENDERED_CANDIDATE}" \
+    "${package_root}/40-backup.active.yaml"
+  install -m 600 "${STATE_DIR}/backup-activation.provenance.json" \
+    "${package_root}/backup-activation.provenance.json"
   local -a sources=(
-    "${SCRIPT_DIR}/guard-solidstats-memory-backup.sh"
-    "${SCRIPT_DIR}/suspend-solidstats-memory-backup.sh"
-    "${SCRIPT_DIR}/solidstats-memory-backup-guard.service"
-    "${SCRIPT_DIR}/solidstats-memory-backup-guard.timer"
-    "${SOLIDSTATS_MEMORY_BACKUP_GUARD_CONFIG}"
-    "${BACKUP_RENDERED_CANDIDATE}"
-    "${STATE_DIR}/backup-activation.provenance.json"
+    "${package_root}/guard-solidstats-memory-backup.sh"
+    "${package_root}/suspend-solidstats-memory-backup.sh"
+    "${package_root}/solidstats-memory-backup-guard.service"
+    "${package_root}/solidstats-memory-backup-guard.timer"
+    "${package_root}/guard-solidstats-memory-backup.sh.config"
+    "${package_root}/40-backup.active.yaml"
+    "${package_root}/backup-activation.provenance.json"
   )
   local source remote_dir="${SOLIDSTATS_MEMORY_REMOTE_STATE_ROOT}/${RUN_ID_SHA256}/guard-package"
   for source in "${sources[@]}"; do
     [[ -f "${source}" && ! -L "${source}" ]] || return 1
   done
+  [[ "$(find "${package_root}" -mindepth 1 -maxdepth 1 | wc -l)" -eq 7 ]] || return 1
   [[ "$(stat -c '%a' "${SOLIDSTATS_MEMORY_BACKUP_GUARD_CONFIG}")" == 600 ]] || return 1
   {
     sha256sum "${sources[0]}" | sed 's#  .*#  guard-solidstats-memory-backup.sh#'

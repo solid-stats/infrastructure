@@ -1108,12 +1108,23 @@ install_backup_guard() {
 
 prepare_guard_package() {
   local directory="${RUN_ROOT}/guard-package"
+  local name
   if [[ -e "${directory}" ]]; then
     [[ -d "${directory}" && ! -L "${directory}" &&
       "$(stat -c '%a:%u' "${directory}")" == "700:$(id -u)" ]] || fatal
   else
     mkdir -m 700 "${directory}"
   fi
+  for name in guard-solidstats-memory-backup.sh suspend-solidstats-memory-backup.sh \
+    solidstats-memory-backup-guard.service solidstats-memory-backup-guard.timer \
+    guard-solidstats-memory-backup.sh.config 40-backup.active.yaml \
+    backup-activation.provenance.json SHA256SUMS 40-backup.rendered.json \
+    candidate-template.sha256; do
+    if [[ -e "${directory}/${name}" ]]; then
+      [[ -f "${directory}/${name}" && ! -L "${directory}/${name}" ]] || fatal
+      rm -f -- "${directory}/${name}"
+    fi
+  done
   write_result prepare-guard-package "prepared=true"
   record_operation prepare-guard-package complete
 }

@@ -3499,6 +3499,9 @@ class MemoryCutoverContractTests(unittest.TestCase):
             self.assertIn(command, source)
         self.assertIn('stat -c \'%a:%u\' "${derived}"', source)
         self.assertIn('rm -f -- "${derived}"', source)
+        self.assertIn('install -m 755 "${SCRIPT_DIR}/guard-solidstats-memory-backup.sh"', source)
+        self.assertIn('install -m 644 "${SCRIPT_DIR}/solidstats-memory-backup-guard.service"', source)
+        self.assertIn('install -m 600 "${BACKUP_RENDERED_CANDIDATE}"', source)
         result = subprocess.run(
             ["bash", str(CUTOVER_PATH), "--self-test"],
             capture_output=True,
