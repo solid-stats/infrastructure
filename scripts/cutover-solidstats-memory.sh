@@ -5,7 +5,8 @@ set -Eeuo pipefail
 # The remote operator is invoked in coarse SSH batches and must implement:
 #   capture-prestate       record nginx bytes/symlink and workload state
 #   stop-legacy-start-new  stop legacy, start new, wait for private readiness
-#   install-nginx          backup, install, nginx -t, reload in one batch
+#   install-nginx          read template on stdin; backup, install, nginx -t,
+#                          and reload in one batch
 #   rollback-nginx         restore exact bytes/symlink, nginx -t, reload
 #   stop-new               restore the recorded new-workload pre-state
 #   start-legacy           restore the exact legacy-workload pre-state
@@ -116,6 +117,15 @@ run_remote_batch() {
   fi
   required SOLIDSTATS_MEMORY_SSH_TARGET
   required SOLIDSTATS_MEMORY_REMOTE_OPERATOR
+  local input_path="/dev/null"
+  if [[ "${operation}" == "install-nginx" ]]; then
+    input_path="${1:-}"
+    shift || true
+    [[ -f "${input_path}" && ! -L "${input_path}" ]] || {
+      echo "FATAL: nginx template input is unavailable" >&2
+      return 1
+    }
+  fi
   local attempt
   for attempt in 1 2 3; do
     if timeout "${REMOTE_TIMEOUT}" ssh \
@@ -126,7 +136,7 @@ run_remote_batch() {
       "${SOLIDSTATS_MEMORY_SSH_TARGET}" \
       "${SOLIDSTATS_MEMORY_REMOTE_OPERATOR}" \
       "${operation}" "${RUN_ID_SHA256}" "$@" \
-      </dev/null >/dev/null 2>&1; then
+      <"${input_path}" >/dev/null 2>&1; then
       return 0
     fi
   done
