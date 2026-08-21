@@ -99,7 +99,7 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
         backup = (ROOT / "k8s" / "memory" / "40-backup.yaml").read_text()
         self.assertIn("name: S3_ENDPOINT\n                  value: https://s3.twcstorage.ru", backup)
         self.assertIn("name: S3_PREFIX\n                  value: backups/solidstats-memory/", backup)
-        self.assertIn('"s3://${S3_BUCKET}/${S3_PREFIX}${backup_id}/"', backup)
+        self.assertIn("s3://$(S3_BUCKET)/$(S3_PREFIX)$(POD_NAME)/", backup)
         self.assertNotIn("key: S3_ENDPOINT", backup)
         self.assertNotIn("key: S3_PREFIX", backup)
 
@@ -170,18 +170,18 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
         self.assertEqual(600, sources[0]["serviceAccountToken"]["expirationSeconds"])
         self.assertNotIn("audience", sources[0]["serviceAccountToken"])
         self.assertEqual("kube-root-ca.crt", sources[1]["configMap"]["name"])
-        container = pod["containers"][0]
-        mount = next(item for item in container["volumeMounts"] if item["name"] == "kubernetes-api-access")
+        controller = pod["initContainers"][0]
+        mount = next(item for item in controller["volumeMounts"] if item["name"] == "kubernetes-api-access")
         self.assertTrue(mount["readOnly"])
-        command = container["args"][0]
-        self.assertNotIn('api_token="', command)
-        self.assertGreaterEqual(command.count('cat "${api_token_path}"'), 2)
+        command = controller["args"][0]
+        self.assertIn("api_token.read_text().strip()", command)
         for marker in (
-            "deployments/mempalace/scale",
+            '"deployments/mempalace"',
+            'scale_path = deployment_path + "/scale"',
             "original_generation",
             "original_writer_pod_count",
             "original_writer_pods_sha256",
-            'cd "$1"',
+            "canonical_tree_digest",
             "metadata_source_before_sha256",
             "metadata_source_after_sha256",
             "metadata_archive_sha256",
@@ -200,6 +200,7 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
         pod = cronjob["spec"]["jobTemplate"]["spec"]["template"]["spec"]
         init_containers = pod["initContainers"]
         containers = pod["containers"]
+        self.assertEqual(360, pod["terminationGracePeriodSeconds"])
         self.assertEqual(
             ["control-and-package", "upload-package", "download-package"],
             [container["name"] for container in init_containers],
@@ -221,6 +222,7 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
             controller["startupProbe"]["exec"]["command"][:2],
         )
         controller_source = controller["args"][0]
+        compile(controller_source, "backup-controller.py", "exec")
         for marker in (
             "package-ready",
             "verification-passed",
@@ -250,9 +252,18 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
         )
         self.assertEqual(["python3", "-c"], verifier["command"])
         verifier_source = verifier["args"][0]
+        compile(verifier_source, "backup-verifier.py", "exec")
+        verification_signal = verifier_source.index("verification_passed.write_text")
+        restoration_wait = verifier_source.index("if writer_restored.exists():")
+        success_exit = verifier_source.index("print(\"PASS:")
         self.assertLess(
-            verifier_source.index("verification-passed"),
-            verifier_source.index("writer-restored"),
+            verification_signal,
+            restoration_wait,
+        )
+        self.assertLess(restoration_wait, success_exit)
+        self.assertRegex(
+            controller_source,
+            r"restore_required = False\n\s+mark\(writer_restored\)",
         )
         self.assertNotIn("snapshot-and-package", [item["name"] for item in containers])
 
@@ -1005,6 +1016,27 @@ class MemoryValidatorContractTests(unittest.TestCase):
             (
                 "mountPath: /var/run/secrets/solidstats-memory\n                  readOnly: true",
                 "mountPath: /var/run/secrets/solidstats-memory\n                  readOnly: false",
+            ),
+        )
+        for original, replacement in mutations:
+            with self.subTest(replacement=replacement):
+                temporary, manifest_dir = self.copied_manifests()
+                self.addCleanup(temporary.cleanup)
+                path = manifest_dir / "40-backup.yaml"
+                source = path.read_text()
+                self.assertIn(original, source)
+                path.write_text(source.replace(original, replacement, 1))
+                result = self.validate(manifest_dir, placeholders=True)
+                self.assertNotEqual(0, result.returncode)
+
+    def test_validator_rejects_backup_container_role_regressions(self) -> None:
+        mutations = (
+            ('command: ["aws"]', 'command: ["/bin/sh", "-ec"]'),
+            ("restartPolicy: Always", "restartPolicy: Never"),
+            ("name: upload-package", "name: snapshot-and-package"),
+            (
+                "image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST",
+                "image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST",
             ),
         )
         for original, replacement in mutations:

@@ -276,7 +276,7 @@ def require_network_contract(docs: dict[str, str], source_has_placeholders: bool
 def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
     backup = docs["CronJob/solidstats-memory-backup"]
     require("suspend: true" in backup, "backup must start suspended")
-    require("/collections/${QDRANT_COLLECTION}/snapshots" in backup, "backup misses Qdrant snapshot API")
+    require('"/collections/"' in backup and '"/snapshots"' in backup, "backup misses Qdrant snapshot API")
     require("backups/solidstats-memory/" in backup, "backup prefix is incorrect")
     require("mempalace-metadata.tar" in backup and "SHA256SUMS" in backup, "backup misses metadata or checksums")
     for marker in (
@@ -284,17 +284,20 @@ def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
         "expirationSeconds: 600",
         "name: kube-root-ca.crt",
         "mountPath: /var/run/secrets/solidstats-memory",
-        'cat "${api_token_path}"',
+        "api_token.read_text().strip()",
         "readOnly: true",
-        "deployments/mempalace/scale",
+        '"deployments/mempalace"',
+        'scale_path = deployment_path + "/scale"',
         "original_generation",
         "original_writer_pod_count",
         "original_writer_pods_sha256",
         "metadata_source_before_sha256",
         "metadata_source_after_sha256",
         "metadata_archive_sha256",
-        'cd "$1"',
-        "restore_writer()",
+        "canonical_tree_digest",
+        "def restore_writer():",
+        "verification-passed",
+        "writer-restored",
     ):
         require(marker in backup, f"backup quiescence contract misses: {marker}")
     observer = docs["ConfigMap/solidstats-memory-observer"]
@@ -309,6 +312,85 @@ def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
     )
     require("MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST" in deployment or not PLACEHOLDER_RE.search(deployment), "observer image is not rendered")
     require("automountServiceAccountToken: false" in deployment and "port: 9108" in docs["Service/solidstats-memory-observer"], "observer boundary is incomplete")
+
+
+def require_backup_container_contract(
+    docs: dict[str, str], source_has_placeholders: bool
+) -> None:
+    backup = docs["CronJob/solidstats-memory-backup"]
+    for marker in (
+        "initContainers:",
+        "name: control-and-package",
+        "restartPolicy: Always",
+        "startupProbe:",
+        "name: upload-package",
+        "name: download-package",
+        "name: verify-and-release",
+    ):
+        require(marker in backup, f"backup native-sidecar contract misses: {marker}")
+    if source_has_placeholders:
+        require(
+            backup.count("image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST")
+            == 2,
+            "backup controller and verifier must use the approved MemPalace image",
+        )
+        require(
+            backup.count(
+                "image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST"
+            )
+            == 2,
+            "backup upload and download must use the approved AWS CLI image",
+        )
+    else:
+        def container_image(name: str) -> str | None:
+            return field(
+                backup,
+                rf"^\s*- name: {re.escape(name)}\n\s+image:\s*(.+)$",
+            )
+
+        controller_image = container_image("control-and-package")
+        verifier_image = container_image("verify-and-release")
+        upload_image = container_image("upload-package")
+        download_image = container_image("download-package")
+        require(
+            controller_image is not None
+            and controller_image == verifier_image
+            and upload_image is not None
+            and upload_image == download_image
+            and controller_image != upload_image,
+            "rendered backup image roles are invalid",
+        )
+    require(
+        backup.count('command: ["aws"]') == 2,
+        "AWS CLI containers must execute only the aws entrypoint",
+    )
+    require(
+        backup.count('command: ["python3", "-c"]') == 2,
+        "backup controller and verifier must execute local Python only",
+    )
+    require(
+        'command: ["/bin/sh"' not in backup
+        and "snapshot-and-package" not in backup,
+        "backup must not collapse into an unsupported single-container image",
+    )
+    upload = backup.split("- name: upload-package", 1)[1].split(
+        "- name: download-package", 1
+    )[0]
+    download = backup.split("- name: download-package", 1)[1].split(
+        "containers:", 1
+    )[0]
+    for block, direction in ((upload, "/work/upload"), (download, "/work/download")):
+        require(direction in block, f"AWS transfer contract misses: {direction}")
+        require(
+            'command: ["aws"]' in block
+            and "- s3" in block
+            and "- cp" in block
+            and "- --recursive" in block
+            and "- --only-show-errors" in block,
+            "AWS CLI transfer command is not exact",
+        )
+        for forbidden in ('/bin/sh', "curl ", "tar ", "find ", "sed ", "python"):
+            require(forbidden not in block, "AWS CLI container uses unsupported tooling")
 
 
 def require_backup_api_control_contract(
@@ -407,10 +489,11 @@ def require_operator_placeholder_positions(docs: dict[str, str]) -> list[str]:
         "StatefulSet/qdrant": {"storage: MEMORY_OPERATOR_MEASURED_QDRANT_PVC_SIZE": 1},
         "PersistentVolumeClaim/mempalace-data": {"storage: MEMORY_OPERATOR_MEASURED_MEMPALACE_PVC_SIZE": 1},
         "Deployment/mempalace": {"image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST": 2},
-        "CronJob/solidstats-memory-backup": [
-            "image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST",
-            "value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
-        ],
+        "CronJob/solidstats-memory-backup": {
+            "image: MEMORY_OPERATOR_SUPPLIED_MEMPALACE_IMAGE_DIGEST": 2,
+            "image: MEMORY_OPERATOR_SUPPLIED_BACKUP_UPLOADER_IMAGE_DIGEST": 2,
+            "value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME": 1,
+        },
         "Deployment/solidstats-memory-observer": [
             "image: MEMORY_OPERATOR_SUPPLIED_OBSERVER_IMAGE_DIGEST",
             "value: MEMORY_OPERATOR_CONFIRMED_QDRANT_COLLECTION_NAME",
@@ -440,14 +523,17 @@ def require_operator_placeholder_positions(docs: dict[str, str]) -> list[str]:
         "MEMORY_OPERATOR_MEASURED_KUBERNETES_API_EGRESS_PORT",
     }
     require(set(all_markers) == expected_markers, "operator placeholders differ from the ten evidence gates")
-    require(len(all_markers) == 12, "operator placeholders are missing, duplicated, or misplaced")
+    require(len(all_markers) == 15, "operator placeholders are missing, duplicated, or misplaced")
     return sorted(set(all_markers))
 
 
 def require_resolved_value_shapes(docs: dict[str, str]) -> None:
     for resource in ("StatefulSet/qdrant", "Deployment/mempalace", "Deployment/solidstats-memory-observer", "CronJob/solidstats-memory-backup"):
-        image = field(docs[resource], r"^\s+image:\s*(.+)$")
-        require(image is not None and IMAGE_RE.fullmatch(image) is not None, f"{resource} image must be an immutable digest")
+        images = re.findall(r"^\s+image:\s*(.+)$", docs[resource], flags=re.MULTILINE)
+        require(
+            bool(images) and all(IMAGE_RE.fullmatch(image) is not None for image in images),
+            f"{resource} images must be immutable digests",
+        )
     for resource in ("StatefulSet/qdrant", "PersistentVolumeClaim/mempalace-data"):
         size = field(docs[resource], r"^\s*storage:\s*(.+)$")
         require(size is not None and SIZE_RE.fullmatch(size) is not None, f"{resource} storage must be a positive Kubernetes quantity")
@@ -463,7 +549,10 @@ def require_checked_in_staging_config(docs: dict[str, str]) -> None:
     backup = docs["CronJob/solidstats-memory-backup"]
     require("name: S3_ENDPOINT\n                  value: https://s3.twcstorage.ru" in backup, "backup endpoint must be checked in")
     require("name: S3_PREFIX\n                  value: backups/solidstats-memory/" in backup, "backup prefix must be checked in")
-    require('"s3://${S3_BUCKET}/${S3_PREFIX}${backup_id}/"' in backup, "backup upload path is incorrect")
+    require(
+        "s3://$(S3_BUCKET)/$(S3_PREFIX)$(POD_NAME)/" in backup,
+        "backup upload path is incorrect",
+    )
     require("key: S3_ENDPOINT" not in backup and "key: S3_PREFIX" not in backup, "backup endpoint or prefix must not be secret-backed")
 
 
@@ -531,6 +620,7 @@ def main() -> None:
     require_network_contract(docs, bool(placeholders))
     require_backup_api_control_contract(docs, bool(placeholders))
     require_backup_monitoring_contract(docs)
+    require_backup_container_contract(docs, bool(placeholders))
     require_checked_in_staging_config(docs)
     require_rbac_and_workflow_contract(docs)
     require_no_secret_values(args.manifest_dir)
