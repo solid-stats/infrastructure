@@ -2708,6 +2708,80 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual(0, rolled_back.returncode, rolled_back.stderr)
         self.assertEqual(original, config.read_bytes())
 
+    def test_client_policy_upgrade_accepts_only_predecessor_and_successor(self) -> None:
+        private = self.root / "client-upgrade"
+        private.mkdir(mode=0o700)
+        config = private / "config.toml"
+        prestate = private / "upgrade.prestate.toml"
+        predecessor = (
+            b'model = "gpt-5.6-sol"\n\n'
+            b'[mcp_servers.solidstats_memory]\n'
+            b'url = "https://memory.example/solidstats/mcp"\n'
+            b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
+            b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
+            b'"mempalace_list_drawers","mempalace_get_drawer",'
+            b'"mempalace_check_duplicate","mempalace_add_drawer",'
+            b'"mempalace_delete_drawer"]\n'
+            b'\n[plugins.unrelated]\nenabled = true\n'
+        )
+        config.write_bytes(predecessor)
+        config.chmod(0o600)
+
+        def policy(command: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(CLIENT_POLICY_PATH),
+                    command,
+                    "--config",
+                    str(config),
+                    "--prestate",
+                    str(prestate),
+                    "--url",
+                    "https://memory.example/solidstats/mcp",
+                    "--token-env",
+                    "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+
+        validated_predecessor = policy("upgrade-validate-predecessor")
+        self.assertEqual(0, validated_predecessor.returncode, validated_predecessor.stderr)
+        upgraded = policy("upgrade")
+        self.assertEqual(0, upgraded.returncode, upgraded.stderr)
+        successor = config.read_bytes()
+        self.assertEqual(
+            (*CLIENT_POLICY.PREDECESSOR_TOOLS, "mempalace_update_drawer"),
+            CLIENT_POLICY.ENABLED_TOOLS,
+        )
+        self.assertIn(b'"mempalace_update_drawer"', successor)
+        self.assertEqual(1, successor.count(b"enabled_tools ="))
+        self.assertIn(b"[plugins.unrelated]", successor)
+
+        validated_successor = policy("upgrade-validate-successor")
+        self.assertEqual(0, validated_successor.returncode, validated_successor.stderr)
+        metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
+        before = {
+            path: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in (config, prestate, metadata)
+        }
+        replayed = policy("upgrade")
+        self.assertEqual(0, replayed.returncode, replayed.stderr)
+        self.assertEqual(
+            before,
+            {
+                path: (path.read_bytes(), path.stat().st_mtime_ns)
+                for path in (config, prestate, metadata)
+            },
+        )
+
+        rolled_back = policy("upgrade-rollback")
+        self.assertEqual(0, rolled_back.returncode, rolled_back.stderr)
+        self.assertEqual(predecessor, config.read_bytes())
+
     def test_client_policy_rejects_conflicts_duplicates_and_unsafe_files(self) -> None:
         private = self.root / "policy-rejections"
         private.mkdir(mode=0o700)
