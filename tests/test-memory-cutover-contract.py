@@ -88,6 +88,48 @@ STAGES = (
     "SEALED",
 )
 
+OFFICIAL_V350_UPDATE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "drawer_id": {"type": "string", "description": "ID of the drawer to update"},
+        "content": {
+            "type": "string",
+            "description": "New content (optional — omit to keep existing)",
+        },
+        "wing": {
+            "type": "string",
+            "description": "New wing (optional — omit to keep existing)",
+        },
+        "room": {
+            "type": "string",
+            "description": "New room (optional — omit to keep existing)",
+        },
+    },
+    "required": ["drawer_id"],
+}
+OFFICIAL_V350_UNCHUNKED_DRAWER = {
+    "drawer_id": "fixture-drawer",
+    "content": "private fixture content",
+    "wing": "infrastructure",
+    "room": "operations",
+    "metadata": {
+        "wing": "infrastructure",
+        "room": "operations",
+        "source_file": "private.md",
+        "added_by": "fixture",
+    },
+}
+OFFICIAL_V350_CHUNKED_DRAWER = {
+    **OFFICIAL_V350_UNCHUNKED_DRAWER,
+    "chunks": 2,
+    "chunk_ids": ["fixture-drawer_chunk_000000", "fixture-drawer_chunk_000001"],
+    "metadata": {
+        **OFFICIAL_V350_UNCHUNKED_DRAWER["metadata"],
+        "chunks": 2,
+        "chunk_ids": ["fixture-drawer_chunk_000000", "fixture-drawer_chunk_000001"],
+    },
+}
+
 
 class MemoryCutoverContractTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -2142,20 +2184,10 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual({}, stored)
 
     def test_client_surface_validator_requires_fresh_exact_ordered_schema(self) -> None:
-        schema = {
-            "type": "object",
-            "properties": {
-                "drawer_id": {"type": "string"},
-                "content": {"type": "string"},
-                "wing": {"type": "string"},
-                "room": {"type": "string"},
-            },
-            "required": ["drawer_id"],
-            "additionalProperties": False,
-        }
+        schema = deepcopy(OFFICIAL_V350_UPDATE_SCHEMA)
         result = PROBE.validate_client_tool_surface(
             source="fresh-codex-client",
-            tool_names=list(PROBE.REQUIRED_TOOLS),
+            tool_names=list(PROBE.CURATOR_CLIENT_TOOLS),
             update_schema=schema,
         )
         self.assertEqual(8, result["tool_count"])
@@ -2163,26 +2195,26 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertRegex(result["update_schema_sha256"], r"^[0-9a-f]{64}$")
 
         near_misses = (
-            ("raw-mcp-tools-list", list(PROBE.REQUIRED_TOOLS), schema),
+            ("raw-mcp-tools-list", list(PROBE.CURATOR_CLIENT_TOOLS), schema),
             (
                 "fresh-codex-client",
-                list(reversed(PROBE.REQUIRED_TOOLS)),
+                list(reversed(PROBE.CURATOR_CLIENT_TOOLS)),
                 schema,
             ),
-            ("fresh-codex-client", list(PROBE.REQUIRED_TOOLS[:-1]), schema),
+            ("fresh-codex-client", list(PROBE.REQUIRED_TOOLS), schema),
             (
                 "fresh-codex-client",
-                [*PROBE.REQUIRED_TOOLS, "mempalace_create_tunnel"],
+                [*PROBE.CURATOR_CLIENT_TOOLS, "mempalace_create_tunnel"],
                 schema,
             ),
             (
                 "fresh-codex-client",
-                list(PROBE.REQUIRED_TOOLS),
+                list(PROBE.CURATOR_CLIENT_TOOLS),
                 {**schema, "required": []},
             ),
             (
                 "fresh-codex-client",
-                list(PROBE.REQUIRED_TOOLS),
+                list(PROBE.CURATOR_CLIENT_TOOLS),
                 {
                     **schema,
                     "properties": {
@@ -2251,8 +2283,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
                                 stored["uat-drawer-fixture"] = {
                                     "drawer_id": "uat-drawer-fixture",
                                     "content": arguments["content"],
+                                    "wing": arguments["wing"],
                                     "room": arguments["room"],
-                                    "provenance": "synthetic-provenance",
                                     "metadata": {
                                         "wing": arguments["wing"],
                                         "room": arguments["room"],
@@ -2316,21 +2348,58 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     self.assertNotIn("private updated fixture", serialized)
                     self.assertNotIn("uat-drawer-fixture", serialized)
 
+    def test_v350_drawer_payload_fixtures_accept_only_official_union(self) -> None:
+        for fixture in (
+            OFFICIAL_V350_UNCHUNKED_DRAWER,
+            OFFICIAL_V350_CHUNKED_DRAWER,
+        ):
+            with self.subTest(chunked="chunks" in fixture):
+                self.assertEqual(
+                    fixture,
+                    PROBE._exact_drawer_payload(
+                        fixture, drawer_id="fixture-drawer"
+                    ),
+                )
+
+        mutations = []
+        for missing in ("drawer_id", "content", "wing", "room", "metadata"):
+            candidate = deepcopy(OFFICIAL_V350_UNCHUNKED_DRAWER)
+            candidate.pop(missing)
+            mutations.append((f"missing-{missing}", candidate))
+        for lone_chunk_key in ("chunks", "chunk_ids"):
+            candidate = deepcopy(OFFICIAL_V350_CHUNKED_DRAWER)
+            candidate.pop(lone_chunk_key)
+            mutations.append((f"lone-{lone_chunk_key}", candidate))
+        extra = deepcopy(OFFICIAL_V350_UNCHUNKED_DRAWER)
+        extra["provenance"] = "invented-top-level-field"
+        mutations.append(("invented-provenance", extra))
+        mismatched = deepcopy(OFFICIAL_V350_UNCHUNKED_DRAWER)
+        mismatched["metadata"]["wing"] = "other"
+        mutations.append(("mismatched-location", mismatched))
+        for name, candidate in mutations:
+            with self.subTest(name=name), self.assertRaises(PROBE.ProbeError):
+                PROBE._exact_drawer_payload(candidate, drawer_id="fixture-drawer")
+
     def test_approved_curator_correction_preserves_complete_drawer(self) -> None:
-        before = {
-            "drawer_id": PROBE.APPROVED_DRAWER_ID,
-            "content": "private drawer fixture",
-            "room": "operations",
-            "provenance": "private provenance fixture",
-            "metadata": {
-                "wing": "infrastructure",
-                "room": "operations",
-                "source": "private source fixture",
-                "nested": {"preserved": True},
-            },
-        }
+        before = deepcopy(OFFICIAL_V350_CHUNKED_DRAWER)
+        before["drawer_id"] = PROBE.APPROVED_DRAWER_ID
+        before["chunk_ids"] = ["private-chunk-0", "private-chunk-1"]
+        before["metadata"]["chunk_ids"] = ["private-chunk-0", "private-chunk-1"]
         after = deepcopy(before)
+        after["wing"] = "devops"
         after["metadata"]["wing"] = "devops"
+        unrelated = {"drawer_id": "other", "wing": "devops", "room": "operations"}
+        pre_inventories = {
+            "infrastructure": [{"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "infrastructure", "room": "operations"}],
+            "devops": [unrelated],
+            "infrastructure-archive": [{"drawer_id": "archive", "wing": "infrastructure-archive", "room": "operations"}],
+            "web": [{"drawer_id": "web", "wing": "web", "room": "decisions"}],
+        }
+        post_inventories = deepcopy(pre_inventories)
+        post_inventories["infrastructure"] = []
+        post_inventories["devops"].append(
+            {"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "devops", "room": "operations"}
+        )
         result = PROBE.validate_approved_correction(
             before,
             after,
@@ -2338,6 +2407,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "drawer_id": PROBE.APPROVED_DRAWER_ID,
                 "wing": "devops",
             },
+            pre_inventories=pre_inventories,
+            post_inventories=post_inventories,
         )
         self.assertTrue(result["approved_target_verified"])
         self.assertTrue(result["complete_invariants_preserved"])
@@ -2346,21 +2417,28 @@ class MemoryCutoverContractTests(unittest.TestCase):
         for private in (
             PROBE.APPROVED_DRAWER_ID,
             "private drawer fixture",
-            "private provenance fixture",
-            "private source fixture",
+            "private.md",
+            "private-chunk-0",
         ):
             self.assertNotIn(private, serialized)
 
     def test_curator_update_rejects_archive_and_unapproved_targets(self) -> None:
-        before = {
-            "drawer_id": PROBE.APPROVED_DRAWER_ID,
-            "content": "private drawer fixture",
-            "room": "operations",
-            "provenance": "private provenance fixture",
-            "metadata": {"wing": "infrastructure", "room": "operations"},
-        }
+        before = deepcopy(OFFICIAL_V350_UNCHUNKED_DRAWER)
+        before["drawer_id"] = PROBE.APPROVED_DRAWER_ID
         after = deepcopy(before)
+        after["wing"] = "devops"
         after["metadata"]["wing"] = "devops"
+        pre_inventories = {
+            "infrastructure": [{"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "infrastructure", "room": "operations"}],
+            "devops": [],
+            "infrastructure-archive": [{"drawer_id": "archive", "wing": "infrastructure-archive", "room": "operations"}],
+            "web": [{"drawer_id": "web", "wing": "web", "room": "decisions"}],
+        }
+        post_inventories = deepcopy(pre_inventories)
+        post_inventories["infrastructure"] = []
+        post_inventories["devops"] = [
+            {"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "devops", "room": "operations"}
+        ]
         mutations = (
             ({**before, "drawer_id": "different-drawer"}, after, {}),
             (
@@ -2383,6 +2461,26 @@ class MemoryCutoverContractTests(unittest.TestCase):
                         "wing": "devops",
                         **extra,
                     },
+                    pre_inventories=pre_inventories,
+                    post_inventories=post_inventories,
+                )
+
+        inventory_mutations = (
+            ("source-not-empty", lambda snapshots: snapshots["infrastructure"].append({"drawer_id": "residue", "wing": "infrastructure", "room": "operations"})),
+            ("approved-duplicate", lambda snapshots: snapshots["devops"].append(deepcopy(snapshots["devops"][0]))),
+            ("archive-changed", lambda snapshots: snapshots["infrastructure-archive"][0].update({"room": "changed"})),
+            ("unrelated-active-changed", lambda snapshots: snapshots["web"][0].update({"room": "changed"})),
+        )
+        for name, mutate in inventory_mutations:
+            candidate = deepcopy(post_inventories)
+            mutate(candidate)
+            with self.subTest(name=name), self.assertRaises(PROBE.ProbeError):
+                PROBE.validate_approved_correction(
+                    before,
+                    after,
+                    update_arguments={"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "devops"},
+                    pre_inventories=pre_inventories,
+                    post_inventories=candidate,
                 )
 
     def test_validate_evidence_cli_is_offline_and_aggregate_only(self) -> None:
@@ -2977,7 +3075,6 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b"mempalace_check_duplicate",
             b"mempalace_add_drawer",
             b"mempalace_delete_drawer",
-            b"mempalace_update_drawer",
         ):
             self.assertIn(allowed, configured)
         for forbidden in (b"tunnel", b"_kg_", b"diary", b"checkpoint"):
@@ -3058,9 +3155,10 @@ class MemoryCutoverContractTests(unittest.TestCase):
         self.assertEqual(0, upgraded.returncode, upgraded.stderr)
         successor = config.read_bytes()
         self.assertEqual(
-            (*CLIENT_POLICY.PREDECESSOR_TOOLS, "mempalace_update_drawer"),
-            CLIENT_POLICY.ENABLED_TOOLS,
+            (*CLIENT_POLICY.PHASE21_TOOLS, "mempalace_update_drawer"),
+            CLIENT_POLICY.CURATOR_CLIENT_TOOLS,
         )
+        self.assertEqual(CLIENT_POLICY.PHASE21_TOOLS, CLIENT_POLICY.ENABLED_TOOLS)
         self.assertIn(b'"mempalace_update_drawer"', successor)
         self.assertEqual(1, successor.count(b"enabled_tools ="))
         self.assertIn(b"[plugins.unrelated]", successor)
@@ -3096,8 +3194,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'url = "https://memory.example/solidstats/mcp"\n'
             b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
         )
-        predecessor = list(CLIENT_POLICY.PREDECESSOR_TOOLS)
-        successor = list(CLIENT_POLICY.ENABLED_TOOLS)
+        predecessor = list(CLIENT_POLICY.PHASE21_TOOLS)
+        successor = list(CLIENT_POLICY.CURATOR_CLIENT_TOOLS)
         policies: dict[str, bytes] = {
             "missing": b"",
             "empty": b"enabled_tools = []\n",
@@ -3195,7 +3293,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'url = "https://memory.example/solidstats/mcp"\n'
             b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
             b"enabled_tools = "
-            + json.dumps(list(CLIENT_POLICY.PREDECESSOR_TOOLS)).encode("ascii")
+            + json.dumps(list(CLIENT_POLICY.PHASE21_TOOLS)).encode("ascii")
             + b"\n"
         )
         config.write_bytes(predecessor)
@@ -3519,7 +3617,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
-            b'"mempalace_delete_drawer","mempalace_update_drawer"]\n'
+            b'"mempalace_delete_drawer"]\n'
         )
         for invalid_legacy in (
             b"MEMPALACE_MCP_TOKEN",
@@ -3620,7 +3718,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
-            b'"mempalace_delete_drawer","mempalace_update_drawer"]\n'
+            b'"mempalace_delete_drawer"]\n'
         )
         config.write_bytes(current)
         config.chmod(0o600)
@@ -3771,7 +3869,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
-            b'"mempalace_delete_drawer","mempalace_update_drawer"]\n'
+            b'"mempalace_delete_drawer"]\n'
             b'\n[mcp_servers.solidstats_memory.tools.search]\nenabled = true\n'
         )
         current = b'model = "gpt-5.6-sol"\n\n' + current_legacy + drift + replacement
@@ -3900,7 +3998,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
-            b'"mempalace_delete_drawer","mempalace_update_drawer"]\n'
+            b'"mempalace_delete_drawer"]\n'
         )
         current = b'model = "gpt-5.6-sol"\n\n' + legacy + replacement
         concurrent = b'[plugins.concurrent]\nenabled = true\n\n'

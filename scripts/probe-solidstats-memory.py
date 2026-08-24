@@ -45,8 +45,8 @@ REQUIRED_TOOLS = (
     "mempalace_check_duplicate",
     "mempalace_add_drawer",
     "mempalace_delete_drawer",
-    "mempalace_update_drawer",
 )
+CURATOR_CLIENT_TOOLS = (*REQUIRED_TOOLS, "mempalace_update_drawer")
 APPROVED_DRAWER_ID = "drawer_infrastructure_operations_234ea02816667f903010e583"
 APPROVED_SOURCE_WING = "infrastructure"
 APPROVED_ROOM = "operations"
@@ -54,13 +54,21 @@ APPROVED_TARGET_WING = "devops"
 UPDATE_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
-        "drawer_id": {"type": "string"},
-        "content": {"type": "string"},
-        "wing": {"type": "string"},
-        "room": {"type": "string"},
+        "drawer_id": {"type": "string", "description": "ID of the drawer to update"},
+        "content": {
+            "type": "string",
+            "description": "New content (optional — omit to keep existing)",
+        },
+        "wing": {
+            "type": "string",
+            "description": "New wing (optional — omit to keep existing)",
+        },
+        "room": {
+            "type": "string",
+            "description": "New room (optional — omit to keep existing)",
+        },
     },
     "required": ["drawer_id"],
-    "additionalProperties": False,
 }
 EVIDENCE_KEYS = {
     "archive_untrusted",
@@ -627,13 +635,13 @@ def validate_client_tool_surface(
     """Validate only a freshly loaded Codex client capability surface."""
     if source != "fresh-codex-client":
         raise ProbeError("client tool surface source is not authoritative")
-    if list(tool_names) != list(REQUIRED_TOOLS):
+    if list(tool_names) != list(CURATOR_CLIENT_TOOLS):
         raise ProbeError("client tool surface is not the exact ordered allowlist")
     if dict(update_schema) != UPDATE_TOOL_SCHEMA:
         raise ProbeError("client update tool schema is drifted")
     return {
         "client_surface_valid": True,
-        "tool_count": len(REQUIRED_TOOLS),
+        "tool_count": len(CURATOR_CLIENT_TOOLS),
         "update_schema_sha256": _digest(UPDATE_TOOL_SCHEMA),
     }
 
@@ -644,18 +652,35 @@ def _exact_drawer_payload(value: object, *, drawer_id: str) -> dict[str, object]
     payload = dict(value)
     if payload.get("drawer_id") != drawer_id:
         raise ProbeError("drawer read-back identity differs")
-    required = {"drawer_id", "content", "room", "provenance", "metadata"}
-    if set(payload) != required:
+    required = {"drawer_id", "content", "wing", "room", "metadata"}
+    optional = {"chunks", "chunk_ids"}
+    if not set(payload).issubset(required | optional) or not required.issubset(payload):
         raise ProbeError("drawer read-back shape differs")
-    if not isinstance(payload.get("content"), str) or not payload["content"]:
+    if ("chunks" in payload) != ("chunk_ids" in payload):
+        raise ProbeError("drawer read-back chunk shape differs")
+    if not isinstance(payload.get("content"), str):
         raise ProbeError("drawer read-back content is invalid")
+    if not isinstance(payload.get("wing"), str) or not payload["wing"]:
+        raise ProbeError("drawer read-back wing is invalid")
     if not isinstance(payload.get("room"), str) or not payload["room"]:
         raise ProbeError("drawer read-back room is invalid")
-    if not isinstance(payload.get("provenance"), str) or not payload["provenance"]:
-        raise ProbeError("drawer read-back provenance is invalid")
     metadata = payload.get("metadata")
-    if not isinstance(metadata, Mapping) or not metadata:
+    if not isinstance(metadata, Mapping):
         raise ProbeError("drawer read-back metadata is invalid")
+    if payload["wing"] != metadata.get("wing") or payload["room"] != metadata.get("room"):
+        raise ProbeError("drawer read-back location differs from metadata")
+    if "chunks" in payload:
+        chunks = payload["chunks"]
+        chunk_ids = payload["chunk_ids"]
+        if (
+            not isinstance(chunks, int)
+            or isinstance(chunks, bool)
+            or chunks < 1
+            or not isinstance(chunk_ids, list)
+            or len(chunk_ids) != chunks
+            or not all(isinstance(item, str) and item for item in chunk_ids)
+        ):
+            raise ProbeError("drawer read-back chunk shape differs")
     return json.loads(_canonical(payload))
 
 
@@ -677,6 +702,8 @@ def validate_approved_correction(
     after: Mapping[str, object],
     *,
     update_arguments: Mapping[str, object],
+    pre_inventories: Mapping[str, object],
+    post_inventories: Mapping[str, object],
 ) -> dict[str, object]:
     """Require the one approved drawer to change only metadata.wing."""
     if dict(update_arguments) != {
@@ -689,24 +716,97 @@ def validate_approved_correction(
     prior_metadata = prior["metadata"]
     current_metadata = current["metadata"]
     if (
-        prior["room"] != APPROVED_ROOM
+        prior["wing"] != APPROVED_SOURCE_WING
+        or prior["room"] != APPROVED_ROOM
         or prior_metadata.get("wing") != APPROVED_SOURCE_WING
         or prior_metadata.get("room") != APPROVED_ROOM
         or str(prior_metadata.get("wing", "")).endswith("-archive")
         or "archive" in APPROVED_DRAWER_ID
     ):
         raise ProbeError("curator update target is not the approved active drawer")
-    if current_metadata.get("wing") != APPROVED_TARGET_WING:
+    if (
+        current["wing"] != APPROVED_TARGET_WING
+        or current["room"] != APPROVED_ROOM
+        or current_metadata.get("wing") != APPROVED_TARGET_WING
+    ):
         raise ProbeError("curator update target wing differs")
     normalized_current = json.loads(_canonical(current))
+    normalized_current["wing"] = APPROVED_SOURCE_WING
     normalized_current["metadata"]["wing"] = APPROVED_SOURCE_WING
     if normalized_current != prior:
         raise ProbeError("curator update changed an unapproved drawer field")
+
+    inventories_before = _exact_inventory_map(pre_inventories)
+    inventories_after = _exact_inventory_map(post_inventories)
+    if set(inventories_before) != set(inventories_after):
+        raise ProbeError("curator inventory coverage differs")
+    source_before = inventories_before.get(APPROVED_SOURCE_WING)
+    source_after = inventories_after.get(APPROVED_SOURCE_WING)
+    target_before = inventories_before.get(APPROVED_TARGET_WING)
+    target_after = inventories_after.get(APPROVED_TARGET_WING)
+    if None in (source_before, source_after, target_before, target_after):
+        raise ProbeError("curator inventory coverage is incomplete")
+    if _inventory_locations(source_before) != [
+        (APPROVED_DRAWER_ID, APPROVED_SOURCE_WING, APPROVED_ROOM)
+    ]:
+        raise ProbeError("curator source inventory is not the exact prestate")
+    if source_after:
+        raise ProbeError("curator source wing is not empty")
+    approved_target = (
+        APPROVED_DRAWER_ID,
+        APPROVED_TARGET_WING,
+        APPROVED_ROOM,
+    )
+    target_locations = _inventory_locations(target_after)
+    if target_locations.count(approved_target) != 1:
+        raise ProbeError("curator approved drawer target membership differs")
+    target_without_approved = [
+        item for item in target_after if item.get("drawer_id") != APPROVED_DRAWER_ID
+    ]
+    if _canonical(target_without_approved) != _canonical(target_before):
+        raise ProbeError("curator target inventory changed unrelated drawers")
+    for wing in inventories_before:
+        if wing in {APPROVED_SOURCE_WING, APPROVED_TARGET_WING}:
+            continue
+        if _canonical(inventories_before[wing]) != _canonical(inventories_after[wing]):
+            kind = "archive" if wing.endswith("-archive") else "unrelated active"
+            raise ProbeError(f"curator {kind} inventory changed")
     return {
         "approved_target_verified": True,
         "complete_invariants_preserved": True,
         "preserved_payload_sha256": _digest(prior),
     }
+
+
+def _exact_inventory_map(value: Mapping[str, object]) -> dict[str, list[dict[str, object]]]:
+    inventories: dict[str, list[dict[str, object]]] = {}
+    for wing, entries in value.items():
+        if not isinstance(wing, str) or not wing or not isinstance(entries, list):
+            raise ProbeError("curator inventory snapshot is malformed")
+        normalized: list[dict[str, object]] = []
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                raise ProbeError("curator inventory snapshot is malformed")
+            item = json.loads(_canonical(dict(entry)))
+            if (
+                not isinstance(item.get("drawer_id"), str)
+                or item.get("wing") != wing
+                or not isinstance(item.get("room"), str)
+                or not item["room"]
+            ):
+                raise ProbeError("curator inventory snapshot is malformed")
+            normalized.append(item)
+        inventories[wing] = normalized
+    return inventories
+
+
+def _inventory_locations(
+    inventory: list[dict[str, object]],
+) -> list[tuple[str, str, str]]:
+    return [
+        (str(item["drawer_id"]), str(item["wing"]), str(item["room"]))
+        for item in inventory
+    ]
 
 
 def probe_curator_uat(
