@@ -153,7 +153,15 @@
     "enabled": true
   },
   "mempalace": {
-    "enabled": true,
-    "cross_project_tunnels": true
+    "enabled": false,
+    "cross_project_tunnels": false,
+    "memory_mode": "augment",
+    "recall_on_discuss": false,
+    "recall_on_plan": false,
+    "capture_artifacts": false,
+    "mirror_kg": false,
+    "diary_journal": false,
+    "auto_capture_hooks": false,
+    "wing": "devops"
   }
 }

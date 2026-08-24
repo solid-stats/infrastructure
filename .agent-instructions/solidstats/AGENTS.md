@@ -1,6 +1,23 @@
+<!-- markdownlint-disable MD013 MD041 -->
 <!-- Managed by solid-stats/agent-instructions. Do not hand-edit in a consumer repo — changes
-     are overwritten by the next sync PR. Edit the source at
+     are overwritten by the next contract rollout. Edit the source at
      https://github.com/solid-stats/agent-instructions/blob/master/shared/AGENTS.md instead. -->
+
+## Contract Bundle Integrity
+
+Before product work, confirm that every file in the committed contract bundle
+is present and readable:
+
+- `.agent-instructions/solidstats/AGENTS.md`;
+- `.agent-instructions/solidstats/CONTRACT_VERSION`;
+- `.agent-instructions/solidstats/MEMORY.md`;
+- `.agent-instructions/solidstats/GSD.md`.
+
+If any file is missing or unreadable, stop product work and restore the complete
+bundle with the canonical installer. Do not continue from partial instructions,
+infer missing routing, or substitute another memory store. Contract freshness
+is managed by the repository rollout; do not perform a remote update check at
+task start.
 
 ## Skills First
 
@@ -22,7 +39,7 @@ Every completed work session must leave the repository in a clean, committed sta
 
 All commits in every SolidStats repo follow **Conventional Commits**:
 
-```
+```text
 <type>(<scope>): <short description>
 ```
 
@@ -107,63 +124,27 @@ Language follows the reader. The test for any doc is: who reads it — a user, o
 
 ## MemPalace
 
-Every SolidStats repo has its own MemPalace **wing, named after the repo itself**
-(`web`, `server-2`, `replays-fetcher`, `replay-parser-2`, `infrastructure`, `skills`) — use the
-generic `mcp__mempalace__*` tools, scoped to that wing; there is no isolated per-project MCP
-server here (unlike VocalClub's `vocalclub_memory`). Never file a durable fact into the wrong
-repo's wing, and never invent a new wing name.
+SolidStats project memory is isolated behind the MCP server named exactly
+`solidstats_memory`. Before product work, read the complete managed contract:
 
-**Inside a GSD workflow, most of this is already automatic.** The `mempalace` GSD capability
-injects recall into `discuss:pre` (gated by `mempalace.recall_on_discuss`) and capture into
-`execute:wave:post` (gated by `mempalace.capture_artifacts`), plus a ship-time curator
-(`gsd-mempalace-curator`) — see `gsd/common-config.json` for the shared defaults and each
-repo's `.planning/config.json` for the rest. Don't re-implement that cycle by hand inside a GSD
-phase; the sections below are for everything GSD's own injection doesn't cover — ad-hoc
-diagnosis, a non-GSD session, or manual recall/capture outside a phase boundary.
+- version: `.agent-instructions/solidstats/CONTRACT_VERSION`;
+- memory lifecycle: `.agent-instructions/solidstats/MEMORY.md`;
+- GSD adapter, only when `.planning/config.json` exists:
+  `.agent-instructions/solidstats/GSD.md`.
 
-- **Recall before diagnosing or building**, not just when a hook happens to inject a snippet.
-  Run an explicit `mempalace_search` seeded from the task's real identifiers (symptom, service
-  name, ticket) at the start of the session — a pattern-match to "we just touched this" is not
-  recall, and a miss is not proof of absence (follow up with `mempalace_list_drawers` /
-  `mempalace_kg_query` before concluding nothing is stored).
-- **Capture only durable, verified conclusions** at closure — a decision, a root cause, a
-  resolved gotcha — not raw session transcripts, planning artifacts, or GSD's own
-  `CONTEXT.md`/`PLAN.md`/`SUMMARY.md` files. Dedup with `mempalace_check_duplicate` before
-  filing.
-- **`memory_mode` stays `augment`** (GSD's own default): the palace is an additional layer,
-  never a replacement for `.planning/graphs/` or `STATE.md`. **Never enable
-  `mempalace.recall_on_plan`** — the planner doesn't automatically consume that separate
-  recall artifact, so it just produces an orphaned memory read; the top-level coordinator's one
-  scoped recall (at `discuss:pre`, or manually for entry points with no native recall hook —
-  `gsd-quick`, `gsd-fast`, `gsd-debug`) is the single recall point per task. Specialists and
-  subagents don't independently recall or capture — they get a filtered context handoff from
-  whichever level already recalled.
+This repository's primary active wing is `devops`.
+Its primary archive wing is `infrastructure-archive` (`none`
+means no repository-bound archive).
 
-### Cross-repo tunnels — use them, don't just avoid duplicating
+The main agent owns the contract-defined recall and closure capture for the
+top-level task. Specialists and subagents receive filtered context and must not
+independently query or mutate SolidStats memory. Never substitute a generic,
+personal, VocalClub, or flat-global memory store.
 
-SolidStats is a genuinely multi-repo platform (§D/§E) — a decision at a cross-app boundary or
-contract change routinely concerns two wings at once, unlike VC's setup, which leaves
-`cross_project_tunnels` off. Here it should be **on and actually used**, not just a
-de-duplication fallback:
-
-- **Create a tunnel** (`mempalace_create_tunnel`) whenever a captured fact genuinely concerns
-  two repos — an API/data-model/queue/S3-layout/parser-contract decision (§E's high-risk list)
-  almost always does. File the fact once, in the wing of the repo that owns the decision, then
-  tunnel it to the other wing(s) it affects instead of duplicating the drawer.
-- **Query tunnels during recall, not just search.** A wing-scoped `mempalace_search` alone can
-  miss a relevant fact filed under an adjacent repo's wing. Before or alongside recall on a
-  cross-app task, run `mempalace_find_tunnels` (between the two wings in play) or
-  `mempalace_follow_tunnels` (from the current wing) to surface what's already linked.
-- **`mempalace.mirror_kg`** (per-repo, stays local — see below) governs whether decision facts
-  also mirror into the temporal knowledge graph; tunnels connect *drawers*, `mempalace_kg_add`
-  connects *typed facts* — use whichever fits what's actually being captured, and both where a
-  cross-repo decision has both a narrative and a queryable shape (e.g. a validity window).
-- **`mempalace.enabled` and `mempalace.cross_project_tunnels`** are common defaults in
-  `agent-instructions`' `gsd/common-config.json` — the latter is a deliberate override of
-  gsd-core's own default (`false`), because a single-service default doesn't fit a genuinely
-  multi-repo platform. The richer per-repo flags (`capture_artifacts`, `mirror_kg`,
-  `auto_capture_hooks`) are tuned per repo and stay local — a backend service and a frontend
-  repo do not need identical capture behavior.
+The native GSD MemPalace capability is deliberately disabled. `GSD.md` keeps
+SolidStats memory active through coordinator-owned recall and semantic closure;
+do not interpret `mempalace.enabled: false` as permission to skip the managed
+memory contract.
 
 ## MCP / Documentation Lookup
 
