@@ -1,0 +1,10 @@
+{
+  "schema": "solidstats-memory-probe-evidence/v1",
+  "verdict": "pass",
+  "run_id_sha256": "880dbcf45ae6f9d48df16c9c7975bf2870cd5437a2f1e0a9dc2cfb1e587031a4",
+  "correction_checks": {
+    "approved_target_verified": true,
+    "complete_invariants_preserved": true,
+    "preserved_payload_sha256": "fa72176653360bcfea31d71b503019cc64538387017ad415836a01bb0b19d901"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "schema": "solidstats-memory-probe-evidence/v1",
+  "verdict": "pass",
+  "run_id_sha256": "880dbcf45ae6f9d48df16c9c7975bf2870cd5437a2f1e0a9dc2cfb1e587031a4",
+  "uat_checks": {
+    "uat_sequence_valid": true,
+    "read_back_verified": true,
+    "cleanup_exact": true,
+    "inventory_restored": true
+  }
+}

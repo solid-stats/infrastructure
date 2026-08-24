@@ -1,0 +1,12 @@
+{
+  "schema": "solidstats-memory-probe-evidence/v1",
+  "verdict": "pass",
+  "run_id_sha256": "880dbcf45ae6f9d48df16c9c7975bf2870cd5437a2f1e0a9dc2cfb1e587031a4",
+  "client_surface": {
+    "client_surface_valid": true,
+    "required_tool_count": 8,
+    "tool_count": 8,
+    "schema_digest_recorded": true,
+    "update_schema_sha256": "30c00e838725658464713abc81d5174250b87c7381effbd540cd0b8ae54f2ef0"
+  }
+}
