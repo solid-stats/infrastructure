@@ -416,6 +416,20 @@ and reboot recovery evidence.
 - [x] 21-03-PLAN.md
 - [x] 21-04-PLAN.md
 
+### Phase 21.1: Curator Update Surface
+
+**Goal:** Expose only exact-ID drawer updates through the existing atomic
+Codex client policy, prove update/read-back/cleanup in a fresh session, and
+apply the approved active-wing correction without changing archive or
+unrelated palace data.
+**Requirements:** CUR-06, CUR-07
+**Depends on:** Phase 21
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (run `$gsd-plan-phase 21.1` to break down)
+
 #### Phase 22: Archive Distillation
 
 **Goal:** Process frozen repository archives in bounded read-only shards, then

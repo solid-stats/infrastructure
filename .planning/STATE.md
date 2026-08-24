@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: SolidStats Memory Isolation
-current_phase: 21
-current_phase_name: restore-cutover-recovery
-status: phase_complete
-stopped_at: Phase 21 completed and verified; Phase 22 not started
-last_updated: "2026-08-22T01:47:50+07:00"
-last_activity: 2026-08-22
-last_activity_desc: Phase 21 completed with code-review PASS, ASVS L2 SECURED, and 13/13 verification
+current_phase: 21.1
+current_phase_name: curator-update-surface
+status: planning
+stopped_at: Phase 21.1 context complete; ready for planning
+last_updated: "2026-08-25T00:41:27+07:00"
+last_activity: 2026-08-25
+last_activity_desc: Phase 21.1 inserted and scoped through assumptions discussion
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 3
   total_plans: 19
   completed_plans: 19
-  percent: 75
+  percent: 60
 ---
 
 <!-- markdownlint-disable MD013 MD033 -->
@@ -26,23 +26,26 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 21 completion boundary; Phase 22 not started
+**Current focus:** Phase 21.1 curator update surface; Phase 22 not started
 
 ## Current Position
 
-Phase: 21 (restore-cutover-recovery) — COMPLETE
-Plan: 4 of 4
-Status: Verified
-Last activity: 2026-08-22 — Phase 21 goal verified and security gate secured
+Phase: 21.1 (curator-update-surface) — NOT STARTED
+Plan: 0 of TBD
+Status: Ready to plan
+Last activity: 2026-08-25 — Phase 21.1 inserted and scoped through assumptions discussion
 
 **Phase 21 completion evidence:**
 
 - Isolated restore parity: 19,534 records with a deterministic four-member
   backup package and verified Timeweb S3 round-trip.
+
 - Reversible cutover: authenticated MCP behavior, restart, one VPS reboot,
   actual rollback, and forward replay all passed.
+
 - Final runtime: `solidstats_memory` active, legacy client retired, Qdrant
   private, recurring backup active with `Forbid`, and host guard enabled.
+
 - Quality gates: 224/224 tests, final code review PASS, ASVS Level 2 SECURED
   with 18/18 threats closed, and 13/13 goal-level must-haves verified.
 
@@ -295,6 +298,10 @@ Recent decisions affecting current work:
 | 260614-ulu | Remove all WireGuard remnants from the repo (WG fully decommissioned — server+local interfaces, GitHub WG_* secrets, VPS ufw rules all torn down out-of-band). Deleted wg-tunnel-up.sh; reworked bootstrap-edge.sh + validate-edge.py + teardown-edge.sh (6443 private behind the SSH forward under ufw default-deny, no wg0 rule); swept README/AGENTS/6 docs + 5 script comments; renamed docs/wireguard-access.md→k3s-api-access.md. Zero WG refs outside .planning | 2026-06-14 | d7a4858 | [260614-ulu-remove-wireguard-remnants-from-repo-cd-r](./quick/260614-ulu-remove-wireguard-remnants-from-repo-cd-r/) |
 | 260617-024 | Split replays-fetcher into a continuous page-1 **watch Deployment** (52-replays-fetcher-watch.yaml, args watch, node-exec heartbeat liveness) + a nightly full **run-once CronJob** (50-..., 08:00 Europe/Moscow, suspend off); both pinned to the watch-daemon image 9f091bf | 2026-06-17 | 04ed606 | [260617-024-split-replays-fetcher-into-watch-deploym](./quick/260617-024-split-replays-fetcher-into-watch-deploym/) |
 | 6 | Correct stale milestone plan counter in ROADMAP.md | 2026-08-20 | b41619c | — |
+
+### Roadmap Evolution
+
+- Phase 21.1 inserted after Phase 21: Curator Update Surface (URGENT)
 
 ## Deferred Items
 

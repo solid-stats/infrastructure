@@ -86,6 +86,14 @@
 
 ## Curation
 
+- [ ] **CUR-06**: The Codex `solidstats_memory` client exposes exactly the
+  seven verified Phase 21 tools plus `mempalace_update_drawer`; every other
+  server tool remains excluded by client policy.
+
+- [ ] **CUR-07**: Curator updates preserve drawer identity, content,
+  provenance, room, and all metadata except fields explicitly approved for
+  change; disposable UAT drawers are removed by exact ID before acceptance.
+
 - [ ] **CUR-01**: Archive distillation runs only after cutover and never blocks
   the runtime migration.
 
@@ -109,4 +117,5 @@
 | ISO-02, ISO-04, RUN-01..05, MIG-03..07, OPS-01, OPS-04 | 19 | Planned |
 | MIG-01..02 | 20 | Complete |
 | ISO-01, ISO-03, OPS-02..03, OPS-05 | 21 | Complete |
+| CUR-06..07 | 21.1 | Planned |
 | CUR-01..05 | 22 | Planned |
