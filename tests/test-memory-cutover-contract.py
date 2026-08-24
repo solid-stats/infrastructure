@@ -1915,6 +1915,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
                 "mempalace_check_duplicate",
                 "mempalace_add_drawer",
                 "mempalace_delete_drawer",
+                "mempalace_update_drawer",
                 "mempalace_create_tunnel",
             )
         }
@@ -3518,7 +3519,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
-            b'"mempalace_delete_drawer"]\n'
+            b'"mempalace_delete_drawer","mempalace_update_drawer"]\n'
         )
         for invalid_legacy in (
             b"MEMPALACE_MCP_TOKEN",
@@ -3619,7 +3620,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
-            b'"mempalace_delete_drawer"]\n'
+            b'"mempalace_delete_drawer","mempalace_update_drawer"]\n'
         )
         config.write_bytes(current)
         config.chmod(0o600)
@@ -3770,7 +3771,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
-            b'"mempalace_delete_drawer"]\n'
+            b'"mempalace_delete_drawer","mempalace_update_drawer"]\n'
             b'\n[mcp_servers.solidstats_memory.tools.search]\nenabled = true\n'
         )
         current = b'model = "gpt-5.6-sol"\n\n' + current_legacy + drift + replacement
@@ -3899,7 +3900,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b'enabled_tools = ["mempalace_search","mempalace_list_rooms",'
             b'"mempalace_list_drawers","mempalace_get_drawer",'
             b'"mempalace_check_duplicate","mempalace_add_drawer",'
-            b'"mempalace_delete_drawer"]\n'
+            b'"mempalace_delete_drawer","mempalace_update_drawer"]\n'
         )
         current = b'model = "gpt-5.6-sol"\n\n' + legacy + replacement
         concurrent = b'[plugins.concurrent]\nenabled = true\n\n'

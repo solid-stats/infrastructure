@@ -45,7 +45,23 @@ REQUIRED_TOOLS = (
     "mempalace_check_duplicate",
     "mempalace_add_drawer",
     "mempalace_delete_drawer",
+    "mempalace_update_drawer",
 )
+APPROVED_DRAWER_ID = "drawer_infrastructure_operations_234ea02816667f903010e583"
+APPROVED_SOURCE_WING = "infrastructure"
+APPROVED_ROOM = "operations"
+APPROVED_TARGET_WING = "devops"
+UPDATE_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "drawer_id": {"type": "string"},
+        "content": {"type": "string"},
+        "wing": {"type": "string"},
+        "room": {"type": "string"},
+    },
+    "required": ["drawer_id"],
+    "additionalProperties": False,
+}
 EVIDENCE_KEYS = {
     "archive_untrusted",
     "auth_checks",
@@ -74,6 +90,16 @@ EVIDENCE_KEYS = {
     "tool_count",
     "untrusted_origin_rejected",
     "valid_accepted",
+    "client_surface",
+    "client_surface_valid",
+    "update_schema_sha256",
+    "uat_checks",
+    "uat_sequence_valid",
+    "inventory_restored",
+    "correction_checks",
+    "approved_target_verified",
+    "complete_invariants_preserved",
+    "preserved_payload_sha256",
 }
 
 
@@ -592,6 +618,237 @@ def _validate_delete_result(
         raise ProbeError("synthetic capture cleanup failed")
 
 
+def validate_client_tool_surface(
+    *,
+    source: str,
+    tool_names: list[str] | tuple[str, ...],
+    update_schema: Mapping[str, object],
+) -> dict[str, object]:
+    """Validate only a freshly loaded Codex client capability surface."""
+    if source != "fresh-codex-client":
+        raise ProbeError("client tool surface source is not authoritative")
+    if list(tool_names) != list(REQUIRED_TOOLS):
+        raise ProbeError("client tool surface is not the exact ordered allowlist")
+    if dict(update_schema) != UPDATE_TOOL_SCHEMA:
+        raise ProbeError("client update tool schema is drifted")
+    return {
+        "client_surface_valid": True,
+        "tool_count": len(REQUIRED_TOOLS),
+        "update_schema_sha256": _digest(UPDATE_TOOL_SCHEMA),
+    }
+
+
+def _exact_drawer_payload(value: object, *, drawer_id: str) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ProbeError("drawer read-back is missing or malformed")
+    payload = dict(value)
+    if payload.get("drawer_id") != drawer_id:
+        raise ProbeError("drawer read-back identity differs")
+    required = {"drawer_id", "content", "room", "provenance", "metadata"}
+    if set(payload) != required:
+        raise ProbeError("drawer read-back shape differs")
+    if not isinstance(payload.get("content"), str) or not payload["content"]:
+        raise ProbeError("drawer read-back content is invalid")
+    if not isinstance(payload.get("room"), str) or not payload["room"]:
+        raise ProbeError("drawer read-back room is invalid")
+    if not isinstance(payload.get("provenance"), str) or not payload["provenance"]:
+        raise ProbeError("drawer read-back provenance is invalid")
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, Mapping) or not metadata:
+        raise ProbeError("drawer read-back metadata is invalid")
+    return json.loads(_canonical(payload))
+
+
+def _get_exact_drawer(session: McpSession, drawer_id: str) -> dict[str, object]:
+    return _exact_drawer_payload(
+        _tool_data(
+            mcp_call(
+                session,
+                "mempalace_get_drawer",
+                {"drawer_id": drawer_id},
+            )
+        ),
+        drawer_id=drawer_id,
+    )
+
+
+def validate_approved_correction(
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+    *,
+    update_arguments: Mapping[str, object],
+) -> dict[str, object]:
+    """Require the one approved drawer to change only metadata.wing."""
+    if dict(update_arguments) != {
+        "drawer_id": APPROVED_DRAWER_ID,
+        "wing": APPROVED_TARGET_WING,
+    }:
+        raise ProbeError("curator update payload is not exactly approved")
+    prior = _exact_drawer_payload(before, drawer_id=APPROVED_DRAWER_ID)
+    current = _exact_drawer_payload(after, drawer_id=APPROVED_DRAWER_ID)
+    prior_metadata = prior["metadata"]
+    current_metadata = current["metadata"]
+    if (
+        prior["room"] != APPROVED_ROOM
+        or prior_metadata.get("wing") != APPROVED_SOURCE_WING
+        or prior_metadata.get("room") != APPROVED_ROOM
+        or str(prior_metadata.get("wing", "")).endswith("-archive")
+        or "archive" in APPROVED_DRAWER_ID
+    ):
+        raise ProbeError("curator update target is not the approved active drawer")
+    if current_metadata.get("wing") != APPROVED_TARGET_WING:
+        raise ProbeError("curator update target wing differs")
+    normalized_current = json.loads(_canonical(current))
+    normalized_current["metadata"]["wing"] = APPROVED_SOURCE_WING
+    if normalized_current != prior:
+        raise ProbeError("curator update changed an unapproved drawer field")
+    return {
+        "approved_target_verified": True,
+        "complete_invariants_preserved": True,
+        "preserved_payload_sha256": _digest(prior),
+    }
+
+
+def probe_curator_uat(
+    session: McpSession,
+    *,
+    wing: str,
+    nonce: str,
+    initial_content: str,
+    updated_content: str,
+) -> dict[str, object]:
+    """Run one exact add/get/update/get/delete sequence with reconciliation."""
+    if (
+        not re.fullmatch(r"[a-z0-9][a-z0-9-]{7,63}", nonce)
+        or not isinstance(wing, str)
+        or not wing
+        or wing.endswith("-archive")
+        or not isinstance(initial_content, str)
+        or not initial_content
+        or not isinstance(updated_content, str)
+        or not updated_content
+        or initial_content == updated_content
+    ):
+        raise ProbeError("curator UAT input is invalid")
+    room = f"uat-{nonce}"
+    preexisting = _listed_drawer_ids(session, wing=wing)
+    drawer_id: str | None = None
+    try:
+        for attempt in range(2):
+            try:
+                created = _tool_data(
+                    mcp_call(
+                        session,
+                        "mempalace_add_drawer",
+                        {
+                            "wing": wing,
+                            "room": room,
+                            "content": initial_content,
+                            "added_by": "phase21.1-curator-uat",
+                        },
+                    )
+                )
+                returned_id = _first_drawer_id(created)
+            except Exception:
+                returned_id = None
+            observed = _listed_drawer_ids(session, wing=wing)
+            created_ids = observed - preexisting
+            if len(created_ids) == 1:
+                discovered = next(iter(created_ids))
+                if returned_id is not None and returned_id != discovered:
+                    raise ProbeError("curator UAT add identity is ambiguous")
+                drawer_id = discovered
+                break
+            if created_ids or returned_id is not None or attempt == 1:
+                raise ProbeError("curator UAT add outcome is ambiguous")
+        if drawer_id is None:
+            raise ProbeError("curator UAT add did not produce one exact drawer")
+        before_update = _get_exact_drawer(session, drawer_id)
+        if (
+            before_update["content"] != initial_content
+            or before_update["room"] != room
+            or before_update["metadata"].get("wing") != wing
+            or before_update["metadata"].get("room") != room
+        ):
+            raise ProbeError("curator UAT add read-back differs")
+
+        after_update: dict[str, object] | None = None
+        for attempt in range(2):
+            try:
+                mcp_call(
+                    session,
+                    "mempalace_update_drawer",
+                    {"drawer_id": drawer_id, "content": updated_content},
+                )
+            except Exception:
+                pass
+            observed = _get_exact_drawer(session, drawer_id)
+            if observed["content"] == updated_content:
+                after_update = observed
+                break
+            if observed != before_update or attempt == 1:
+                raise ProbeError("curator UAT update outcome is ambiguous")
+        if after_update is None:
+            raise ProbeError("curator UAT update did not persist")
+        expected_after = json.loads(_canonical(before_update))
+        expected_after["content"] = updated_content
+        if after_update != expected_after:
+            raise ProbeError("curator UAT update changed unrelated fields")
+
+        deleted = False
+        for attempt in range(2):
+            try:
+                result = _tool_data(
+                    mcp_call(
+                        session,
+                        "mempalace_delete_drawer",
+                        {"drawer_id": drawer_id},
+                    )
+                )
+                _validate_delete_result(result, drawer_id=drawer_id)
+            except Exception:
+                pass
+            observed_ids = _listed_drawer_ids(session, wing=wing)
+            if drawer_id not in observed_ids:
+                deleted = True
+                break
+            _get_exact_drawer(session, drawer_id)
+            if attempt == 1:
+                raise ProbeError("curator UAT delete outcome is ambiguous")
+        if not deleted or _listed_drawer_ids(session, wing=wing) != preexisting:
+            raise ProbeError("curator UAT cleanup failed")
+        return {
+            "uat_sequence_valid": True,
+            "cleanup_exact": True,
+            "inventory_restored": True,
+        }
+    except Exception as error:
+        try:
+            current = _listed_drawer_ids(session, wing=wing)
+            residue = current - preexisting
+            if drawer_id is not None:
+                residue.add(drawer_id)
+            if len(residue) > 1:
+                raise ProbeError("curator UAT cleanup target is ambiguous")
+            if residue:
+                cleanup_id = next(iter(residue))
+                deleted = _tool_data(
+                    mcp_call(
+                        session,
+                        "mempalace_delete_drawer",
+                        {"drawer_id": cleanup_id},
+                    )
+                )
+                _validate_delete_result(deleted, drawer_id=cleanup_id)
+            if _listed_drawer_ids(session, wing=wing) != preexisting:
+                raise ProbeError("curator UAT cleanup failed")
+        except Exception as cleanup_error:
+            raise ProbeError("curator UAT cleanup failed") from cleanup_error
+        if isinstance(error, ProbeError):
+            raise
+        raise ProbeError("curator UAT failed") from error
+
+
 def probe_auth_matrix(transport: Transport) -> tuple[dict[str, object], McpSession]:
     """Require missing/invalid rejection and a valid initialized session."""
     statuses: dict[str, int] = {}
@@ -982,6 +1239,8 @@ def _parser() -> argparse.ArgumentParser:
     client_policy.add_argument("--config", required=True, type=Path)
     client_policy.add_argument("--url", required=True)
     client_policy.add_argument("--token-env", required=True)
+    validate_evidence = subparsers.add_parser("validate-evidence")
+    validate_evidence.add_argument("--evidence", required=True, type=Path)
     return parser
 
 
@@ -993,6 +1252,24 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     try:
+        if args.command == "validate-evidence":
+            path = Path(args.evidence)
+            details = path.lstat()
+            if (
+                stat.S_ISLNK(details.st_mode)
+                or not stat.S_ISREG(details.st_mode)
+                or details.st_size > MAX_BODY_BYTES
+            ):
+                raise ProbeError("probe evidence file is unsafe")
+            try:
+                evidence = json.loads(path.read_bytes())
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise ProbeError("probe evidence is malformed") from error
+            if not isinstance(evidence, Mapping):
+                raise ProbeError("probe evidence is malformed")
+            validate_probe_evidence(evidence)
+            print("PASS: probe evidence validated")
+            return 0
         if args.command == "private-boundary":
             result = probe_private_boundary(args.host)
             for key in sorted(result):
