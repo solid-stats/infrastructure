@@ -4,15 +4,15 @@ milestone: v4.0
 milestone_name: SolidStats Memory Isolation
 current_phase: 21.1
 current_phase_name: curator-update-surface
-status: planning
+status: executing
 stopped_at: Phase 21.1 context complete; ready for planning
-last_updated: "2026-08-25T00:41:27+07:00"
+last_updated: "2026-08-24T18:39:38.233Z"
 last_activity: 2026-08-25
 last_activity_desc: Phase 21.1 inserted and scoped through assumptions discussion
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 19
+  total_plans: 21
   completed_plans: 19
   percent: 60
 ---
@@ -32,7 +32,7 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 Phase: 21.1 (curator-update-surface) — NOT STARTED
 Plan: 0 of TBD
-Status: Ready to plan
+Status: Ready to execute
 Last activity: 2026-08-25 — Phase 21.1 inserted and scoped through assumptions discussion
 
 **Phase 21 completion evidence:**
