@@ -5,15 +5,15 @@ milestone_name: SolidStats Memory Isolation
 current_phase: 21.1
 current_phase_name: curator-update-surface
 status: executing
-stopped_at: Phase 21.1 context complete; ready for planning
-last_updated: "2026-08-24T18:39:38.233Z"
+stopped_at: Completed 21.1-01-PLAN.md
+last_updated: "2026-08-24T19:08:19.938Z"
 last_activity: 2026-08-25
 last_activity_desc: Phase 21.1 inserted and scoped through assumptions discussion
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 21
-  completed_plans: 19
+  completed_plans: 20
   percent: 60
 ---
 
@@ -26,14 +26,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11)
 
 **Core value:** Staging must be reproducible, backed up, and safe to run end-to-end before it is used to produce or compare new statistics.
-**Current focus:** Phase 21.1 curator update surface; Phase 22 not started
+**Current focus:** Phase 21.1 — curator-update-surface
 
 ## Current Position
 
-Phase: 21.1 (curator-update-surface) — NOT STARTED
-Plan: 0 of TBD
+Phase: 21.1 (curator-update-surface) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
-Last activity: 2026-08-25 — Phase 21.1 inserted and scoped through assumptions discussion
+Last activity: 2026-08-25 — Phase 21.1 execution started
 
 **Phase 21 completion evidence:**
 
@@ -155,17 +155,18 @@ Last activity: 2026-08-25 — Phase 21.1 inserted and scoped through assumptions
 | Phase 17 P01 | 5 | 3 tasks | 4 files |
 **Per-Plan Metrics:**
 
-| Plan         | Duration | Tasks   | Files   |
-| ------------ | -------- | ------- | ------- |
-| Phase 20 P01 | 7m       | 3 tasks | 3 files |
-| Phase 20 P02 | 5        | 2 tasks | 2 files |
-| Phase 20 P03 | 1m       | 2 tasks | 1 files |
-| Phase 20 P07 | 0m       | 2 tasks | 2 files |
-| Phase 20 P09 | 0m       | 2 tasks | 2 files |
-| Phase 20 P04 | evidence | 2 tasks | 1 file  |
-| Phase 20 P08 | 20m      | 1 task  | 4 files |
-| Phase 20 P05 | cont.    | 2 tasks | 3 files |
-| Phase 21 P01 | 13min    | 2 tasks | 5 files |
+| Plan           | Duration | Tasks   | Files   |
+| -------------- | -------- | ------- | ------- |
+| Phase 20 P01   | 7m       | 3 tasks | 3 files |
+| Phase 20 P02   | 5        | 2 tasks | 2 files |
+| Phase 20 P03   | 1m       | 2 tasks | 1 files |
+| Phase 20 P07   | 0m       | 2 tasks | 2 files |
+| Phase 20 P09   | 0m       | 2 tasks | 2 files |
+| Phase 20 P04   | evidence | 2 tasks | 1 file  |
+| Phase 20 P08   | 20m      | 1 task  | 4 files |
+| Phase 20 P05   | cont.    | 2 tasks | 3 files |
+| Phase 21 P01   | 13min    | 2 tasks | 5 files |
+| Phase 21.1 P01 | 20m43s   | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -229,6 +230,9 @@ Recent decisions affecting current work:
 - [Phase ?]: MemPalace v3.5.0 is the only migration oracle.
 - [Phase ?]: Plan 20-08 approved lossless source metadata preservation and archive-wing routing; Plan 20-05 consumed it.
 - [Phase ?]: Plan 20-05 retains the successful loopback Qdrant target for Plan 20-06 parity.
+- [Phase ?]: The stable curator successor appends only mempalace_update_drawer to the exact ordered seven-tool predecessor.
+- [Phase ?]: Curator validation remains offline and aggregate-only, using exact-ID complete-object comparison.
+- [Phase ?]: The stale Phase 21 restore lock was retained durably before removing only its registered worktree.
 
 ### Pending Todos
 
@@ -324,8 +328,8 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-22T01:47:50+07:00
-Stopped at: Phase 21 completed and verified; Phase 22 not started
+Last session: 2026-08-24T19:08:19.930Z
+Stopped at: Completed 21.1-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

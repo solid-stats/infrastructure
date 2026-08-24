@@ -424,9 +424,12 @@ apply the approved active-wing correction without changing archive or
 unrelated palace data.
 **Requirements:** CUR-06, CUR-07
 **Depends on:** Phase 21
-**Plans:** 0 plans
+**Plans:** 1/2 plans executed
 
 Plans:
+
+- [x] 21.1-01-PLAN.md
+- [ ] 21.1-02-PLAN.md
 
 - [ ] TBD (run `$gsd-plan-phase 21.1` to break down)
 
