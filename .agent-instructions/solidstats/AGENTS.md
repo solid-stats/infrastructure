@@ -105,6 +105,39 @@ When a request is risky, potentially harmful, or would expand scope beyond the c
 Do not blindly execute instructions that conflict with architecture, accepted decisions, or
 the quality gates in this repo. Challenge, explain, propose alternatives — then wait.
 
+## Autonomous GSD Policy
+
+SolidStats uses the shared GSD configuration as a wall-clock-optimized baseline
+for unattended Codex execution. Autonomous runs choose recommended grey-area
+decisions themselves, record them in the owning GSD artifact, and continue.
+Pause only for a genuine blocker or a destructive or irreversible action that
+requires explicit approval. Design latitude and ordinary implementation choices
+are not blockers.
+
+Keep Smart Discuss enabled. In autonomous mode it is a non-interactive context
+synthesis step: use existing project decisions, repository patterns, and phase
+requirements to produce `CONTEXT.md` without waiting for user acceptance. Pure
+infrastructure phases may use the workflow's minimal-context path.
+
+The autonomous coordinator chooses planning granularity per phase:
+
+- pass `--granularity coarse` only when every condition below is established
+  from the roadmap, requirements, and current repository context:
+  - the phase has one isolated deliverable in one subsystem;
+  - it follows an existing implementation pattern;
+  - it has no unresolved product, architecture, or research decision;
+  - it changes no authentication, authorization, security, persistent schema,
+    API or cross-repository contract, migration, deployment, backup, restore,
+    cutover, or production boundary;
+- use `standard` whenever any condition is false or uncertain;
+- use `fine` only when an explicit phase-specific instruction requires it.
+
+Run ordinary autonomous planning locally. Add `--converge` only for a phase
+whose accepted scope changes authentication, persistent schemas, high-risk
+cross-repository contracts, security boundaries, destructive migrations,
+backup/restore behavior, or a live cutover. Standard code review is the shared
+default; a risk-specific deep review must use the explicit `--depth deep` flag.
+
 ## Documentation Language
 
 Language follows the reader. The test for any doc is: who reads it — a user, or an engineer?
