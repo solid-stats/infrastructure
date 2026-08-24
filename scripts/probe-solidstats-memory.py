@@ -51,6 +51,21 @@ APPROVED_DRAWER_ID = "drawer_infrastructure_operations_234ea02816667f903010e583"
 APPROVED_SOURCE_WING = "infrastructure"
 APPROVED_ROOM = "operations"
 APPROVED_TARGET_WING = "devops"
+CANONICAL_ACTIVE_WINGS = (
+    "frontend",
+    "backend",
+    "fetcher",
+    "devops",
+    "common",
+)
+CANONICAL_ARCHIVE_WINGS = (
+    "web-archive",
+    "server-2-archive",
+    "replay-parser-2-archive",
+    "replays-fetcher-archive",
+    "infrastructure-archive",
+    "SolidStats-archive",
+)
 UPDATE_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
@@ -704,8 +719,6 @@ def validate_approved_correction(
     update_arguments: Mapping[str, object],
     pre_inventories: Mapping[str, object],
     post_inventories: Mapping[str, object],
-    archive_control_wings: tuple[str, ...],
-    active_control_wings: tuple[str, ...],
 ) -> dict[str, object]:
     """Require the one approved drawer to change only metadata.wing."""
     if dict(update_arguments) != {
@@ -740,19 +753,10 @@ def validate_approved_correction(
 
     inventories_before = _exact_inventory_map(pre_inventories)
     inventories_after = _exact_inventory_map(post_inventories)
-    archive_controls = _exact_control_wings(
-        archive_control_wings, archive=True
-    )
-    active_controls = _exact_control_wings(
-        active_control_wings, archive=False
-    )
-    if set(archive_controls) & set(active_controls):
-        raise ProbeError("curator inventory control classes overlap")
     expected_wings = {
         APPROVED_SOURCE_WING,
-        APPROVED_TARGET_WING,
-        *archive_controls,
-        *active_controls,
+        *CANONICAL_ACTIVE_WINGS,
+        *CANONICAL_ARCHIVE_WINGS,
     }
     if (
         set(inventories_before) != expected_wings
@@ -765,28 +769,49 @@ def validate_approved_correction(
     target_after = inventories_after.get(APPROVED_TARGET_WING)
     if None in (source_before, source_after, target_before, target_after):
         raise ProbeError("curator inventory coverage is incomplete")
-    if _inventory_locations(source_before) != [
-        (APPROVED_DRAWER_ID, APPROVED_SOURCE_WING, APPROVED_ROOM)
-    ]:
-        raise ProbeError("curator source inventory is not the exact prestate")
-    if source_after:
-        raise ProbeError("curator source wing is not empty")
-    approved_target = (
+    expected_pre_location = (
+        APPROVED_DRAWER_ID,
+        APPROVED_SOURCE_WING,
+        APPROVED_ROOM,
+    )
+    expected_post_location = (
         APPROVED_DRAWER_ID,
         APPROVED_TARGET_WING,
         APPROVED_ROOM,
     )
+    if _inventory_locations(source_before) != [expected_pre_location]:
+        raise ProbeError("curator source inventory is not the exact prestate")
+    if source_after:
+        raise ProbeError("curator source wing is not empty")
     target_locations = _inventory_locations(target_after)
-    if target_locations.count(approved_target) != 1:
+    if target_locations.count(expected_post_location) != 1:
         raise ProbeError("curator approved drawer target membership differs")
+    all_pre_locations = [
+        location
+        for inventory in inventories_before.values()
+        for location in _inventory_locations(inventory)
+        if location[0] == APPROVED_DRAWER_ID
+    ]
+    all_post_locations = [
+        location
+        for inventory in inventories_after.values()
+        for location in _inventory_locations(inventory)
+        if location[0] == APPROVED_DRAWER_ID
+    ]
+    if all_pre_locations != [expected_pre_location] or all_post_locations != [
+        expected_post_location
+    ]:
+        raise ProbeError("curator approved drawer global membership differs")
     target_without_approved = [
         item for item in target_after if item.get("drawer_id") != APPROVED_DRAWER_ID
     ]
     if _canonical(target_without_approved) != _canonical(target_before):
         raise ProbeError("curator target inventory changed unrelated drawers")
-    for wing in (*archive_controls, *active_controls):
-        if not inventories_before[wing] or not inventories_after[wing]:
-            raise ProbeError("curator inventory control is empty")
+    unchanged_wings = (
+        *(wing for wing in CANONICAL_ACTIVE_WINGS if wing != APPROVED_TARGET_WING),
+        *CANONICAL_ARCHIVE_WINGS,
+    )
+    for wing in unchanged_wings:
         if _canonical(inventories_before[wing]) != _canonical(inventories_after[wing]):
             kind = "archive" if wing.endswith("-archive") else "unrelated active"
             raise ProbeError(f"curator {kind} inventory changed")
@@ -817,25 +842,6 @@ def _exact_inventory_map(value: Mapping[str, object]) -> dict[str, list[dict[str
             normalized.append(item)
         inventories[wing] = normalized
     return inventories
-
-
-def _exact_control_wings(
-    value: tuple[str, ...], *, archive: bool
-) -> tuple[str, ...]:
-    if (
-        not isinstance(value, tuple)
-        or not value
-        or len(set(value)) != len(value)
-        or any(
-            not isinstance(wing, str)
-            or not wing
-            or wing in {APPROVED_SOURCE_WING, APPROVED_TARGET_WING}
-            or wing.endswith("-archive") != archive
-            for wing in value
-        )
-    ):
-        raise ProbeError("curator inventory control model is invalid")
-    return value
 
 
 def _inventory_locations(
