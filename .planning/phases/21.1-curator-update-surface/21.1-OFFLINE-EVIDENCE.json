@@ -1,0 +1,19 @@
+{
+  "schema": "solidstats-memory-probe-evidence/v1",
+  "verdict": "pass",
+  "run_id_sha256": "03247c97a21474a3645947b8c2f3bc0b1faccbc34d382072f4d49197779518a6",
+  "mcp_checks": {
+    "valid_accepted": true,
+    "invalid_rejected": true,
+    "missing_rejected": true
+  },
+  "uat_checks": {
+    "valid_accepted": true,
+    "invalid_rejected": true,
+    "cleanup_supported": true
+  },
+  "correction_checks": {
+    "valid_accepted": true,
+    "invalid_rejected": true
+  }
+}
