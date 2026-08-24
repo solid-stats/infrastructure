@@ -24,6 +24,7 @@ import tarfile
 import tempfile
 import threading
 import tomllib
+from typing import Callable
 import unittest
 from unittest import mock
 
@@ -2138,6 +2139,307 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     synthetic_content=content,
                 )
         self.assertEqual({}, stored)
+
+    def test_client_surface_validator_requires_fresh_exact_ordered_schema(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "drawer_id": {"type": "string"},
+                "content": {"type": "string"},
+                "wing": {"type": "string"},
+                "room": {"type": "string"},
+            },
+            "required": ["drawer_id"],
+            "additionalProperties": False,
+        }
+        result = PROBE.validate_client_tool_surface(
+            source="fresh-codex-client",
+            tool_names=list(PROBE.REQUIRED_TOOLS),
+            update_schema=schema,
+        )
+        self.assertEqual(8, result["tool_count"])
+        self.assertTrue(result["client_surface_valid"])
+        self.assertRegex(result["update_schema_sha256"], r"^[0-9a-f]{64}$")
+
+        near_misses = (
+            ("raw-mcp-tools-list", list(PROBE.REQUIRED_TOOLS), schema),
+            (
+                "fresh-codex-client",
+                list(reversed(PROBE.REQUIRED_TOOLS)),
+                schema,
+            ),
+            ("fresh-codex-client", list(PROBE.REQUIRED_TOOLS[:-1]), schema),
+            (
+                "fresh-codex-client",
+                [*PROBE.REQUIRED_TOOLS, "mempalace_create_tunnel"],
+                schema,
+            ),
+            (
+                "fresh-codex-client",
+                list(PROBE.REQUIRED_TOOLS),
+                {**schema, "required": []},
+            ),
+            (
+                "fresh-codex-client",
+                list(PROBE.REQUIRED_TOOLS),
+                {
+                    **schema,
+                    "properties": {
+                        **schema["properties"],
+                        "metadata": {"type": "object"},
+                    },
+                },
+            ),
+        )
+        for source, tools, candidate_schema in near_misses:
+            with self.subTest(source=source, tools=tools), self.assertRaises(
+                PROBE.ProbeError
+            ):
+                PROBE.validate_client_tool_surface(
+                    source=source,
+                    tool_names=tools,
+                    update_schema=candidate_schema,
+                )
+
+    def test_curator_uat_update_and_exact_cleanup(self) -> None:
+        for lost_stage in ("add", "update", "delete"):
+            for apply_before_raise in (False, True):
+                with self.subTest(
+                    lost_stage=lost_stage,
+                    apply_before_raise=apply_before_raise,
+                ):
+                    stored: dict[str, dict[str, object]] = {}
+                    attempts = {"add": 0, "update": 0, "delete": 0}
+
+                    def mutate_or_raise(
+                        stage: str, mutation: Callable[[], None]
+                    ) -> None:
+                        attempts[stage] += 1
+                        if stage == lost_stage and attempts[stage] == 1:
+                            if apply_before_raise:
+                                mutation()
+                            raise PROBE.ProbeError(
+                                "synthetic lost acknowledgement"
+                            )
+                        mutation()
+
+                    def call(
+                        _session: object,
+                        name: str,
+                        arguments: dict[str, object],
+                    ) -> dict[str, object]:
+                        if name == "mempalace_list_drawers":
+                            ids = sorted(stored)
+                            offset = int(arguments["offset"])
+                            limit = int(arguments["limit"])
+                            page = ids[offset : offset + limit]
+                            return {
+                                "structuredContent": {
+                                    "drawers": [
+                                        {"drawer_id": drawer_id}
+                                        for drawer_id in page
+                                    ],
+                                    "total": len(ids),
+                                    "count": len(page),
+                                    "offset": offset,
+                                    "limit": limit,
+                                }
+                            }
+                        if name == "mempalace_add_drawer":
+                            def add() -> None:
+                                stored["uat-drawer-fixture"] = {
+                                    "drawer_id": "uat-drawer-fixture",
+                                    "content": arguments["content"],
+                                    "room": arguments["room"],
+                                    "provenance": "synthetic-provenance",
+                                    "metadata": {
+                                        "wing": arguments["wing"],
+                                        "room": arguments["room"],
+                                    },
+                                }
+
+                            mutate_or_raise("add", add)
+                            return {
+                                "structuredContent": {
+                                    "drawer_id": "uat-drawer-fixture"
+                                }
+                            }
+                        if name == "mempalace_get_drawer":
+                            drawer_id = str(arguments["drawer_id"])
+                            if drawer_id not in stored:
+                                raise PROBE.ProbeError("drawer not found")
+                            return {
+                                "structuredContent": deepcopy(stored[drawer_id])
+                            }
+                        if name == "mempalace_update_drawer":
+                            drawer_id = str(arguments["drawer_id"])
+
+                            def update() -> None:
+                                stored[drawer_id]["content"] = arguments["content"]
+
+                            mutate_or_raise("update", update)
+                            return {
+                                "structuredContent": deepcopy(stored[drawer_id])
+                            }
+                        if name == "mempalace_delete_drawer":
+                            drawer_id = str(arguments["drawer_id"])
+
+                            def delete() -> None:
+                                stored.pop(drawer_id, None)
+
+                            mutate_or_raise("delete", delete)
+                            return {
+                                "structuredContent": {
+                                    "success": True,
+                                    "drawer_id": drawer_id,
+                                    "deleted_ids": [drawer_id],
+                                    "chunks_deleted": 1,
+                                }
+                            }
+                        raise AssertionError(name)
+
+                    with mock.patch.object(PROBE, "mcp_call", side_effect=call):
+                        result = PROBE.probe_curator_uat(
+                            object(),
+                            wing="infrastructure",
+                            nonce="abcdef12",
+                            initial_content="private initial fixture",
+                            updated_content="private updated fixture",
+                        )
+                    self.assertEqual({}, stored)
+                    self.assertTrue(result["uat_sequence_valid"])
+                    self.assertTrue(result["cleanup_exact"])
+                    self.assertTrue(result["inventory_restored"])
+                    serialized = json.dumps(result, sort_keys=True)
+                    self.assertNotIn("private initial fixture", serialized)
+                    self.assertNotIn("private updated fixture", serialized)
+                    self.assertNotIn("uat-drawer-fixture", serialized)
+
+    def test_approved_curator_correction_preserves_complete_drawer(self) -> None:
+        before = {
+            "drawer_id": PROBE.APPROVED_DRAWER_ID,
+            "content": "private drawer fixture",
+            "room": "operations",
+            "provenance": "private provenance fixture",
+            "metadata": {
+                "wing": "infrastructure",
+                "room": "operations",
+                "source": "private source fixture",
+                "nested": {"preserved": True},
+            },
+        }
+        after = deepcopy(before)
+        after["metadata"]["wing"] = "devops"
+        result = PROBE.validate_approved_correction(
+            before,
+            after,
+            update_arguments={
+                "drawer_id": PROBE.APPROVED_DRAWER_ID,
+                "wing": "devops",
+            },
+        )
+        self.assertTrue(result["approved_target_verified"])
+        self.assertTrue(result["complete_invariants_preserved"])
+        self.assertRegex(result["preserved_payload_sha256"], r"^[0-9a-f]{64}$")
+        serialized = json.dumps(result, sort_keys=True)
+        for private in (
+            PROBE.APPROVED_DRAWER_ID,
+            "private drawer fixture",
+            "private provenance fixture",
+            "private source fixture",
+        ):
+            self.assertNotIn(private, serialized)
+
+    def test_curator_update_rejects_archive_and_unapproved_targets(self) -> None:
+        before = {
+            "drawer_id": PROBE.APPROVED_DRAWER_ID,
+            "content": "private drawer fixture",
+            "room": "operations",
+            "provenance": "private provenance fixture",
+            "metadata": {"wing": "infrastructure", "room": "operations"},
+        }
+        after = deepcopy(before)
+        after["metadata"]["wing"] = "devops"
+        mutations = (
+            ({**before, "drawer_id": "different-drawer"}, after, {}),
+            (
+                {**before, "metadata": {"wing": "infrastructure-archive"}},
+                after,
+                {},
+            ),
+            ({**before, "room": "decisions"}, after, {}),
+            (before, {**after, "content": "changed"}, {}),
+            (before, after, {"room": "operations"}),
+            (before, after, {"content": "changed"}),
+        )
+        for candidate_before, candidate_after, extra in mutations:
+            with self.subTest(extra=extra), self.assertRaises(PROBE.ProbeError):
+                PROBE.validate_approved_correction(
+                    candidate_before,
+                    candidate_after,
+                    update_arguments={
+                        "drawer_id": PROBE.APPROVED_DRAWER_ID,
+                        "wing": "devops",
+                        **extra,
+                    },
+                )
+
+    def test_validate_evidence_cli_is_offline_and_aggregate_only(self) -> None:
+        evidence = self.root / "curator-evidence.json"
+        evidence.write_text(
+            json.dumps(
+                {
+                    "schema": "solidstats-memory-probe-evidence/v1",
+                    "client_surface": {
+                        "client_surface_valid": True,
+                        "tool_count": 8,
+                        "update_schema_sha256": "a" * 64,
+                    },
+                    "uat_checks": {
+                        "uat_sequence_valid": True,
+                        "cleanup_exact": True,
+                        "inventory_restored": True,
+                    },
+                    "correction_checks": {
+                        "approved_target_verified": True,
+                        "complete_invariants_preserved": True,
+                        "preserved_payload_sha256": "b" * 64,
+                    },
+                    "verdict": "pass",
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        with mock.patch.object(
+            PROBE.urllib_request,
+            "urlopen",
+            side_effect=AssertionError("network access attempted"),
+        ):
+            output = io.StringIO()
+            errors = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(errors):
+                result = PROBE.main(
+                    ["validate-evidence", "--evidence", str(evidence)]
+                )
+        self.assertEqual(0, result, errors.getvalue())
+        self.assertEqual(
+            ["PASS: probe evidence validated"], output.getvalue().splitlines()
+        )
+        self.assertEqual([], errors.getvalue().splitlines())
+
+        private = json.loads(evidence.read_text())
+        private["correction_checks"]["drawer_id"] = PROBE.APPROVED_DRAWER_ID
+        evidence.write_text(json.dumps(private), encoding="utf-8")
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            self.assertEqual(
+                1,
+                PROBE.main(["validate-evidence", "--evidence", str(evidence)]),
+            )
+        self.assertNotIn(PROBE.APPROVED_DRAWER_ID, errors.getvalue())
 
     def test_probe_cleanup_inventory_is_paginated_not_ann_derived(self) -> None:
         probe = self.load_probe()
