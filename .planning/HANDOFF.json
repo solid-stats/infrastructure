@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-08-24T20:03:02.327Z",
+  "phase": "21.1",
+  "phase_name": "curator-update-surface",
+  "phase_dir": ".planning/phases/21.1-curator-update-surface",
+  "plan": 2,
+  "task": 2,
+  "total_tasks": 3,
+  "status": "paused",
+  "completed_tasks": [
+    {
+      "id": 1,
+      "name": "Seal, push, and materialize the exact home-Ubuntu policy",
+      "status": "done",
+      "commit": "d685ba2c3b4221d5b31c29c75b51b4150dd0bb90"
+    }
+  ],
+  "remaining_tasks": [
+    {
+      "id": 2,
+      "name": "Cross the mandatory fresh Codex process boundary",
+      "status": "human_action"
+    },
+    {
+      "id": 3,
+      "name": "Prove the surface, clean UAT, apply the approved correction, and close",
+      "status": "not_started"
+    }
+  ],
+  "blockers": [
+    {
+      "description": "The materializing Codex process must end before any client-surface assertion or live MCP call.",
+      "type": "human_action",
+      "workaround": "Start a genuinely new Codex session rooted at this repository."
+    }
+  ],
+  "async_jobs": [],
+  "human_actions_pending": [
+    {
+      "action": "Close this Codex session and start a new session rooted at the infrastructure repository.",
+      "context": "The MCP client tool surface is loaded at process start; only the new process may resume Plan 02 Task 3.",
+      "blocking": true
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "Resume Task 3 only from a fresh process at the pushed policy-evidence commit.",
+      "rationale": "The current materializing process cannot prove the process-loaded eight-tool client namespace.",
+      "phase": "21.1"
+    }
+  ],
+  "uncommitted_files": [],
+  "next_action": "Start a fresh Codex session rooted at this repository, verify branch gsd/v4.0-solidstats-memory-isolation contains commit d685ba2c3b4221d5b31c29c75b51b4150dd0bb90, then resume Plan 02 at Task 3 by inspecting the process-loaded solidstats_memory eight-tool namespace before any MCP call.",
+  "context_notes": "Task 1 is complete and pushed. The successor config, unchanged URL binding, legacy absence, value-free evidence, private locator semantics/modes/digests, clean review, healthy GSD state, and 173-test suite all passed. No solidstats_memory MCP tool was called in the materializing process."
+}

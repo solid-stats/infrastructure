@@ -5,8 +5,8 @@ milestone_name: SolidStats Memory Isolation
 current_phase: 21.1
 current_phase_name: curator-update-surface
 status: executing
-stopped_at: Completed 21.1-01-PLAN.md
-last_updated: "2026-08-24T19:08:19.938Z"
+stopped_at: Plan 21.1-02 Task 1 materialized; fresh Codex session required for Task 3
+last_updated: "2026-08-24T20:03:57.619Z"
 last_activity: 2026-08-25
 last_activity_desc: Phase 21.1 inserted and scoped through assumptions discussion
 progress:
@@ -328,9 +328,9 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-24T19:08:19.930Z
-Stopped at: Completed 21.1-01-PLAN.md
-Resume file: None
+Last session: 2026-08-24T20:03:57.608Z
+Stopped at: Plan 21.1-02 Task 1 materialized; fresh Codex session required for Task 3
+Resume file: .planning/phases/21.1-curator-update-surface/.continue-here.md
 
 ## Operator Next Steps
 
