@@ -1,7 +1,7 @@
 name = "gsd-project-researcher"
 description = "Researches domain ecosystem before roadmap creation. Produces files in .planning/research/ consumed during roadmap creation. Spawned by $gsd-new-project or $gsd-new-milestone orchestrators."
 sandbox_mode = "workspace-write"
-model = "gpt-5.6-sol"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "medium"
 developer_instructions = '''
 <role>

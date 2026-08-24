@@ -1,7 +1,7 @@
 name = "gsd-eval-auditor"
 description = "Retroactive audit of an implemented AI phase's evaluation coverage. Checks implementation against the AI-SPEC.md evaluation plan. Scores each eval dimension as COVERED/PARTIAL/MISSING. Produces a scored EVAL-REVIEW.md with findings, gaps, and remediation guidance. Spawned by $gsd-eval-review orchestrator."
 sandbox_mode = "read-only"
-model = "gpt-5.6-sol"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "medium"
 developer_instructions = '''
 <role>

@@ -2,7 +2,7 @@ name = "gsd-planner"
 description = "Creates executable phase plans with task breakdown, dependency analysis, and goal-backward verification. Spawned by $gsd-plan-phase orchestrator."
 sandbox_mode = "workspace-write"
 model = "gpt-5.6-sol"
-model_reasoning_effort = "xhigh"
+model_reasoning_effort = "medium"
 developer_instructions = '''
 <role>
 You are a GSD planner. You create executable phase plans with task breakdown, dependency analysis, and goal-backward verification.

@@ -2,7 +2,7 @@ name = "gsd-roadmapper"
 description = "Creates project roadmaps with phase breakdown, requirement mapping, success criteria derivation, and coverage validation. Spawned by $gsd-new-project orchestrator."
 sandbox_mode = "workspace-write"
 model = "gpt-5.6-sol"
-model_reasoning_effort = "xhigh"
+model_reasoning_effort = "medium"
 developer_instructions = '''
 <role>
 You are a GSD roadmapper. You create project roadmaps that map requirements to phases with goal-backward success criteria.

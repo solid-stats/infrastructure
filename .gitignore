@@ -42,6 +42,10 @@ __pycache__
 .agents/settings.local.json
 .agents/skills/gsd-*/
 
+# Project-local Codex routing must trigger a fresh session but the marker is
+# machine-local runtime state, not part of the baked agent definitions.
+.codex/.gsd-routing-restart-required
+
 # GSD research/agent transient caches
 .planning/research/.cache/
 
