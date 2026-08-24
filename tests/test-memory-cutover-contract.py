@@ -2674,9 +2674,10 @@ class MemoryCutoverContractTests(unittest.TestCase):
             b"mempalace_check_duplicate",
             b"mempalace_add_drawer",
             b"mempalace_delete_drawer",
+            b"mempalace_update_drawer",
         ):
             self.assertIn(allowed, configured)
-        for forbidden in (b"tunnel", b"_kg_", b"diary", b"update_drawer"):
+        for forbidden in (b"tunnel", b"_kg_", b"diary", b"checkpoint"):
             self.assertNotIn(forbidden, configured)
         validated = policy(
             "validate",
@@ -2781,6 +2782,158 @@ class MemoryCutoverContractTests(unittest.TestCase):
         rolled_back = policy("upgrade-rollback")
         self.assertEqual(0, rolled_back.returncode, rolled_back.stderr)
         self.assertEqual(predecessor, config.read_bytes())
+
+    def test_client_policy_upgrade_rejects_every_nonexact_state_without_write(
+        self,
+    ) -> None:
+        private = self.root / "client-upgrade-rejections"
+        private.mkdir(mode=0o700)
+        prefix = (
+            b'[mcp_servers.solidstats_memory]\n'
+            b'url = "https://memory.example/solidstats/mcp"\n'
+            b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
+        )
+        predecessor = list(CLIENT_POLICY.PREDECESSOR_TOOLS)
+        successor = list(CLIENT_POLICY.ENABLED_TOOLS)
+        policies: dict[str, bytes] = {
+            "missing": b"",
+            "empty": b"enabled_tools = []\n",
+            "null": b"enabled_tools = null\n",
+            "partial": (
+                b"enabled_tools = "
+                + json.dumps(predecessor[:-1]).encode("ascii")
+                + b"\n"
+            ),
+            "reordered": (
+                b"enabled_tools = "
+                + json.dumps(list(reversed(predecessor))).encode("ascii")
+                + b"\n"
+            ),
+            "duplicate": (
+                b"enabled_tools = "
+                + json.dumps([*predecessor, predecessor[-1]]).encode("ascii")
+                + b"\n"
+            ),
+            "broader": (
+                b"enabled_tools = "
+                + json.dumps([*successor, "mempalace_create_tunnel"]).encode(
+                    "ascii"
+                )
+                + b"\n"
+            ),
+            "unrelated-update": (
+                b"enabled_tools = "
+                + json.dumps([*predecessor, "mempalace_update_room"]).encode(
+                    "ascii"
+                )
+                + b"\n"
+            ),
+            "malformed": b'enabled_tools = ["mempalace_search"\n',
+            "conflicting": (
+                b"enabled_tools = "
+                + json.dumps(predecessor).encode("ascii")
+                + b'\ndisabled_tools = ["mempalace_sync"]\n'
+            ),
+        }
+        legacy = (
+            b'[mcp_servers.mempalace]\ncommand = "legacy"\n'
+            b'bearer_token_env_var = "MEMPALACE_PERSONAL_MCP_TOKEN"\n\n'
+        )
+        policies["legacy-present"] = legacy + (
+            b"enabled_tools = "
+            + json.dumps(predecessor).encode("ascii")
+            + b"\n"
+        )
+
+        for name, policy_line in policies.items():
+            with self.subTest(name=name):
+                config = private / f"{name}.toml"
+                prestate = private / f"{name}.prestate.toml"
+                raw = (
+                    prefix + policy_line
+                    if name != "legacy-present"
+                    else legacy + prefix + policy_line[len(legacy) :]
+                )
+                config.write_bytes(raw)
+                config.chmod(0o600)
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(CLIENT_POLICY_PATH),
+                        "upgrade",
+                        "--config",
+                        str(config),
+                        "--prestate",
+                        str(prestate),
+                        "--url",
+                        "https://memory.example/solidstats/mcp",
+                        "--token-env",
+                        "MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertEqual(raw, config.read_bytes())
+                self.assertFalse(prestate.exists())
+                self.assertFalse(
+                    prestate.with_suffix(prestate.suffix + ".policy.json").exists()
+                )
+
+    def test_client_policy_upgrade_failure_matrix(self) -> None:
+        private = self.root / "client-upgrade-failures"
+        private.mkdir(mode=0o700)
+        config = private / "config.toml"
+        prestate = private / "upgrade.prestate.toml"
+        predecessor = (
+            b'[mcp_servers.solidstats_memory]\n'
+            b'url = "https://memory.example/solidstats/mcp"\n'
+            b'bearer_token_env_var = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"\n'
+            b"enabled_tools = "
+            + json.dumps(list(CLIENT_POLICY.PREDECESSOR_TOOLS)).encode("ascii")
+            + b"\n"
+        )
+        config.write_bytes(predecessor)
+        config.chmod(0o600)
+
+        with (
+            mock.patch.object(
+                CLIENT_POLICY,
+                "_atomic_replace",
+                side_effect=CLIENT_POLICY.PolicyError("injected publication failure"),
+            ),
+            self.assertRaisesRegex(CLIENT_POLICY.PolicyError, "publication"),
+        ):
+            CLIENT_POLICY.upgrade(
+                config,
+                prestate,
+                url="https://memory.example/solidstats/mcp",
+                token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+            )
+        self.assertEqual(predecessor, config.read_bytes())
+        self.assertEqual(predecessor, prestate.read_bytes())
+
+        CLIENT_POLICY.upgrade(
+            config,
+            prestate,
+            url="https://memory.example/solidstats/mcp",
+            token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+        )
+        successor = config.read_bytes()
+        self.assertIn(b"mempalace_update_drawer", successor)
+        external = successor + b"# unrelated writer\n"
+        config.write_bytes(external)
+        config.chmod(0o600)
+        with self.assertRaises(CLIENT_POLICY.PolicyError):
+            CLIENT_POLICY.upgrade_rollback(
+                config,
+                prestate,
+                url="https://memory.example/solidstats/mcp",
+                token_env="MEMPALACE_SOLIDSTATS_MCP_TOKEN",
+            )
+        self.assertEqual(external, config.read_bytes())
 
     def test_client_policy_rejects_conflicts_duplicates_and_unsafe_files(self) -> None:
         private = self.root / "policy-rejections"

@@ -25,7 +25,7 @@ CLIENT_NAME = "solidstats_memory"
 PUBLIC_PATH = "/solidstats/mcp"
 TOKEN_ENV_NAME = "MEMPALACE_SOLIDSTATS_MCP_TOKEN"
 PERSONAL_TOKEN_ENV_NAME = "MEMPALACE_PERSONAL_MCP_TOKEN"
-ENABLED_TOOLS = (
+PREDECESSOR_TOOLS = (
     "mempalace_search",
     "mempalace_list_rooms",
     "mempalace_list_drawers",
@@ -34,6 +34,7 @@ ENABLED_TOOLS = (
     "mempalace_add_drawer",
     "mempalace_delete_drawer",
 )
+ENABLED_TOOLS = (*PREDECESSOR_TOOLS, "mempalace_update_drawer")
 FORBIDDEN_TOOL_PARTS = (
     "tunnel",
     "_kg_",
@@ -43,7 +44,6 @@ FORBIDDEN_TOOL_PARTS = (
     "sync",
     "hook",
     "admin",
-    "update",
     "bulk_delete",
 )
 
@@ -393,6 +393,203 @@ def inspect_policy(
     elif enabled:
         raise PolicyError("target client already has a tool policy")
     return start, end
+
+
+def _upgrade_registration_state(raw: bytes) -> None:
+    """Require the retired legacy client to stay absent during upgrade."""
+    _validate_client_token_bindings(
+        raw, personal_required=False, replacement_required=True
+    )
+    try:
+        decoded = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise PolicyError("client config TOML is malformed") from error
+    servers = decoded.get("mcp_servers")
+    if not isinstance(servers, dict) or "mempalace" in servers:
+        raise PolicyError("legacy client registration must remain absent")
+
+
+def _upgrade_policy_match(
+    raw: bytes, *, url: str, token_env: str
+) -> tuple[str, int, int]:
+    """Classify only the exact predecessor and successor policy states."""
+    _validate_url(url)
+    if token_env != TOKEN_ENV_NAME:
+        raise PolicyError("target client token environment name is invalid")
+    start, end = _section_bounds(raw)
+    section = raw[start:end]
+    if _parse_basic_string(section, b"url") != url:
+        raise PolicyError("target client URL is drifted")
+    if _parse_basic_string(section, b"bearer_token_env_var") != token_env:
+        raise PolicyError("target client token binding is drifted")
+    enabled = list(
+        re.finditer(rb"(?m)^enabled_tools[ \t]*=[ \t]*(.+)$", section)
+    )
+    disabled = list(re.finditer(rb"(?m)^disabled_tools[ \t]*=", section))
+    if disabled or len(enabled) != 1:
+        raise PolicyError("target client tool allowlist is missing or conflicting")
+    try:
+        observed = json.loads(enabled[0].group(1).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PolicyError("target client tool allowlist is malformed") from error
+    if observed == list(PREDECESSOR_TOOLS):
+        state = "predecessor"
+    elif observed == list(ENABLED_TOOLS):
+        state = "successor"
+    else:
+        raise PolicyError("target client tool allowlist is drifted")
+    if any(
+        part in tool
+        for tool in observed
+        for part in FORBIDDEN_TOOL_PARTS
+    ):
+        raise PolicyError("target client tool allowlist exposes a forbidden capability")
+    match = enabled[0]
+    return state, start + match.start(), start + match.end()
+
+
+def _render_upgrade_successor(
+    predecessor: bytes, *, url: str, token_env: str
+) -> bytes:
+    state, start, end = _upgrade_policy_match(
+        predecessor, url=url, token_env=token_env
+    )
+    if state != "predecessor":
+        raise PolicyError("client upgrade prestate is not the exact predecessor")
+    line = (
+        b"enabled_tools = "
+        + json.dumps(list(ENABLED_TOOLS), separators=(",", ":")).encode("ascii")
+    )
+    return predecessor[:start] + line + predecessor[end:]
+
+
+def _upgrade_metadata_raw(predecessor: bytes, successor: bytes) -> bytes:
+    return json.dumps(
+        {
+            "schema": "solidstats-memory-client-policy-upgrade/v1",
+            "accepted_sha256": [_sha256(predecessor), _sha256(successor)],
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii") + b"\n"
+
+
+def _require_upgrade_private_state(
+    prestate: Path,
+    *,
+    predecessor: bytes,
+    successor: bytes,
+    create: bool,
+) -> None:
+    metadata = prestate.with_suffix(prestate.suffix + ".policy.json")
+    expected_metadata = _upgrade_metadata_raw(predecessor, successor)
+    for path, expected in (
+        (prestate, predecessor),
+        (metadata, expected_metadata),
+    ):
+        if path.exists() and not path.is_symlink():
+            observed, _ = _safe_file(path)
+            if observed != expected:
+                raise PolicyError("client upgrade private state is drifted")
+        elif create:
+            _exclusive_write(path, expected)
+        else:
+            raise PolicyError("client upgrade private state is missing")
+
+
+def upgrade_validate_predecessor(
+    config: Path, *, url: str, token_env: str
+) -> None:
+    raw, _ = _safe_file(config)
+    _upgrade_registration_state(raw)
+    state, _, _ = _upgrade_policy_match(raw, url=url, token_env=token_env)
+    if state != "predecessor":
+        raise PolicyError("target client policy is not the exact predecessor")
+
+
+def upgrade_validate_successor(
+    config: Path, *, url: str, token_env: str
+) -> None:
+    raw, _ = _safe_file(config)
+    _upgrade_registration_state(raw)
+    state, _, _ = _upgrade_policy_match(raw, url=url, token_env=token_env)
+    if state != "successor":
+        raise PolicyError("target client policy is not the exact successor")
+
+
+@_locked_config_writer
+def upgrade(
+    config: Path, prestate: Path, *, url: str, token_env: str
+) -> None:
+    current, mode = _safe_file(config)
+    _upgrade_registration_state(current)
+    state, _, _ = _upgrade_policy_match(current, url=url, token_env=token_env)
+    if state == "predecessor":
+        predecessor = current
+        successor = _render_upgrade_successor(
+            predecessor, url=url, token_env=token_env
+        )
+        _require_upgrade_private_state(
+            prestate,
+            predecessor=predecessor,
+            successor=successor,
+            create=True,
+        )
+        _atomic_replace(config, successor, mode, expected_raw=predecessor)
+    else:
+        predecessor, _ = _safe_file(prestate)
+        _upgrade_registration_state(predecessor)
+        successor = _render_upgrade_successor(
+            predecessor, url=url, token_env=token_env
+        )
+        if current != successor:
+            raise PolicyError("target client successor bytes are drifted")
+        _require_upgrade_private_state(
+            prestate,
+            predecessor=predecessor,
+            successor=successor,
+            create=False,
+        )
+    observed, _ = _safe_file(config)
+    _upgrade_registration_state(observed)
+    observed_state, _, _ = _upgrade_policy_match(
+        observed, url=url, token_env=token_env
+    )
+    if observed_state != "successor" or observed != successor:
+        raise PolicyError("client config upgrade read-back failed")
+
+
+@_locked_config_writer
+def upgrade_rollback(
+    config: Path, prestate: Path, *, url: str, token_env: str
+) -> None:
+    current, mode = _safe_file(config)
+    _upgrade_registration_state(current)
+    current_state, _, _ = _upgrade_policy_match(
+        current, url=url, token_env=token_env
+    )
+    predecessor, _ = _safe_file(prestate)
+    _upgrade_registration_state(predecessor)
+    successor = _render_upgrade_successor(
+        predecessor, url=url, token_env=token_env
+    )
+    _require_upgrade_private_state(
+        prestate,
+        predecessor=predecessor,
+        successor=successor,
+        create=False,
+    )
+    expected_current = predecessor if current_state == "predecessor" else successor
+    if current != expected_current:
+        raise PolicyError("client config drift prevents exact upgrade rollback")
+    if current_state == "successor":
+        _atomic_replace(config, predecessor, mode, expected_raw=successor)
+    restored, _ = _safe_file(config)
+    restored_state, _, _ = _upgrade_policy_match(
+        restored, url=url, token_env=token_env
+    )
+    if restored != predecessor or restored_state != "predecessor":
+        raise PolicyError("client config exact upgrade rollback failed")
 
 
 @_locked_config_writer
@@ -963,7 +1160,24 @@ def restore_retirement(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("capture", "apply", "validate", "rollback", "rollback-current", "authorize-current", "pre-retirement", "retire", "restore-retirement"))
+    parser.add_argument(
+        "command",
+        choices=(
+            "capture",
+            "apply",
+            "validate",
+            "rollback",
+            "rollback-current",
+            "authorize-current",
+            "pre-retirement",
+            "retire",
+            "restore-retirement",
+            "upgrade-validate-predecessor",
+            "upgrade",
+            "upgrade-validate-successor",
+            "upgrade-rollback",
+        ),
+    )
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--prestate", type=Path)
     parser.add_argument("--name", default=CLIENT_NAME)
@@ -980,9 +1194,28 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.name != CLIENT_NAME:
             raise PolicyError("target client name is invalid")
-        if args.command in {"capture", "apply", "rollback", "rollback-current", "authorize-current", "retire"} and args.prestate is None:
+        if args.command in {
+            "capture",
+            "apply",
+            "rollback",
+            "rollback-current",
+            "authorize-current",
+            "retire",
+            "upgrade",
+            "upgrade-rollback",
+        } and args.prestate is None:
             raise PolicyError("client config prestate path is required")
-        if args.command in {"apply", "validate", "rollback-current", "pre-retirement", "retire"} and (
+        if args.command in {
+            "apply",
+            "validate",
+            "rollback-current",
+            "pre-retirement",
+            "retire",
+            "upgrade-validate-predecessor",
+            "upgrade",
+            "upgrade-validate-successor",
+            "upgrade-rollback",
+        } and (
             args.url is None or args.token_env is None
         ):
             raise PolicyError("target client binding is required")
@@ -996,6 +1229,28 @@ def main(argv: list[str] | None = None) -> int:
             apply(args.config, args.prestate, url=args.url, token_env=args.token_env)
         elif args.command == "validate":
             validate(args.config, url=args.url, token_env=args.token_env)
+        elif args.command == "upgrade-validate-predecessor":
+            upgrade_validate_predecessor(
+                args.config, url=args.url, token_env=args.token_env
+            )
+        elif args.command == "upgrade":
+            upgrade(
+                args.config,
+                args.prestate,
+                url=args.url,
+                token_env=args.token_env,
+            )
+        elif args.command == "upgrade-validate-successor":
+            upgrade_validate_successor(
+                args.config, url=args.url, token_env=args.token_env
+            )
+        elif args.command == "upgrade-rollback":
+            upgrade_rollback(
+                args.config,
+                args.prestate,
+                url=args.url,
+                token_env=args.token_env,
+            )
         elif args.command == "rollback-current":
             if args.timeout_seconds < 1 or args.timeout_seconds > 3600:
                 raise PolicyError("client rollback timeout is invalid")
