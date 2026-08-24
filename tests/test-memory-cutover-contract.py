@@ -2389,11 +2389,15 @@ class MemoryCutoverContractTests(unittest.TestCase):
         after["wing"] = "devops"
         after["metadata"]["wing"] = "devops"
         unrelated = {"drawer_id": "other", "wing": "devops", "room": "operations"}
+        archive_controls = ("infrastructure-archive", "devops-archive")
+        active_controls = ("web", "server-2")
         pre_inventories = {
             "infrastructure": [{"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "infrastructure", "room": "operations"}],
             "devops": [unrelated],
-            "infrastructure-archive": [{"drawer_id": "archive", "wing": "infrastructure-archive", "room": "operations"}],
-            "web": [{"drawer_id": "web", "wing": "web", "room": "decisions"}],
+            "infrastructure-archive": [{"drawer_id": "archive", "wing": "infrastructure-archive", "room": "operations", "content_preview": "private archive preview", "metadata": {"wing": "infrastructure-archive", "room": "operations"}}],
+            "devops-archive": [{"drawer_id": "archive-2", "wing": "devops-archive", "room": "decisions", "content_preview": "private archive preview 2", "metadata": {"wing": "devops-archive", "room": "decisions"}}],
+            "web": [{"drawer_id": "web", "wing": "web", "room": "decisions", "content_preview": "private active preview", "metadata": {"wing": "web", "room": "decisions"}}],
+            "server-2": [{"drawer_id": "server", "wing": "server-2", "room": "operations", "content_preview": "private active preview 2", "metadata": {"wing": "server-2", "room": "operations"}}],
         }
         post_inventories = deepcopy(pre_inventories)
         post_inventories["infrastructure"] = []
@@ -2409,6 +2413,8 @@ class MemoryCutoverContractTests(unittest.TestCase):
             },
             pre_inventories=pre_inventories,
             post_inventories=post_inventories,
+            archive_control_wings=archive_controls,
+            active_control_wings=active_controls,
         )
         self.assertTrue(result["approved_target_verified"])
         self.assertTrue(result["complete_invariants_preserved"])
@@ -2428,11 +2434,15 @@ class MemoryCutoverContractTests(unittest.TestCase):
         after = deepcopy(before)
         after["wing"] = "devops"
         after["metadata"]["wing"] = "devops"
+        archive_controls = ("infrastructure-archive", "devops-archive")
+        active_controls = ("web", "server-2")
         pre_inventories = {
             "infrastructure": [{"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "infrastructure", "room": "operations"}],
             "devops": [],
-            "infrastructure-archive": [{"drawer_id": "archive", "wing": "infrastructure-archive", "room": "operations"}],
-            "web": [{"drawer_id": "web", "wing": "web", "room": "decisions"}],
+            "infrastructure-archive": [{"drawer_id": "archive", "wing": "infrastructure-archive", "room": "operations", "content_preview": "private archive preview", "metadata": {"wing": "infrastructure-archive", "room": "operations"}}],
+            "devops-archive": [{"drawer_id": "archive-2", "wing": "devops-archive", "room": "decisions", "content_preview": "private archive preview 2", "metadata": {"wing": "devops-archive", "room": "decisions"}}],
+            "web": [{"drawer_id": "web", "wing": "web", "room": "decisions", "content_preview": "private active preview", "metadata": {"wing": "web", "room": "decisions"}}],
+            "server-2": [{"drawer_id": "server", "wing": "server-2", "room": "operations", "content_preview": "private active preview 2", "metadata": {"wing": "server-2", "room": "operations"}}],
         }
         post_inventories = deepcopy(pre_inventories)
         post_inventories["infrastructure"] = []
@@ -2463,7 +2473,79 @@ class MemoryCutoverContractTests(unittest.TestCase):
                     },
                     pre_inventories=pre_inventories,
                     post_inventories=post_inventories,
+                    archive_control_wings=archive_controls,
+                    active_control_wings=active_controls,
                 )
+
+    def test_curator_update_requires_complete_control_inventory_model(self) -> None:
+        before = deepcopy(OFFICIAL_V350_UNCHUNKED_DRAWER)
+        before["drawer_id"] = PROBE.APPROVED_DRAWER_ID
+        after = deepcopy(before)
+        after["wing"] = "devops"
+        after["metadata"]["wing"] = "devops"
+        archive_controls = ("infrastructure-archive", "devops-archive")
+        active_controls = ("web", "server-2")
+        pre = {
+            "infrastructure": [{"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "infrastructure", "room": "operations"}],
+            "devops": [],
+            "infrastructure-archive": [{"drawer_id": "archive", "wing": "infrastructure-archive", "room": "operations", "content_preview": "private archive", "metadata": {"wing": "infrastructure-archive", "room": "operations"}}],
+            "devops-archive": [{"drawer_id": "archive-2", "wing": "devops-archive", "room": "decisions", "content_preview": "private archive 2", "metadata": {"wing": "devops-archive", "room": "decisions"}}],
+            "web": [{"drawer_id": "web", "wing": "web", "room": "decisions", "content_preview": "private active", "metadata": {"wing": "web", "room": "decisions"}}],
+            "server-2": [{"drawer_id": "server", "wing": "server-2", "room": "operations", "content_preview": "private active 2", "metadata": {"wing": "server-2", "room": "operations"}}],
+        }
+        post = deepcopy(pre)
+        post["infrastructure"] = []
+        post["devops"] = [{"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "devops", "room": "operations"}]
+
+        def rejected(
+            candidate_pre: dict[str, object],
+            candidate_post: dict[str, object],
+            *,
+            archives: tuple[str, ...] = archive_controls,
+            actives: tuple[str, ...] = active_controls,
+        ) -> None:
+            with self.assertRaises(PROBE.ProbeError):
+                PROBE.validate_approved_correction(
+                    before,
+                    after,
+                    update_arguments={"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "devops"},
+                    pre_inventories=candidate_pre,
+                    post_inventories=candidate_post,
+                    archive_control_wings=archives,
+                    active_control_wings=actives,
+                )
+
+        source_target_only = {
+            wing: deepcopy(pre[wing]) for wing in ("infrastructure", "devops")
+        }
+        source_target_only_post = {
+            wing: deepcopy(post[wing]) for wing in ("infrastructure", "devops")
+        }
+        rejected(source_target_only, source_target_only_post)
+        rejected(pre, post, archives=())
+        rejected(pre, post, actives=())
+
+        for wing in ("infrastructure-archive", "web"):
+            empty_pre, empty_post = deepcopy(pre), deepcopy(post)
+            empty_pre[wing] = []
+            empty_post[wing] = []
+            rejected(empty_pre, empty_post)
+
+        partial_pre, partial_post = deepcopy(pre), deepcopy(post)
+        partial_pre.pop("devops-archive")
+        partial_post.pop("devops-archive")
+        rejected(partial_pre, partial_post)
+
+        renamed_pre, renamed_post = deepcopy(pre), deepcopy(post)
+        renamed_pre["renamed-archive"] = renamed_pre.pop("devops-archive")
+        renamed_post["renamed-archive"] = renamed_post.pop("devops-archive")
+        rejected(renamed_pre, renamed_post)
+
+        extra_pre, extra_post = deepcopy(pre), deepcopy(post)
+        extra = [{"drawer_id": "extra", "wing": "extra", "room": "operations"}]
+        extra_pre["extra"] = deepcopy(extra)
+        extra_post["extra"] = deepcopy(extra)
+        rejected(extra_pre, extra_post)
 
         inventory_mutations = (
             ("source-not-empty", lambda snapshots: snapshots["infrastructure"].append({"drawer_id": "residue", "wing": "infrastructure", "room": "operations"})),
@@ -2472,15 +2554,17 @@ class MemoryCutoverContractTests(unittest.TestCase):
             ("unrelated-active-changed", lambda snapshots: snapshots["web"][0].update({"room": "changed"})),
         )
         for name, mutate in inventory_mutations:
-            candidate = deepcopy(post_inventories)
+            candidate = deepcopy(post)
             mutate(candidate)
             with self.subTest(name=name), self.assertRaises(PROBE.ProbeError):
                 PROBE.validate_approved_correction(
                     before,
                     after,
                     update_arguments={"drawer_id": PROBE.APPROVED_DRAWER_ID, "wing": "devops"},
-                    pre_inventories=pre_inventories,
+                    pre_inventories=pre,
                     post_inventories=candidate,
+                    archive_control_wings=archive_controls,
+                    active_control_wings=active_controls,
                 )
 
     def test_validate_evidence_cli_is_offline_and_aggregate_only(self) -> None:
