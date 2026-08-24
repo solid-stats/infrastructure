@@ -424,14 +424,12 @@ apply the approved active-wing correction without changing archive or
 unrelated palace data.
 **Requirements:** CUR-06, CUR-07
 **Depends on:** Phase 21
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 
 - [x] 21.1-01-PLAN.md
-- [ ] 21.1-02-PLAN.md
-
-- [ ] TBD (run `$gsd-plan-phase 21.1` to break down)
+- [x] 21.1-02-PLAN.md
 
 #### Phase 22: Archive Distillation
 
@@ -471,4 +469,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 19. SolidStats Memory Foundation | v4.0 | 6/6 | Complete | 2026-08-20 |
 | 20. Local Corpus Migration | v4.0 | 9/9 | Complete | 2026-08-20 |
 | 21. Restore, Cutover & Recovery | v4.0 | 4/4 | Complete | 2026-08-22 |
+| 21.1. Curator Update Surface | v4.0 | 2/2 | Complete | 2026-08-25 |
 | 22. Archive Distillation | v4.0 | 0/TBD | Planned | |

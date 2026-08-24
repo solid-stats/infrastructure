@@ -4,17 +4,17 @@ milestone: v4.0
 milestone_name: SolidStats Memory Isolation
 current_phase: 21.1
 current_phase_name: curator-update-surface
-status: executing
-stopped_at: Plan 21.1-02 Task 1 materialized; fresh Codex session required for Task 3
-last_updated: "2026-08-24T20:03:57.619Z"
+status: complete
+stopped_at: Completed 21.1-02-PLAN.md
+last_updated: "2026-08-24T20:32:37.087Z"
 last_activity: 2026-08-25
-last_activity_desc: Phase 21.1 inserted and scoped through assumptions discussion
+last_activity_desc: Phase 21.1 verified complete; Phase 22 remains unstarted
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 21
-  completed_plans: 20
-  percent: 60
+  completed_plans: 21
+  percent: 80
 ---
 
 <!-- markdownlint-disable MD013 MD033 -->
@@ -30,10 +30,10 @@ See: .planning/PROJECT.md (updated 2026-06-11)
 
 ## Current Position
 
-Phase: 21.1 (curator-update-surface) — EXECUTING
+Phase: 21.1 (curator-update-surface) — COMPLETE
 Plan: 2 of 2
-Status: Ready to execute
-Last activity: 2026-08-25 — Phase 21.1 execution started
+Status: Verified complete
+Last activity: 2026-08-25 — Fresh curator acceptance verified
 
 **Phase 21 completion evidence:**
 
@@ -167,6 +167,7 @@ Last activity: 2026-08-25 — Phase 21.1 execution started
 | Phase 20 P05   | cont.    | 2 tasks | 3 files |
 | Phase 21 P01   | 13min    | 2 tasks | 5 files |
 | Phase 21.1 P01 | 20m43s   | 3 tasks | 5 files |
+| Phase 21.1 P02 | 29m      | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -233,6 +234,8 @@ Recent decisions affecting current work:
 - [Phase ?]: The stable curator successor appends only mempalace_update_drawer to the exact ordered seven-tool predecessor.
 - [Phase ?]: Curator validation remains offline and aggregate-only, using exact-ID complete-object comparison.
 - [Phase ?]: The stale Phase 21 restore lock was retained durably before removing only its registered worktree.
+- [Phase 21.1]: Fresh process-loaded client metadata is the client-policy authority. — Raw server enumeration cannot prove client-side exclusions.
+- [Phase 21.1]: The approved live correction changed only the active drawer wing. — Complete canonical comparison and all control inventories passed.
 
 ### Pending Todos
 
@@ -328,9 +331,9 @@ Items now in scope for v2.0 (previously deferred at v1 close):
 
 ## Session Continuity
 
-Last session: 2026-08-24T20:03:57.608Z
-Stopped at: Plan 21.1-02 Task 1 materialized; fresh Codex session required for Task 3
-Resume file: .planning/phases/21.1-curator-update-surface/.continue-here.md
+Last session: 2026-08-24T20:32:37.079Z
+Stopped at: Completed 21.1-02-PLAN.md
+Resume file: None
 
 ## Operator Next Steps
 
