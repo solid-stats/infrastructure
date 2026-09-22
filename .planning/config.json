@@ -83,9 +83,9 @@
   },
   "parallelization": true,
   "model_overrides": {
-    "gsd-plan-checker": "gpt-5.6-terra",
-    "gsd-code-reviewer": "gpt-5.6-sol",
-    "gsd-verifier": "gpt-5.6-sol"
+    "gsd-plan-checker": "gpt-6-sol",
+    "gsd-code-reviewer": "gpt-6-sol",
+    "gsd-verifier": "gpt-6-sol"
   },
   "agent_skills": {
     "gsd-phase-researcher": [
