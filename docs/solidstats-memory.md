@@ -3,8 +3,10 @@
 ## Safety Boundary
 
 SolidStats memory is an isolated service named `solidstats_memory`. It does not
-share credentials, Qdrant, storage, Kubernetes identity, or client aliases with
-personal memory or VocalClub. The old SolidStats palace is read-only from the
+share Qdrant credentials, collections, local storage, Kubernetes identity, or
+client aliases with personal memory or VocalClub. The user-approved S3 credential
+exception for unified personal/global backups is documented in
+`docs/unified-memory.md`. The old SolidStats palace is read-only from the
 start of migration until it is retained as an offline snapshot.
 
 Never run the old and new long-running stacks simultaneously on the VPS. Build,
@@ -193,3 +195,21 @@ finished work.
 Do not deploy until the immutable MemPalace image, host-source NetworkPolicy CIDR,
 storage sizing, collection naming, metrics surface, and backup uploader contract
 are verified. Secret values never enter this repository or planning artifacts.
+
+## Approved shared Qdrant process
+
+The approved unified-memory migration shares the existing private Qdrant process
+with personal/global memory. Collection-scoped credentials, exact namespace and
+pod policies, separate PVCs and identities, and separate recovery packages
+preserve the palace boundary. The client contract and `solidstats_memory` name
+are unchanged. VocalClub remains outside this deployment. See [unified
+memory](unified-memory.md) for the source renderer, shared host coordinator and
+fresh acceptance gates.
+
+Both backup CronJobs remain suspended templates. Staggered host timers invoke
+the same root-owned coordinator, which retains the existing SolidStats Job owner
+reference, package format and completion oracles. Keep the existing failure
+guard. Do not invoke backup Jobs or restore controllers outside that
+coordinator. Historical Phase 21 acceptance is evidence of the original
+deployment; it does not prove acceptance of the shared process or a new current
+recurring-package drill.

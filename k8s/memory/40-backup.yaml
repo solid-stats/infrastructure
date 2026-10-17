@@ -32,7 +32,7 @@ metadata:
 spec:
   schedule: "0 5 * * *"
   timeZone: Europe/Moscow
-  suspend: false
+  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 7
   failedJobsHistoryLimit: 7

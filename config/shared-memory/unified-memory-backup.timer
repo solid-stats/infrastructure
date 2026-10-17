@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily unified backup through the shared coordinator
+[Timer]
+OnCalendar=*-*-* 06:30:00 Europe/Moscow
+Persistent=true
+Unit=shared-memory-backup@unified.service
+[Install]
+WantedBy=timers.target

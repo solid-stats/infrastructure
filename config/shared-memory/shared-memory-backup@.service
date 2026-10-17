@@ -1,0 +1,14 @@
+[Unit]
+Description=Serialized shared-Qdrant backup for %i
+After=k3s.service
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/local/sbin/operate-shared-memory --config /etc/shared-memory/coordinator.json --lock-wait-seconds 3900 backup --scope %i
+TimeoutStartSec=15000
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/shared-memory-coordinator
+ProtectHome=true

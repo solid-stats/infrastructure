@@ -1,0 +1,33 @@
+{
+  "schema": "shared-memory-coordinator/v1",
+  "kubectl": "/usr/local/bin/kubectl",
+  "kubeconfig": "/etc/rancher/k3s/k3s.yaml",
+  "context": "REQUIRED_REVIEWED_CONTEXT",
+  "stateRoot": "/var/lib/shared-memory-coordinator",
+  "timeout": 3600,
+  "scopes": {
+    "solidstats": {
+      "namespace": "solidstats-memory",
+      "cronjob": "solidstats-memory-backup",
+      "templateSha256": "REQUIRED_LIVE_CANONICAL_JOB_TEMPLATE_SHA256"
+    },
+    "unified": {
+      "namespace": "unified-memory",
+      "cronjob": "unified-memory-backup",
+      "writer": "mempalace",
+      "pvc": "unified-memory-data",
+      "templateSha256": "REQUIRED_LIVE_CANONICAL_JOB_TEMPLATE_SHA256"
+    }
+  },
+  "restore": {
+    "python": "/usr/bin/python3",
+    "module": "/usr/local/libexec/unified_memory_recovery.py",
+    "protectedFile": "/etc/shared-memory/protected.json",
+    "keyFile": "/etc/shared-memory/qdrant-operator.key",
+    "qdrantUrl": "http://127.0.0.1:16333"
+  },
+  "solidstatsRecovery": {
+    "python": "/usr/bin/python3",
+    "module": "/opt/solidstats-infrastructure/scripts/restore-solidstats-memory.py"
+  }
+}

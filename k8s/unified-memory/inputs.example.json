@@ -1,0 +1,39 @@
+{
+  "schema": "unified-memory-deployment-input/v1",
+  "namespace": "unified-memory",
+  "palacePath": "/data/palace",
+  "qdrantUrl": "http://qdrant.solidstats-memory.svc:6333",
+  "qdrantNamespace": "Unified",
+  "qdrantVersion": "1.19.0",
+  "pvcSize": "4Gi",
+  "minimumBackupFreeBytes": 1073741824,
+  "resources": {
+    "requests": {
+      "cpu": "250m",
+      "memory": "1Gi"
+    },
+    "limits": {
+      "cpu": "1",
+      "memory": "3Gi"
+    }
+  },
+  "hostNginxSourceCidr": "192.0.2.1/32",
+  "backupS3Cidr": "192.0.2.2/32",
+  "probeWing": "REQUIRED_APPROVED_ACTIVE_WING",
+  "collections": [
+    {
+      "logicalName": "mempalace_drawers",
+      "alias": "mempalace_Unified_9a994364b7c26031_mempalace_drawers",
+      "physical": "unified-v1-mempalace_drawers",
+      "dimension": 384,
+      "distance": "Cosine"
+    },
+    {
+      "logicalName": "mempalace_closets",
+      "alias": "mempalace_Unified_9a994364b7c26031_mempalace_closets",
+      "physical": "unified-v1-mempalace_closets",
+      "dimension": 384,
+      "distance": "Cosine"
+    }
+  ]
+}
