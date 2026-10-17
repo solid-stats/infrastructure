@@ -261,6 +261,43 @@ class ManifestTests(unittest.TestCase):
         self.config = json.loads((ROOT / "k8s/unified-memory/inputs.example.json").read_text())
         self.config["probeWing"] = "technical-operations"
 
+    def test_only_reviewed_qdrant_versions_are_rendered(self):
+        for version in ("1.19.0", "1.19.2"):
+            with self.subTest(version=version):
+                renderer.generated({**self.config, "qdrantVersion": version}, IMAGE)
+        for version in ("1.19.1", "1.20.0", "latest", None):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                renderer.generated({**self.config, "qdrantVersion": version}, IMAGE)
+
+    def test_all_memory_containers_render_home_and_reviewed_pull_policy(self):
+        for policy in (None, "IfNotPresent", "Never"):
+            config = copy.deepcopy(self.config)
+            if policy is not None:
+                config["mempalaceImagePullPolicy"] = policy
+            resources = renderer.generated(config, IMAGE)["items"]
+            deployment = next(row for row in resources if row["kind"] == "Deployment")
+            backup = next(row for row in resources if row["kind"] == "CronJob")
+            pod = deployment["spec"]["template"]["spec"]
+            containers = [*pod["initContainers"], *pod["containers"],
+                          *backup["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"]]
+            self.assertEqual(3, len(containers))
+            for container in containers:
+                with self.subTest(policy=policy, container=container["name"]):
+                    self.assertEqual(policy or "IfNotPresent", container["imagePullPolicy"])
+                    self.assertEqual("/data", next(row["value"] for row in container["env"] if row["name"] == "HOME"))
+
+    def test_unreviewed_image_pull_policies_are_rejected(self):
+        for policy in ("Always", "never", "", None, 1, [], {}):
+            with self.subTest(policy=policy), self.assertRaises(ValueError):
+                renderer.generated({**self.config, "mempalaceImagePullPolicy": policy}, IMAGE)
+
+    def test_optional_pull_policy_does_not_allow_unknown_collection_fields(self):
+        config = copy.deepcopy(self.config)
+        config["mempalaceImagePullPolicy"] = "Never"
+        config["collections"][0]["unexpected"] = True
+        with self.assertRaises(ValueError):
+            renderer.generated(config, IMAGE)
+
     def test_complete_isolated_runtime_and_suspended_template(self):
         resources = renderer.generated(self.config, IMAGE)["items"]
         deployment = next(row for row in resources if row["kind"] == "Deployment")
@@ -315,8 +352,8 @@ class NativeAuthorizationTests(unittest.TestCase):
         import time
         executable = os.environ["UNIFIED_QDRANT_BINARY"]
         version = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=10)
-        if version.returncode or version.stdout.strip() != "qdrant 1.19.0":
-            raise RuntimeError("pinned Qdrant 1.19.0 required")
+        if version.returncode or version.stdout.strip() not in {"qdrant 1.19.0", "qdrant 1.19.2"}:
+            raise RuntimeError("reviewed Qdrant 1.19.0 or 1.19.2 required")
         cls.temporary = tempfile.TemporaryDirectory(prefix="uq-")
         cls.root = Path(cls.temporary.name)
         with socket.socket() as listener:

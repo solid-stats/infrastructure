@@ -69,6 +69,77 @@ class CheckedInMemoryConfigContractTests(unittest.TestCase):
             capture_output=True, check=False, timeout=10,
         )
 
+    def test_backup_oracle_accepts_reviewed_delete_schemas(self) -> None:
+        drawer_id = "synthetic-drawer"
+        exact = {"success": True, "drawer_id": drawer_id,
+                 "deleted_ids": [drawer_id], "chunks_deleted": 1}
+        BACKUP_ORACLE.validate_delete_result(exact, drawer_id=drawer_id)
+        for count in (0, 2):
+            BACKUP_ORACLE.validate_delete_result(
+                {**exact, "closets_deleted": count}, drawer_id=drawer_id
+            )
+        for count in (-1, True, False, 1.0, "0", None):
+            with self.subTest(closets_deleted=count), self.assertRaises(BACKUP_ORACLE.BackupOracleError):
+                BACKUP_ORACLE.validate_delete_result(
+                    {**exact, "closets_deleted": count}, drawer_id=drawer_id
+                )
+        for change in ({"extra": 0}, {"success": False}, {"drawer_id": "other"},
+                       {"deleted_ids": []}, {"chunks_deleted": True}, {"chunks_deleted": 2}):
+            with self.subTest(change=change), self.assertRaises(BACKUP_ORACLE.BackupOracleError):
+                BACKUP_ORACLE.validate_delete_result({**exact, **change}, drawer_id=drawer_id)
+
+    def test_backup_source_must_own_the_active_runtime_alias(self) -> None:
+        valid = {"result": {"aliases": [{"collection_name": "active", "alias_name": "runtime"}]}}
+        BACKUP_ORACLE.require_active_backup_alias(valid, physical="active", alias="runtime")
+        for response in ({}, {"result": {"aliases": []}},
+                         {"result": {"aliases": "invalid"}},
+                         {"result": {"aliases": [None]}},
+                         {"result": {"aliases": valid["result"]["aliases"] * 2}}):
+            with self.subTest(response=response), self.assertRaises(BACKUP_ORACLE.BackupOracleError):
+                BACKUP_ORACLE.require_active_backup_alias(response, physical="active", alias="runtime")
+        with self.assertRaises(BACKUP_ORACLE.BackupOracleError):
+            BACKUP_ORACLE.require_active_backup_alias(valid, physical="retired", alias="runtime")
+        with self.assertRaises(BACKUP_ORACLE.BackupOracleError):
+            BACKUP_ORACLE.require_active_backup_alias(valid, physical="active", alias="other")
+
+    def test_validator_rejects_a_removed_active_backup_alias_guard(self) -> None:
+        for original, replacement in (
+            ("require_active_backup_alias(", "unguarded_backup_source("),
+            ("name: QDRANT_LOGICAL_ALIAS", "name: RETIRED_LOGICAL_ALIAS"),
+        ):
+            temporary = tempfile.TemporaryDirectory()
+            self.addCleanup(temporary.cleanup)
+            manifest_dir = Path(temporary.name) / "memory"
+            shutil.copytree(ROOT / "k8s" / "memory", manifest_dir)
+            path = manifest_dir / "40-backup.yaml"
+            text = path.read_text()
+            self.assertIn(original, text)
+            path.write_text(text.replace(original, replacement, 1))
+            result = subprocess.run(
+                ["python3", str(VALIDATOR), "--manifest-dir", str(manifest_dir),
+                 "--allow-operator-placeholders"],
+                capture_output=True, timeout=10,
+            )
+            self.assertNotEqual(0, result.returncode)
+
+    def test_backup_oracle_renderer_uses_current_source_bytes(self) -> None:
+        spec = importlib.util.spec_from_file_location("memory_manifest_renderer", MANIFEST_RENDERER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        source = (ROOT / "k8s/memory/40-backup.yaml").read_bytes()
+        stale = re.sub(rb"(?m)^(  solidstats_memory_backup_oracle\.py: )[A-Za-z0-9+/=]+",
+                       rb"\1c3RhbGU=", source)
+        rendered = module.render_backup_oracle(stale, BACKUP_ORACLE_PATH.read_bytes())
+        self.assertEqual(source, rendered)
+        parsed = list(yaml.safe_load_all(rendered))
+        oracle = next(row for row in parsed if row.get("kind") == "ConfigMap"
+                      and row["metadata"]["name"] == "solidstats-memory-backup-oracle")
+        self.assertEqual(BACKUP_ORACLE_PATH.read_bytes(), base64.b64decode(
+            oracle["binaryData"]["solidstats_memory_backup_oracle.py"]))
+        for invalid in (b"", stale + b"\n" + stale):
+            with self.subTest(invalid_length=len(invalid)), self.assertRaises(ValueError):
+                module.render_backup_oracle(invalid, BACKUP_ORACLE_PATH.read_bytes())
+
     def test_backup_oracle_exact_not_found_and_error_matrix(self) -> None:
         drawer_id = "synthetic-drawer"
         BACKUP_ORACLE.validate_not_found_result(
@@ -955,7 +1026,11 @@ class MemorySecretRendererContractTests(unittest.TestCase):
                     {
                         "collection": self.values["MEMORY_QDRANT_COLLECTION"],
                         "access": "rw",
-                    }
+                    },
+                    {
+                        "collection": self.values["MEMORY_QDRANT_LOGICAL_ALIAS"],
+                        "access": "r",
+                    },
                 ],
             },
         )

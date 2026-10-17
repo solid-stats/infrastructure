@@ -85,7 +85,10 @@ backup_qdrant_token = jwt(
     qdrant_api_key,
     {
         "sub": "solidstats-memory-backup",
-        "access": [{"collection": qdrant_collection, "access": "rw"}],
+        "access": [
+            {"collection": qdrant_collection, "access": "rw"},
+            {"collection": qdrant_logical_alias, "access": "r"},
+        ],
     },
 )
 observer_qdrant_token = jwt(

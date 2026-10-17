@@ -1,8 +1,8 @@
 # Unified personal/global memory on shared Qdrant
 
-The runtime uses one full MemPalace 3.5.0 process, one embeddinggemma model,
+The runtime uses one full MemPalace 3.11.0 process, one embeddinggemma model,
 namespace `unified-memory`, its own PVC and ServiceAccounts, and the existing
-private Qdrant 1.19.0 service in `solidstats-memory`. The user approved this
+private Qdrant 1.19.2 service in `solidstats-memory`. The user approved this
 process-sharing boundary. SolidStats collections, aliases, local state and
 Qdrant credentials remain separate; its client contract is unchanged. The user
 explicitly approved reusing the existing S3 credential for backups under
@@ -30,11 +30,17 @@ keys `logicalName`, `alias`, `physical`, `dimension`, `distance`. Dimension is
 URL is fixed to `http://qdrant.solidstats-memory.svc:6333`. The source example
 is not deployable until its `REQUIRED` marker is replaced.
 
-Use the inspected full image, explicitly pinned at invocation:
+Use the inspected runtime image, explicitly pinned at invocation. The current
+operator-built image contains MemPalace 3.11.0 and the exact inherited offline
+embedding cache. Set `mempalaceImagePullPolicy` to `Never` in the private input
+for this local OCI reference and complete the preparation below. The optional
+field accepts only `IfNotPresent` or `Never`; omitting it defaults to
+`IfNotPresent` for a registry-pullable official image. The same setting applies
+to the runtime, init and backup containers:
 
 <!-- markdownlint-disable MD013 -->
 ```sh
-python3 scripts/render-unified-memory.py --inputs /root/memory-operator/inputs.json --image ghcr.io/mempalace/mempalace@sha256:d9d75fab4138a22d013a244bb4153fa1938830be3726cf826ffd02aeba73fe8e --output /root/memory-operator/rendered --admin-key-file /root/memory-operator/admin.key --http-token-file /root/memory-operator/http-token --s3-file /root/memory-operator/s3.json
+python3 scripts/render-unified-memory.py --inputs /root/memory-operator/inputs.json --image docker.io/library/unified-mempalace@sha256:de3f4f4498c722230e4a45026338b23ab86912bf9e8676fa2b01ee608e53fe71 --output /root/memory-operator/rendered --admin-key-file /root/memory-operator/admin.key --http-token-file /root/memory-operator/http-token --s3-file /root/memory-operator/s3.json
 ```
 <!-- markdownlint-enable MD013 -->
 
@@ -60,9 +66,61 @@ ConfigMap, one-replica Recreate Deployment, ClusterIP Service, suspended backup
 CronJob and default-deny policies. It includes reciprocal Qdrant ingress in the
 SolidStats namespace; apply that resource too. DNS uses the existing `k8s-app:
 kube-dns` selector. Only measured host-nginx source access and scoped HTTPS
-backup egress are allowed. Retain `MEMPALACE_MCP_ALLOW_PEER_WRITER=1` for
-MemPalace 3.5's HTTP thread-writer workaround. `/data` remains writable for
-sibling tunnel files.
+backup egress are allowed. Retain `MEMPALACE_MCP_ALLOW_PEER_WRITER=1`, the
+existing HTTP thread-writer compatibility setting. `/data` remains writable
+for sibling tunnel files.
+
+## Runtime upgrade and model preservation
+
+The reviewed upgrade is MemPalace 3.11.0 with Qdrant 1.19.2, whose pinned image
+is recorded in `k8s/memory/10-qdrant.yaml`. The renderer also accepts Qdrant
+1.19.0 for reviewed rollback inputs; historical 1.19.0 records remain historical.
+Release provenance is the [MemPalace package](https://pypi.org/project/mempalace/3.11.0/)
+and [Qdrant release](https://github.com/qdrant/qdrant/releases/tag/v1.19.2)
+(accessed 2026-10-17).
+
+The deployed MemPalace image was built from the exact existing personal 3.5.0
+base and the official 3.11.0 wheel, installed with `--no-deps`; dependency checks
+passed without network access. Wheel SHA256:
+`43e4c690e339b66e86a3177fe4eea15da3d9541ecbd58e671431c1e13dc1bf0c`.
+This is an operator-retained local image, not a published Docker Hub artifact.
+The official 3.11.0 GHCR index digest is
+`feee4ba49a76b94e897efef4b3b12450b1199e14b40262676e027ef9555afc22`
+and its amd64 manifest digest is
+`c8744e3c310f08394f29b0807eb291f0728c007a18bf4f1f404bcf2c4c5e14e9`;
+neither identifies the locally built image or proves cache compatibility.
+
+Before applying generated resources, the operator must import the retained OCI
+archive into the target node's Kubernetes image store, verify its exact digest,
+and review all serving, init and backup container settings. This local image
+requires `imagePullPolicy: Never` and explicit `HOME=/data` so inherited official
+configuration paths remain usable. The renderer sets `HOME=/data` for runtime,
+init and backup containers and uses the selected policy for all three. Confirm
+both in the final manifests and prove the preload separately. Kubernetes
+[documents `Never` as requiring an existing local image](https://kubernetes.io/docs/concepts/containers/images/#image-pull-policy)
+(accessed 2026-10-17). Recheck image availability immediately before rollout:
+disk-pressure image garbage collection removed the unused candidate after its
+test Pod was deleted, and reimport was required. Keep a verified durable archive
+outside the disposable node image cache for recovery and replacement nodes.
+
+The embedding model remains the existing EG1 q8 artifact at revision
+`5090578d9565bb06545b4552f76e6bc2c93e4a66`, with 384-dimensional vectors and
+the same inherited model/tokenizer files. Compare every retained cache file
+against the private pre-upgrade hash manifest and require offline inference.
+Do not download a latest model, replace quantization, or re-embed collections
+as part of this upgrade. EG1, EG2 and Harrier 270M comparisons belong to a later
+isolated benchmark; no benchmark result or model-selection conclusion is
+established here.
+
+MemPalace 3.11.0 compatibility checks must accept `closets_deleted` in deletion
+results and the current tunnel-list response shape. With Qdrant, status can
+report SQLite as unchecked with false/null values; perform separate SQLite
+integrity and table checks rather than interpreting that field as verification.
+Release pins and successful rollout alone do not close acceptance. Require
+fresh post-upgrade backups for both scopes, isolated cold restores with new
+physical collection names and unchanged active aliases, exact vector/payload
+and sidecar parity, and ordinary create/read/search/delete cleanup. Record each
+scope's results independently before declaring the upgrade complete.
 
 ## Deployment preparation and live acceptance
 
@@ -241,6 +299,35 @@ transition needs the separately reviewed import/cutover procedure.
 
 ## Existing SolidStats recovery compatibility
 
+### Active recurring backup binding
+
+The recurring backup must snapshot the physical collection currently owning
+the SolidStats runtime alias. Its controller now checks that ownership before
+creating a snapshot and fails closed on a stale binding. The backup credential
+needs read/write access to that physical collection and read access to its own
+logical alias: Qdrant filters alias listings by the token's alias permissions.
+Neither permission grants access to unified memory.
+
+An alias cutover must rebind the recurring template's `QDRANT_COLLECTION`, its
+physical backup credential and any deployed observer together. Recompute the
+coordinator template digest under the shared operation lock. A successful job
+or a checksum-correct restore alone does not prove the right source was backed
+up: compare the recovered payload/vector fingerprint with the active corpus.
+
+On 2026-10-17, a full recurring-package restore exposed a stale predecessor
+binding with 19,534 records. After rebinding, a fresh S3 recovery point restored
+all 19,550 active records exactly without publishing an alias. The inactive
+predecessor remained protected. Evidence belongs to logical artifact
+`mempalace-runtime-upgrade-20261017`; its private root-owned VPS locator is
+`~/.local/share/mempalace-upgrade/20261017/ARTIFACTS.locator.json`.
+
+Restore rehearsal triggered real disk-pressure eviction on that host. Retain
+receipts and source packages, clean completed test copies, and verify node disk
+headroom before adding recovery copies. A MemAvailable measurement does not
+measure this storage requirement.
+
+### Historical Phase 21 controller
+
 The original `scripts/restore-solidstats-memory.py` is unchanged and remains
 bound to its sealed Phase 20/21 handoff. That historical controller expects its
 historical corpus count; it does not establish parity for today's active corpus.
@@ -276,6 +363,6 @@ python3 scripts/validate-memory-nginx.py --allow-operator-placeholders
 ```
 
 For real local Qdrant proof set `UNIFIED_QDRANT_BINARY` to the verified local
-1.19.0 binary before running the unified suite. A missing binary explicitly
+1.19.2 binary before running the unified suite. A missing binary explicitly
 skips those two cases; a skip is not authorization or snapshot proof. Tests use
 only synthetic local data and no production credentials or network services.

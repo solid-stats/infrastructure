@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Exact MemPalace v3.5.0 backup behavior-oracle response checks.
+"""MemPalace 3.5 and 3.11 backup behavior-oracle response checks.
 
-Pinned source:
-https://github.com/MemPalace/mempalace/blob/v3.5.0/mempalace/mcp_server.py#L2537-L2590
+Sources:
+https://github.com/MemPalace/mempalace/blob/v3.5.0/mempalace/mcp_server.py#L2282-L2317
+https://github.com/MemPalace/mempalace/blob/v3.11.0/mempalace/mcp_server/tools_write.py#L645-L717
 """
 
 from __future__ import annotations
@@ -13,6 +14,19 @@ from typing import Iterable, Mapping
 
 class BackupOracleError(ValueError):
     """A value-free behavior-oracle contract failure."""
+
+
+def require_active_backup_alias(response: Mapping[str, object], *, physical: str, alias: str) -> None:
+    """Reject a snapshot source that no longer owns the working logical alias."""
+    result = response.get("result")
+    rows = result.get("aliases") if isinstance(result, Mapping) else None
+    if not isinstance(rows, list) or not physical or not alias or sum(
+        isinstance(row, Mapping)
+        and row.get("collection_name") == physical
+        and row.get("alias_name") == alias
+        for row in rows
+    ) != 1:
+        raise BackupOracleError("backup collection does not own the active runtime alias")
 
 
 def tool_data(result: Mapping[str, object]) -> Mapping[str, object]:
@@ -42,12 +56,17 @@ def tool_data(result: Mapping[str, object]) -> Mapping[str, object]:
 def validate_delete_result(
     result: Mapping[str, object], *, drawer_id: str
 ) -> None:
-    """Require the exact successful MemPalace v3.5.0 delete result."""
+    """Require either reviewed delete schema, including valid closet counts."""
     deleted_ids = result.get("deleted_ids")
     chunks_deleted = result.get("chunks_deleted")
     if (
-        set(result)
-        != {"success", "drawer_id", "deleted_ids", "chunks_deleted"}
+        set(result) not in (
+            {"success", "drawer_id", "deleted_ids", "chunks_deleted"},
+            {"success", "drawer_id", "deleted_ids", "chunks_deleted", "closets_deleted"},
+        )
+        or ("closets_deleted" in result and (
+            type(result["closets_deleted"]) is not int or result["closets_deleted"] < 0
+        ))
         or result.get("success") is not True
         or result.get("drawer_id") != drawer_id
         or not isinstance(deleted_ids, list)

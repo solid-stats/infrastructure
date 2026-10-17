@@ -4,7 +4,7 @@
   "palacePath": "/data/palace",
   "qdrantUrl": "http://qdrant.solidstats-memory.svc:6333",
   "qdrantNamespace": "Unified",
-  "qdrantVersion": "1.19.0",
+  "qdrantVersion": "1.19.2",
   "pvcSize": "4Gi",
   "minimumBackupFreeBytes": 1073741824,
   "resources": {

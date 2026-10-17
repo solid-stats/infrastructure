@@ -44,12 +44,15 @@ def env_secret(name, secret, key=None):
 def generated(config, image):
     if "REQUIRED" in json.dumps(config):
         raise ValueError("operator placeholders remain")
-    if config.get("schema") != "unified-memory-deployment-input/v1" or config.get("qdrantVersion") != "1.19.0":
+    if config.get("schema") != "unified-memory-deployment-input/v1" or config.get("qdrantVersion") not in {"1.19.0", "1.19.2"}:
         raise ValueError("reviewed deployment and Qdrant versions required")
     if type(config.get("minimumBackupFreeBytes")) is not int or config["minimumBackupFreeBytes"] <= 0:
         raise ValueError("measured backup scratch floor required")
     if not IMAGE.fullmatch(image):
         raise ValueError("immutable image digest required")
+    image_pull_policy = config.get("mempalaceImagePullPolicy", "IfNotPresent")
+    if not isinstance(image_pull_policy, str) or image_pull_policy not in {"IfNotPresent", "Never"}:
+        raise ValueError("reviewed MemPalace image pull policy required")
     if config.get("namespace") != NS or config.get("qdrantUrl") != QDRANT or config.get("palacePath") != "/data/palace":
         raise ValueError("fixed runtime boundary differs")
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", config["qdrantNamespace"]):
@@ -91,9 +94,9 @@ def generated(config, image):
         "MEMPALACE_QDRANT_NAMESPACE": config["qdrantNamespace"], "MEMPALACE_EMBEDDING_MODEL": "embeddinggemma",
         "MEMPALACE_EMBEDDING_DEVICE": "cpu", "MEMPALACE_MCP_ALLOW_PEER_WRITER": "1", "MEMPALACE_DATA_DIR": "/data/palace",
         "HF_HOME": "/data/palace/.cache/huggingface", "HF_HUB_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1",
-        "PYTHONDONTWRITEBYTECODE": "1"}.items()]
+        "HOME": "/data", "PYTHONDONTWRITEBYTECODE": "1"}.items()]
     environment += [env_secret(name, "unified-memory-runtime") for name in ("MEMPALACE_QDRANT_API_KEY", "MEMPALACE_MCP_HTTP_TOKEN")]
-    base = {"image": image, "imagePullPolicy": "IfNotPresent", "securityContext": security,
+    base = {"image": image, "imagePullPolicy": image_pull_policy, "securityContext": security,
             "resources": config["resources"], "volumeMounts": mounts, "env": environment}
     init = {**base, "name": "validate-target", "command": ["python3", "/opt/unified-memory/bootstrap-unified-memory.py", "validate",
             "--bindings", "/opt/unified-memory/bindings.json"]}
@@ -110,10 +113,10 @@ def generated(config, image):
     backup_env = [{"name": "QDRANT_URL", "value": QDRANT}, {"name": "UNIFIED_WRITERS_QUIESCED", "value": "1"},
                   {"name": "S3_ENDPOINT", "value": "https://s3.twcstorage.ru"}, {"name": "S3_PREFIX", "value": "backups/unified-memory/"},
                   {"name": "RECOVERY_POINT", "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}}},
-                  {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"}]
+                  {"name": "HOME", "value": "/data"}, {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"}]
     backup_env += [env_secret(name, "unified-memory-backup") for name in
                    ("QDRANT_API_KEY", "S3_BUCKET", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")]
-    backup_container = {"name": "backup", "image": image, "imagePullPolicy": "IfNotPresent",
+    backup_container = {"name": "backup", "image": image, "imagePullPolicy": image_pull_policy,
         "command": ["python3", "/opt/unified-memory/unified_memory_recovery.py", "backup", "--bindings", "/opt/unified-memory/bindings.json",
                     "--palace", "/data", "--package", "/work/package", "--publish"],
         "env": backup_env, "securityContext": security,

@@ -2687,7 +2687,7 @@ class MemoryCutoverContractTests(unittest.TestCase):
             probe._listed_drawer_ids(object(), wing="infrastructure")
         self.assertNotIn("mempalace_search", inspect.getsource(probe._listed_drawer_ids))
 
-    def test_probe_accepts_only_exact_v350_delete_success_schema(self) -> None:
+    def test_probe_accepts_reviewed_delete_success_schemas(self) -> None:
         probe = self.load_probe()
         drawer_id = "capture-fixture"
         exact = {
@@ -2697,6 +2697,11 @@ class MemoryCutoverContractTests(unittest.TestCase):
             "chunks_deleted": 2,
         }
         probe._validate_delete_result(exact, drawer_id=drawer_id)
+        for count in (0, 2):
+            probe._validate_delete_result({**exact, "closets_deleted": count}, drawer_id=drawer_id)
+        for count in (-1, True, False, 1.0, "0", None):
+            with self.subTest(closets_deleted=count), self.assertRaises(probe.ProbeError):
+                probe._validate_delete_result({**exact, "closets_deleted": count}, drawer_id=drawer_id)
 
         near_misses = (
             {"deleted": True},

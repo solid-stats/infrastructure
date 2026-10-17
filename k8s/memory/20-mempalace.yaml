@@ -104,6 +104,8 @@ spec:
                   key: SOLIDSTATS_MEMORY_PHYSICAL_COLLECTION
             - name: SOLIDSTATS_MEMORY_EXPECTED_COUNT
               value: "19534"
+            - name: HOME
+              value: /data
             - name: HF_HOME
               value: /data/palace/.cache/huggingface
             - name: HF_HUB_OFFLINE
@@ -155,6 +157,8 @@ spec:
               value: embeddinggemma
             - name: MEMPALACE_EMBEDDING_DEVICE
               value: cpu
+            - name: HOME
+              value: /data
             - name: HF_HOME
               value: /data/palace/.cache/huggingface
             - name: HF_HUB_OFFLINE

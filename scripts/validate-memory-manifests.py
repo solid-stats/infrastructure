@@ -29,8 +29,8 @@ IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$")
 SIZE_RE = re.compile(r"^[1-9][0-9]*(Ki|Mi|Gi|Ti|Pi|Ei)$")
 COLLECTION_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,127}$")
 QDRANT_IMAGE = (
-    "ghcr.io/qdrant/qdrant/qdrant:v1.19.0-unprivileged@"
-    "sha256:18a245d16eb663d4f6ad054123371243248d8256a8067f352cd6e88d512fee0b"
+    "ghcr.io/qdrant/qdrant/qdrant@"
+    "sha256:5b75894e3d9c47ef23c16bb5c23c7e03a3aa904be7e217637413420bc51c25b6"
 )
 
 
@@ -314,6 +314,14 @@ def require_backup_monitoring_contract(docs: dict[str, str]) -> None:
         and "validate_delete_result(deleted, drawer_id=drawer_id)" in backup
         and "validate_not_found_result(absent, drawer_id=drawer_id)" in backup,
         "backup behavior oracle contract differs",
+    )
+    require(
+        "require_active_backup_alias(" in backup
+        and 'collection + "/aliases"' in backup
+        and "name: QDRANT_LOGICAL_ALIAS" in backup
+        and "key: SOLIDSTATS_MEMORY_LOGICAL_ALIAS" in backup
+        and backup.count("mountPath: /opt/solidstats-memory-oracle") == 2,
+        "backup must verify ownership of the active runtime alias",
     )
     observer = docs["ConfigMap/solidstats-memory-observer"]
     for marker in ("def probe_http", "def parse_collection_health", "def latest_snapshot_timestamp", "def collect_metrics", "class MetricsHandler", "solidstats_memory_mcp_ready", "solidstats_memory_qdrant_collection_healthy"):

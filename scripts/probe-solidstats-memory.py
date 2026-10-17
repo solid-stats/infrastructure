@@ -616,9 +616,11 @@ def _capture_shape(content: str) -> bool:
 def _validate_delete_result(
     result: Mapping[str, object], *, drawer_id: str
 ) -> None:
-    """Require the exact successful MemPalace v3.5.0 delete response.
+    """Require either reviewed MemPalace 3.5 or 3.11 delete response.
 
-    Source: https://github.com/MemPalace/mempalace/blob/v3.5.0/mempalace/mcp_server.py#L2133-L2166
+    Sources:
+    https://github.com/MemPalace/mempalace/blob/v3.5.0/mempalace/mcp_server.py#L2282-L2317
+    https://github.com/MemPalace/mempalace/blob/v3.11.0/mempalace/mcp_server/tools_write.py#L645-L717
     """
     expected_keys = {
         "success",
@@ -629,7 +631,10 @@ def _validate_delete_result(
     deleted_ids = result.get("deleted_ids")
     chunks_deleted = result.get("chunks_deleted")
     if (
-        set(result) != expected_keys
+        set(result) not in (expected_keys, expected_keys | {"closets_deleted"})
+        or ("closets_deleted" in result and (
+            type(result["closets_deleted"]) is not int or result["closets_deleted"] < 0
+        ))
         or result.get("success") is not True
         or result.get("drawer_id") != drawer_id
         or not isinstance(deleted_ids, list)
