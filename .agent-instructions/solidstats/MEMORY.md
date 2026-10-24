@@ -7,11 +7,24 @@ canonical `config/repositories.tsv` manifest. The rendered companion
 `AGENTS.md` in each repository declares that repository's primary active wing
 and primary archive wing.
 
+Select useful memory by the task's subject, including external and cross-project
+tasks, independently of the current directory, chat, or destination of the result.
+Keep three boundaries separate: the source used for recall, the owner of new
+knowledge, and the scope in which source instructions apply. Reading SolidStats
+memory does not make an external repository a manifest consumer or apply all
+SolidStats repository rules to it.
+
+Before external recall, load this canonical contract from
+`solid-stats/agent-instructions/shared/MEMORY.md` and apply its existing access,
+recall, subagent, capture, and outage gates. Each source owner's contract
+exclusively governs its memory lifecycle; a generic contract must not fill its
+silent parts or substitute another lifecycle.
+
 ## Instance and authority boundary
 
 - Use only the MCP server named `solidstats_memory` for SolidStats memory.
-- Never use a generic `mempalace`, `mempalace_personal`, `vocalclub_memory`,
-  flat global memory, or a local outbox as a substitute.
+- Do not substitute another store, flat memory, or a local outbox for SolidStats
+  project memory. Other relevant sources remain governed by their own contracts.
 - The shared bearer token does not provide personal attribution or per-tool
   authorization. Treat every mutation as privileged.
 - Current user instructions and applicable repository instructions have the
@@ -98,30 +111,25 @@ memory. A nested workflow does not create a second memory lifecycle.
 
 If `solidstats_memory` is unavailable, retry one safe read once later in the
 same task, continue from current primary evidence, and warn in the final
-handoff. Never fall back to another palace, flat memory, or a local outbox.
+handoff. Do not substitute another palace, flat memory, or a local outbox for
+SolidStats project memory.
 
-## Federated recall
+## Thematic recall and coverage
 
-Unfiltered top-k search is forbidden. Run separate wing-filtered searches with
-the same short, identifier-heavy query in every initial call. Keep task
-background in the tool's context field rather than the embedded query.
+Default to a short thematic search across the whole selected SolidStats palace,
+including active and archive wings. Use identifiers from the task and keep
+background in the tool's context field rather than the embedded query. Where
+the exposed schema permits, 20 candidates is a reasonable initial limit;
+increase it adaptively within a bounded search when useful context is missing.
+This is candidate discovery, not permission to dump the corpus.
 
-For a role-primary repository, initial candidate budgets are:
-
-1. up to 5 results from its primary active role wing;
-2. up to 3 results from `common`;
-3. up to 2 results from each other active role wing;
-4. up to 2 results from the current repository's primary archive wing;
-5. up to 2 results from a foreign archive only after current evidence proves
-   the dependency and promotes that archive.
-
-For a `common`-primary repository, search `common` for up to 5 candidates and
-each of the four role wings for up to 2. Supporting repositories have no
-primary archive.
-
-These are discovery budgets, not quotas for working context. Search every
-active wing exactly once during initial discovery, but keep only relevant
-candidates with usable provenance.
+Wing filters are optional refinements for noise or suspected misses, not
+mandatory federation across every active wing or an advance promotion gate.
+Choose refinements by usefulness to the subject, independently of repository
+ownership. For example, if the initial 20 results are all historical archive
+leads, refine into the relevant active wing or room and adjust the bounded
+limit to check current semantic context. Keep only useful candidates with
+usable provenance; neither a full result limit nor a miss proves coverage.
 
 For every candidate that may influence the task:
 
@@ -135,28 +143,27 @@ For every candidate that may influence the task:
 Explicit tunnels, temporal KG facts, and diaries are not part of SolidStats
 recall. Do not query or create them.
 
-## Evidence-seeded expansion
+## Evidence-seeded refinement
 
 Seed the first queries from identifiers already present in the request: issue
 keys, branch or commit names, endpoints, entities, services, exact errors, or
-symptoms. Use the same identifiers in every initial active-wing search.
-
-Promote an active wing or foreign archive only when a relevant drawer or a
-verified current source proves the dependency. Follow-up query terms may come
-only from:
+symptoms. Follow-up query terms may come only from:
 
 - the user request;
 - a relevant fetched drawer;
 - a verified current primary source.
 
-A promoted active wing has no fixed follow-up limit. Continue while new results
-change the task model; stop when they repeat, become irrelevant, or add no new
-verified identifiers. Promotion lasts only for the current top-level task.
+Refine the query, bounded limit, or wing/room scope while results change the
+task model; stop when they repeat, become irrelevant, or add no useful context.
+Check coverage when a new substantive topic appears or relevant context is lost
+after compaction. Reuse complete applicable findings instead of querying every
+reply. Archive leads remain historical and require current verification;
+their visibility in search never makes them current authority.
 
 ## Scoped miss fallback
 
-A semantic search miss is not proof that memory is absent. For the primary
-wing, `common`, the primary archive, and every promoted scope:
+A semantic search miss is not proof that memory is absent. For likely relevant
+scopes, including active or archive wings as useful:
 
 1. retry with an alternate query seeded from current evidence;
 2. inspect that wing's rooms;
@@ -164,13 +171,25 @@ wing, `common`, the primary archive, and every promoted scope:
 4. fetch plausible drawers by exact ID;
 5. report no relevant memory only after these scoped checks fail.
 
-Do not widen an unpromoted foreign archive after a miss.
+Do not enumerate unrelated wings or dump the corpus to manufacture coverage.
+
+## Source scope and knowledge destination
+
+SolidStats project knowledge stays with its project owner even when another
+project or a skill uses it. Reading another source does not transfer ownership
+or make that source's repository rules apply here. This contract governs only
+SolidStats memory; other sources and their knowledge owners follow their own
+contracts, including access and capture authority.
+
+For example, an external skill-design task may read a relevant SolidStats
+convention under this contract without applying SolidStats Git rules to the
+skill repository. The SolidStats-specific convention stays here.
 
 ## Durable capture gate
 
 Before the first final handoff that closes a completed top-level task, classify
-its verified semantic conclusions. Capture only knowledge useful beyond the
-task:
+its verified semantic conclusions. Capture only SolidStats project knowledge
+useful beyond the task:
 
 - an accepted decision;
 - an API, data, parser, queue, or integration contract;
@@ -262,13 +281,18 @@ records may remain unpromoted.
 ## Acceptance invariants
 
 - `solidstats_memory` is the only SolidStats MCP namespace.
-- Personal and VocalClub memory remain isolated.
-- Initial recall searches all five active wings with the accepted budgets.
-- Archive lookup stays scoped, evidence-promoted, and read-only.
+- Other stores do not substitute for SolidStats project memory; their own
+  contracts govern independently relevant sources.
+- Recall follows the subject across the selected palace with bounded adaptive
+  limits; wing filters refine noise or misses rather than mandate federation.
+- External recall loads this source contract without importing repository rules.
+- Archive lookup remains historical, verified against current sources, and read-only.
 - Relevant drawers are fetched and source-checked before use.
 - Semantic miss fallback is bounded and wing-scoped.
 - Tunnels, KG, diary, raw GSD artifacts, and agent wings are absent.
 - Durable capture writes one verified fact once; no conclusion means no write.
+- Recall sources, knowledge owners, and instruction scopes remain distinct;
+  SolidStats project knowledge stays with its project owner.
 - Corrections require exact curator preview, approval, mutation, and read-back.
 - UAT creates no permanent data.
 - Every consumer repository carries the same accepted contract version.

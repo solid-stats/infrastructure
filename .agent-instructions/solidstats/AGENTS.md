@@ -15,9 +15,9 @@ is present and readable:
 
 If any file is missing or unreadable, stop product work and restore the complete
 bundle with the canonical installer. Do not continue from partial instructions,
-infer missing routing, or substitute another memory store. Contract freshness
-is managed by the repository rollout; do not perform a remote update check at
-task start.
+infer missing routing, or substitute another store for SolidStats memory.
+Contract freshness is managed by the repository rollout; do not perform a
+remote update check at task start.
 
 ## Skills First
 
@@ -171,8 +171,13 @@ means no repository-bound archive).
 
 The main agent owns the contract-defined recall and closure capture for the
 top-level task. Specialists and subagents receive filtered context and must not
-independently query or mutate SolidStats memory. Never substitute a generic,
-personal, VocalClub, or flat-global memory store.
+independently query or mutate SolidStats memory. Do not substitute another store
+for SolidStats project memory. Independently relevant sources follow their own
+contracts.
+
+Select relevant recall by task subject, including external or cross-project
+work, under the source memory contract. Keep recall sources, knowledge owners,
+and the scope of repository rules distinct as defined in `MEMORY.md`.
 
 The native GSD MemPalace capability is deliberately disabled. `GSD.md` keeps
 SolidStats memory active through coordinator-owned recall and semantic closure;

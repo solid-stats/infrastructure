@@ -40,7 +40,7 @@ semantics.
 
 ## Coordinator-owned recall
 
-The main GSD coordinator runs the federated recall from `MEMORY.md` at most
+The main GSD coordinator runs the thematic recall from `MEMORY.md` at most
 once per top-level GSD task:
 
 - before discussion questions for discuss-oriented entry points;
@@ -55,7 +55,7 @@ planning or execution, do not recall again. A resumed or compacted task keeps
 the same top-level ownership if the provenance-bearing context is still
 available.
 
-Run the initial wing searches in the first tool batch after repository and
+Run the initial thematic search in the first tool batch after repository and
 contract routing is known. Fold relevant, verified facts into the discussion
 and owner-native `CONTEXT.md` when discussion owns that artifact. For other
 entry points, pass a compact memory context block directly to the relevant
@@ -83,5 +83,6 @@ the generic MemPalace curator.
 ## Failure behavior
 
 If `solidstats_memory` is unavailable, follow the one-retry and primary-evidence
-fallback contract in `MEMORY.md`. GSD continues; it must not use a different
-palace, generic CLI, flat memory, or local outbox.
+fallback contract in `MEMORY.md`. GSD continues from current primary evidence;
+it must not substitute another store, generic CLI, flat memory, or local outbox
+for SolidStats project memory.
